@@ -1,0 +1,105 @@
+package com.nighthunt.room.service;
+
+import com.nighthunt.common.constants.GameConstants;
+import com.nighthunt.room.entity.Room;
+import com.nighthunt.room.entity.RoomPlayer;
+import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * Service to automatically transfer room ownership when owner disconnects
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class RoomOwnerTransferService {
+    private final RoomRepository roomRepository;
+    private final RoomPlayerRepository roomPlayerRepository;
+    
+    // Timeout: 30 seconds - if owner hasn't been seen for 30s, consider disconnected
+    private static final int OWNER_DISCONNECT_TIMEOUT_SECONDS = 30;
+
+    /**
+     * Check for disconnected owners and transfer ownership to next available player
+     * Runs every 10 seconds
+     */
+    @Scheduled(fixedRate = 10000) // 10 seconds
+    @Transactional
+    public void checkAndTransferOwnership() {
+        log.debug("Starting owner transfer check...");
+        
+        LocalDateTime timeoutThreshold = LocalDateTime.now().minusSeconds(OWNER_DISCONNECT_TIMEOUT_SECONDS);
+        
+        // Find all WAITING rooms
+        List<Room> waitingRooms = roomRepository.findByStatus(GameConstants.ROOM_STATUS_WAITING);
+        
+        int transferredCount = 0;
+        for (Room room : waitingRooms) {
+            // Get owner player
+            RoomPlayer ownerPlayer = roomPlayerRepository.findByRoomIdAndUserId(room.getId(), room.getOwnerId())
+                    .orElse(null);
+            
+            // If owner not found in room (shouldn't happen, but handle it)
+            if (ownerPlayer == null) {
+                log.warn("Room {} owner {} not found in room players. Transferring ownership.", 
+                        room.getId(), room.getOwnerId());
+                transferOwnershipToNextPlayer(room);
+                transferredCount++;
+                continue;
+            }
+            
+            // Check if owner's lastSeenAt is older than timeout threshold
+            if (ownerPlayer.getLastSeenAt() == null || 
+                ownerPlayer.getLastSeenAt().isBefore(timeoutThreshold)) {
+                log.info("Room {} owner {} disconnected (lastSeen: {}). Transferring ownership.", 
+                        room.getId(), room.getOwnerId(), ownerPlayer.getLastSeenAt());
+                transferOwnershipToNextPlayer(room);
+                transferredCount++;
+            }
+        }
+        
+        if (transferredCount > 0) {
+            log.info("Owner transfer check completed. Transferred {} rooms", transferredCount);
+        } else {
+            log.debug("Owner transfer check completed. No transfers needed");
+        }
+    }
+    
+    /**
+     * Transfer ownership to the next available player (first player in room, excluding current owner)
+     */
+    private void transferOwnershipToNextPlayer(Room room) {
+        // Get all players in room, ordered by joinedAt (first joined = first in list)
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+        
+        // Find first player that is not the current owner
+        RoomPlayer newOwner = players.stream()
+                .filter(p -> !p.getUserId().equals(room.getOwnerId()))
+                .findFirst()
+                .orElse(null);
+        
+        if (newOwner == null) {
+            // No other players in room - room will be cleaned up by RoomCleanupService
+            log.warn("Room {} has no other players. Ownership cannot be transferred. Room will be cleaned up.", 
+                    room.getId());
+            return;
+        }
+        
+        // Transfer ownership
+        Long oldOwnerId = room.getOwnerId();
+        room.setOwnerId(newOwner.getUserId());
+        roomRepository.save(room);
+        
+        log.info("Room {} ownership transferred from user {} to user {}", 
+                room.getId(), oldOwnerId, newOwner.getUserId());
+    }
+}
+

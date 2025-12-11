@@ -1,0 +1,82 @@
+spring:
+  application:
+    name: nighthunt-backend
+  
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/nighthunt}
+    username: ${DB_USERNAME:nighthunt}
+    password: ${DB_PASSWORD:nighthunt}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+jwt:
+  secret: ${JWT_SECRET:your-secret-key-change-in-production-min-256-bits}
+  expiration: ${JWT_EXPIRATION:3600000} # 1 hour in milliseconds
+
+server:
+  port: ${SERVER_PORT:8080}
+  ssl:
+    enabled: ${SSL_ENABLED:false}
+    key-store: ${SSL_KEYSTORE:}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD:}
+    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
+    key-alias: ${SSL_KEY_ALIAS:}
+  error:
+    include-message: always
+    include-stacktrace: on_param
+
+# API Base URL Configuration
+api:
+  base-url: ${API_BASE_URL:http://localhost:8080}
+  use-https: ${USE_HTTPS:false}
+
+logging:
+  level:
+    root: INFO
+    com.nighthunt: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+# Headless Server Configuration
+headless:
+  server:
+    build:
+      path: ${HEADLESS_BUILD_PATH:../Build/Server}
+    default:
+      version: ${HEADLESS_VERSION:Ver0.0.1}
+    log:
+      path: ${HEADLESS_LOG_PATH:./logs/headless-servers}
+    auto-scaling:
+      enabled: ${AUTO_SCALING_ENABLED:true}
+    scale-up:
+      threshold: ${SCALE_UP_THRESHOLD:0.8}  # 80% capacity
+    scale-down:
+      threshold: ${SCALE_DOWN_THRESHOLD:0.2}  # 20% capacity
+    idle-timeout:
+      minutes: ${IDLE_TIMEOUT_MINUTES:5}
+    max-servers: ${MAX_SERVERS:10}
+    default-ip: ${DEFAULT_SERVER_IP:127.0.0.1}
+    base-port: ${BASE_PORT:7777}
+    max-matches: ${MAX_MATCHES_PER_SERVER:10}
+    version: ${SERVER_VERSION:Ver0.0.1}
+

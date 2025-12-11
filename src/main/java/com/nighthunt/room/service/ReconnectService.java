@@ -1,0 +1,122 @@
+package com.nighthunt.room.service;
+
+import com.nighthunt.common.constants.GameConstants;
+import com.nighthunt.common.exception.BusinessException;
+import com.nighthunt.common.exception.ErrorCodes;
+import com.nighthunt.match.adapter.RedisMatchSessionCache;
+import com.nighthunt.room.dto.RoomResponse;
+import com.nighthunt.room.entity.Room;
+import com.nighthunt.room.entity.RoomPlayer;
+import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
+import com.nighthunt.security.port.TokenProvider;
+import com.nighthunt.session.port.SessionStore;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ReconnectService {
+    private final RoomRepository roomRepository;
+    private final RoomPlayerRepository roomPlayerRepository;
+    private final TokenProvider tokenProvider;
+    private final SessionStore sessionStore;
+    private final RedisMatchSessionCache matchSessionCache;
+    private final RoomService roomService;
+
+    @Transactional
+    public RoomResponse reconnect(String accessToken, String sessionId, Long roomId) {
+        // Validate token
+        if (!tokenProvider.validateToken(accessToken)) {
+            throw new BusinessException(ErrorCodes.AUTH_TOKEN_INVALID,
+                    "Invalid or expired token");
+        }
+
+        Long userId = tokenProvider.getUserIdFromToken(accessToken);
+        String currentSessionId = sessionStore.getSessionId(String.valueOf(userId));
+
+        // Check session matches
+        if (currentSessionId == null || !currentSessionId.equals(sessionId)) {
+            throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
+                    "Session expired or invalid");
+        }
+
+        // Check force logout
+        if (sessionStore.isForceLogout(String.valueOf(userId))) {
+            throw new BusinessException(ErrorCodes.AUTH_FORCE_LOGOUT,
+                    "Tài khoản đã đăng nhập ở nơi khác. Vui lòng đăng nhập lại.");
+        }
+
+        // Find room - try from request or from match session cache
+        Room room;
+        if (roomId != null) {
+            room = roomRepository.findById(roomId)
+                    .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                            "Room not found"));
+        } else {
+            // Try to get from match session cache
+            Object cachedSession = matchSessionCache.getMatchSession(String.valueOf(userId));
+            if (cachedSession instanceof MatchSessionData) {
+                MatchSessionData sessionData = (MatchSessionData) cachedSession;
+                room = roomRepository.findById(sessionData.getRoomId())
+                        .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                                "Room not found"));
+            } else {
+                throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "Room not found. Please provide roomId");
+            }
+        }
+
+        // Check room status - allow reconnect for WAITING and IN_GAME
+        if (GameConstants.ROOM_STATUS_CLOSED.equals(room.getStatus()) || 
+            GameConstants.ROOM_STATUS_FINISHED.equals(room.getStatus())) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Room has been closed or finished");
+        }
+
+        // Check if player slot still exists
+        RoomPlayer player = roomPlayerRepository.findByRoomIdAndUserId(room.getId(), userId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
+                        "Player slot not found. Room may have been reset."));
+
+        // Update last seen
+        player.setLastSeenAt(LocalDateTime.now());
+        roomPlayerRepository.save(player);
+
+        // Generate new join token
+        String joinToken = UUID.randomUUID().toString();
+
+        // Save match session for future reconnects
+        MatchSessionData sessionData = MatchSessionData.builder()
+                .roomId(room.getId())
+                .matchId(room.getMatchId())
+                .playerId(userId)
+                .team(player.getTeam())
+                .slot(player.getSlot())
+                .build();
+        matchSessionCache.saveMatchSession(String.valueOf(userId), sessionData,
+                GameConstants.RECONNECT_TIMEOUT_SECONDS);
+
+        return roomService.buildRoomResponse(room, joinToken);
+    }
+
+    // Inner class for match session data
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class MatchSessionData {
+        private Long roomId;
+        private String matchId;
+        private Long playerId;
+        private Integer team;
+        private Integer slot;
+    }
+}
+

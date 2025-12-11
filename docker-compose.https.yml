@@ -1,0 +1,28 @@
+version: '3.8'
+
+# Docker Compose configuration for HTTPS
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.https.yml up
+
+services:
+  backend:
+    environment:
+      SERVER_PORT: 8443
+      SSL_ENABLED: "true"
+      SSL_KEYSTORE: /app/certs/keystore.p12
+      SSL_KEYSTORE_PASSWORD: ${SSL_KEYSTORE_PASSWORD:-changeit}
+      SSL_KEY_ALIAS: ${SSL_KEY_ALIAS:-nighthunt}
+      USE_HTTPS: "true"
+      API_BASE_URL: https://localhost:8443
+    ports:
+      - "8443:8443"
+    volumes:
+      # Mount SSL certificates
+      - ./src/main/resources/certs:/app/certs:ro
+    command: >
+      java -jar app.jar
+      --spring.profiles.active=prod
+      --server.ssl.enabled=true
+      --server.ssl.key-store=/app/certs/keystore.p12
+      --server.ssl.key-store-password=${SSL_KEYSTORE_PASSWORD:-changeit}
+      --server.ssl.key-alias=${SSL_KEY_ALIAS:-nighthunt}
+

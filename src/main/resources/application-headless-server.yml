@@ -1,0 +1,45 @@
+# Configuration for Headless Server Management
+# This file defines default values for headless server capacity
+
+nighthunt:
+  headless:
+    # Default capacity for new headless servers
+    default:
+      max-matches: 10  # Maximum matches per server
+      # Capacity depends on:
+      # - CPU cores (more cores = more matches)
+      # - RAM (more RAM = more matches)
+      # - Match size (2v2 lighter than 5v5)
+      # - Network bandwidth
+    
+    # Capacity by server type (if you have different server specs)
+    capacity:
+      small:
+        max-matches: 5
+        cpu-cores: 2
+        ram-gb: 4
+      
+      medium:
+        max-matches: 10
+        cpu-cores: 4
+        ram-gb: 8
+      
+      large:
+        max-matches: 20
+        cpu-cores: 8
+        ram-gb: 16
+    
+    # Match capacity estimation
+    # How many matches of each type can run simultaneously
+    match-capacity:
+      "2v2": 1.0    # 1 match = 1 unit
+      "3v3": 1.5    # 1 match = 1.5 units (heavier)
+      "5v5": 2.0    # 1 match = 2 units (heaviest)
+    
+    # Example calculation:
+    # Server with maxMatches=10 can run:
+    # - 10 matches of 2v2, OR
+    # - 6 matches of 3v3 (10/1.5), OR
+    # - 5 matches of 5v5 (10/2.0), OR
+    # - Mixed: 4x 2v2 + 2x 5v5 = 4*1.0 + 2*2.0 = 8 units < 10
+

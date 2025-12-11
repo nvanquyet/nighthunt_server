@@ -1,0 +1,17 @@
+package com.nighthunt.room.dto;
+
+import jakarta.validation.constraints.NotNull;
+import lombok.Data;
+
+@Data
+public class SwapRequestRequest {
+    @NotNull
+    private Long targetUserId;
+
+    @NotNull
+    private Integer targetTeam;
+
+    @NotNull
+    private Integer targetSlot;
+}
+
