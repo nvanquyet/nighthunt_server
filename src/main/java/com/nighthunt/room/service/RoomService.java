@@ -87,7 +87,7 @@ public class RoomService {
                 .userId(userId)
                 .team(GameConstants.TEAM_1)
                 .slot(0)
-                .isReady(false)
+                .isReady(true) // Host auto-ready
                 .build();
         roomPlayerRepository.save(ownerPlayer);
 
@@ -159,7 +159,7 @@ public class RoomService {
                 .userId(userId)
                 .team(team)
                 .slot(slot)
-                .isReady(false)
+                .isReady(room.getOwnerId().equals(userId)) // Auto-ready if owner (e.g., quickPlay create branch)
                 .build();
         roomPlayerRepository.save(player);
 
@@ -605,6 +605,13 @@ public class RoomService {
             throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                     "Swap request is no longer pending");
         }
+        if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+            swapRequest.setStatus("REJECTED");
+            swapRequestRepository.save(swapRequest);
+            gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Swap request is no longer pending");
+        }
 
         // Get both players
         RoomPlayer requester = roomPlayerRepository.findByRoomIdAndUserId(roomId, swapRequest.getRequesterId())
@@ -627,20 +634,69 @@ public class RoomService {
                     "Player positions have changed");
         }
 
-        // Perform swap
-        int tempTeam = requester.getTeam();
-        int tempSlot = requester.getSlot();
+        // Perform swap (with race-condition protection and explicit flush)
+        int origRequesterTeam = requester.getTeam();
+        int origRequesterSlot = requester.getSlot();
+        int origTargetTeam = target.getTeam();
+        int origTargetSlot = target.getSlot();
 
-        requester.setTeam(target.getTeam());
-        requester.setSlot(target.getSlot());
-        requester.setIsReady(false);
+        // Use a unique temporary slot value to avoid duplicate constraint
+        int tempSlotValue = -requester.getId().intValue(); // negative + unique per requester
 
-        target.setTeam(tempTeam);
-        target.setSlot(tempSlot);
-        target.setIsReady(false);
+        try {
+            // Step 1: move requester to a temporary slot to avoid unique constraint clash
+            requester.setSlot(tempSlotValue);
+            requester.setTeam(origRequesterTeam);
+            requester.setIsReady(false);
+            roomPlayerRepository.save(requester);
+            roomPlayerRepository.flush();
 
-        roomPlayerRepository.save(requester);
-        roomPlayerRepository.save(target);
+            // Step 2: move target into requester's original slot
+            target.setTeam(origRequesterTeam);
+            target.setSlot(origRequesterSlot);
+            target.setIsReady(false);
+            roomPlayerRepository.save(target);
+            roomPlayerRepository.flush();
+
+            // Step 3: move requester into target's original slot
+            requester.setTeam(origTargetTeam);
+            requester.setSlot(origTargetSlot);
+            requester.setIsReady(false);
+            roomPlayerRepository.save(requester);
+            roomPlayerRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            swapRequest.setStatus("REJECTED");
+            swapRequestRepository.save(swapRequest);
+            throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                    "Slot was just occupied by another player. Please try again.");
+        } catch (org.hibernate.exception.ConstraintViolationException ex) {
+            swapRequest.setStatus("REJECTED");
+            swapRequestRepository.save(swapRequest);
+            throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                    "Slot was just occupied by another player. Please try again.");
+        } catch (jakarta.persistence.PersistenceException ex) {
+            Throwable cause = ex.getCause();
+            boolean isConstraint = cause instanceof java.sql.SQLIntegrityConstraintViolationException
+                    || cause instanceof org.hibernate.exception.ConstraintViolationException;
+            if (isConstraint) {
+                swapRequest.setStatus("REJECTED");
+                swapRequestRepository.save(swapRequest);
+                throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                        "Slot was just occupied by another player. Please try again.");
+            }
+            throw ex;
+        } catch (Exception ex) {
+            Throwable cause = ex.getCause();
+            boolean isConstraint = cause instanceof java.sql.SQLIntegrityConstraintViolationException
+                    || cause instanceof org.hibernate.exception.ConstraintViolationException;
+            if (isConstraint) {
+                swapRequest.setStatus("REJECTED");
+                swapRequestRepository.save(swapRequest);
+                throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                        "Slot was just occupied by another player. Please try again.");
+            }
+            throw ex;
+        }
 
         // Update swap request status
         swapRequest.setStatus("ACCEPTED");
@@ -650,12 +706,13 @@ public class RoomService {
         
         // Broadcast swap accepted event via WebSocket
         // This will trigger team_changed events for both players
-        // Broadcast team changed for requester
-        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getRequesterId(), 
-            target.getTeam(), target.getSlot());
-        // Broadcast team changed for target
-        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getTargetId(), 
-            tempTeam, tempSlot);
+        // Final positions after swap:
+        // requester -> origTargetTeam/slot
+        // target    -> origRequesterTeam/slot
+        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getRequesterId(),
+                requester.getTeam(), requester.getSlot());
+        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getTargetId(),
+                target.getTeam(), target.getSlot());
         // Broadcast swap request status
         gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "ACCEPTED");
         
@@ -675,6 +732,13 @@ public class RoomService {
         }
 
         if (!"PENDING".equals(swapRequest.getStatus())) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Swap request is no longer pending");
+        }
+        if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+            swapRequest.setStatus("REJECTED");
+            swapRequestRepository.save(swapRequest);
+            gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
             throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                     "Swap request is no longer pending");
         }
@@ -761,6 +825,14 @@ public class RoomService {
         // Transfer ownership
         room.setOwnerId(targetUserId);
         room = roomRepository.save(room);
+
+        // Auto-ready new owner (host), keep others unchanged
+        roomPlayerRepository.findByRoomIdAndUserId(roomId, targetUserId).ifPresent(p -> {
+            if (!p.getIsReady()) {
+                p.setIsReady(true);
+                roomPlayerRepository.save(p);
+            }
+        });
 
         log.info("Room {} ownership transferred from user {} to user {}", roomId, ownerId, targetUserId);
 

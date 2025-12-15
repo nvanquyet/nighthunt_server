@@ -106,6 +106,11 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             "roomId", roomId != null ? roomId : 0,
             "message", "Game WebSocket connected"
         ));
+
+        // On connect, push latest room state if user is in a room (helps client recover after reconnect)
+        if (roomId != null) {
+            sendRoomUpdate(userId, roomId);
+        }
     }
     
     @Override

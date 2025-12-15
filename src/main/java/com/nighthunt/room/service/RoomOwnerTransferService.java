@@ -29,12 +29,12 @@ public class RoomOwnerTransferService {
 
     /**
      * Check for disconnected owners and transfer ownership to next available player
-     * Runs every 10 seconds
+     * Runs every 30 seconds (lighter load at scale)
      */
-    @Scheduled(fixedRate = 10000) // 10 seconds
+    @Scheduled(fixedRate = 30000) // 30 seconds
     @Transactional
     public void checkAndTransferOwnership() {
-        log.debug("Starting owner transfer check...");
+        log.trace("Starting owner transfer check...");
         
         LocalDateTime timeoutThreshold = LocalDateTime.now().minusSeconds(OWNER_DISCONNECT_TIMEOUT_SECONDS);
         
@@ -69,7 +69,7 @@ public class RoomOwnerTransferService {
         if (transferredCount > 0) {
             log.info("Owner transfer check completed. Transferred {} rooms", transferredCount);
         } else {
-            log.debug("Owner transfer check completed. No transfers needed");
+            log.trace("Owner transfer check completed. No transfers needed");
         }
     }
     
@@ -97,6 +97,12 @@ public class RoomOwnerTransferService {
         Long oldOwnerId = room.getOwnerId();
         room.setOwnerId(newOwner.getUserId());
         roomRepository.save(room);
+
+        // Auto-ready new owner (host)
+        if (!Boolean.TRUE.equals(newOwner.getIsReady())) {
+            newOwner.setIsReady(true);
+            roomPlayerRepository.save(newOwner);
+        }
         
         log.info("Room {} ownership transferred from user {} to user {}", 
                 room.getId(), oldOwnerId, newOwner.getUserId());
