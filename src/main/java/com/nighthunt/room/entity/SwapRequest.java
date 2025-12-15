@@ -58,7 +58,7 @@ public class SwapRequest {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         if (expiresAt == null) {
-            expiresAt = LocalDateTime.now().plusMinutes(30); // 30 minutes expiry
+            expiresAt = LocalDateTime.now().plusSeconds(5); // 5 seconds expiry
         }
         if (status == null) {
             status = "PENDING";

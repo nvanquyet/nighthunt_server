@@ -9,5 +9,6 @@ public class AutoLoginRequest {
     private String accessToken;
     @NotBlank
     private String sessionId;
+    private String deviceFingerprint; // Optional: device fingerprint for ban tracking
 }
 

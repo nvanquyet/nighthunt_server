@@ -1,5 +1,6 @@
 package com.nighthunt.security.filter;
 
+import com.nighthunt.game.websocket.GameWebSocketHandler;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.common.constants.GameConstants;
@@ -28,11 +29,19 @@ import java.util.Collections;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final TokenProvider tokenProvider;
     private final SessionStore sessionStore;
+    private final GameWebSocketHandler gameWebSocketHandler;
     private static final String SESSION_HEADER = "X-Session-Id";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        // Skip JWT filter for WebSocket handshake - WebSocketHandler will validate token itself
+        String requestPath = request.getRequestURI();
+        if (requestPath != null && requestPath.startsWith("/ws/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+        
         try {
             String token = getTokenFromRequest(request);
             if (StringUtils.hasText(token) && tokenProvider.validateToken(token)) {
@@ -42,6 +51,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 // Check force logout
                 if (sessionStore.isForceLogout(String.valueOf(userId))) {
+                    // Send force_logout event via WebSocket
+                    try {
+                        gameWebSocketHandler.sendForceLogout(userId, "Tài khoản đã đăng nhập ở nơi khác");
+                    } catch (Exception e) {
+                        log.error("Error sending force_logout event to user {}: {}", userId, e.getMessage());
+                    }
                     throw new BusinessException(ErrorCodes.AUTH_FORCE_LOGOUT,
                             "Tài khoản đã đăng nhập ở nơi khác. Vui lòng đăng nhập lại.");
                 }
@@ -50,12 +65,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String currentSessionId = sessionStore.getSessionId(String.valueOf(userId));
                 if (currentSessionId == null) {
                     log.warn("Session not found in Redis for user {} - session expired or never existed", userId);
+                    // Send session_expired event via WebSocket
+                    try {
+                        gameWebSocketHandler.sendSessionExpired(userId);
+                    } catch (Exception e) {
+                        log.error("Error sending session_expired event to user {}: {}", userId, e.getMessage());
+                    }
                     throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
                             "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
                 }
                 if (!StringUtils.hasText(clientSessionId) || !currentSessionId.equals(clientSessionId)) {
                     log.warn("Session mismatch for user {} - Redis sessionId: {}, Client sessionId: {}", 
                             userId, currentSessionId, clientSessionId);
+                    // Send session_expired event via WebSocket
+                    try {
+                        gameWebSocketHandler.sendSessionExpired(userId);
+                    } catch (Exception e) {
+                        log.error("Error sending session_expired event to user {}: {}", userId, e.getMessage());
+                    }
                     throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
                             "Session không hợp lệ hoặc đã hết hạn.");
                 }

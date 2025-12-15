@@ -9,6 +9,7 @@ public class SwapRequestDTO {
     private String requesterUsername;
     private Integer requesterTeam;
     private Integer requesterSlot;
+    private Long targetUserId;
     private Integer targetTeam;
     private Integer targetSlot;
     private String status;

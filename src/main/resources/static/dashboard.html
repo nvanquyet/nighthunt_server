@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NightHunt - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .header h1 {
+            color: #667eea;
+            margin: 0;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .header .last-update {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card .value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        .rooms-section {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .rooms-section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .filter-section {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-section select,
+        .filter-section input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .filter-section input {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+
+        .rooms-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+
+        .rooms-table th,
+        .rooms-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .rooms-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #667eea;
+            position: sticky;
+            top: 0;
+        }
+
+        .rooms-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-waiting {
+            background: #ffc107;
+            color: #000;
+        }
+
+        .status-ingame {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .status-closed {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .player-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+
+        .player-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .player-owner {
+            background: #667eea;
+            color: #fff;
+        }
+
+        .player-ready {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .player-owner.player-ready {
+            background: linear-gradient(135deg, #667eea 0%, #28a745 100%);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #dc3545;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .auto-refresh input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        .stats-trend {
+            font-size: 12px;
+            color: #28a745;
+            margin-top: 5px;
+        }
+
+        .stats-trend.down {
+            color: #dc3545;
+        }
+
+        .room-details {
+            margin-top: 5px;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .ws-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 NightHunt Dashboard</h1>
+            <div class="header-info">
+                <div class="last-update">Last updated: <span id="lastUpdate">-</span></div>
+                <div class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh" checked>
+                    <label for="autoRefresh">Auto-refresh (5s)</label>
+                </div>
+                <button class="refresh-btn" onclick="loadDashboard()">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <div id="errorContainer"></div>
+
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="value" id="totalActiveRooms">-</div>
+                <div class="label">Active Rooms</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="totalOnlineUsers">-</div>
+                <div class="label">Online Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="totalUsersInRooms">-</div>
+                <div class="label">Users in Rooms</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="totalWaitingRooms">-</div>
+                <div class="label">Waiting Rooms</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="totalInGameRooms">-</div>
+                <div class="label">In-Game Rooms</div>
+            </div>
+        </div>
+
+        <div class="rooms-section">
+            <h2>Active Rooms & Players</h2>
+            <div class="filter-section">
+                <select id="statusFilter">
+                    <option value="all">All Status</option>
+                    <option value="WAITING">Waiting</option>
+                    <option value="IN_GAME">In Game</option>
+                </select>
+                <select id="modeFilter">
+                    <option value="all">All Modes</option>
+                    <option value="2v2">2v2</option>
+                    <option value="4v4">4v4</option>
+                </select>
+                <input type="text" id="searchFilter" placeholder="Search by code or owner...">
+            </div>
+            <div id="roomsContainer">
+                <div class="loading">Loading rooms...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-detect API base URL
+        const API_BASE_URL = window.location.origin + '/api/dashboard';
+        let autoRefreshInterval = null;
+        let lastStats = null;
+        
+        console.log('Dashboard initialized. API URL:', API_BASE_URL);
+
+        // Load dashboard data
+        async function loadDashboard() {
+            try {
+                console.log('Loading dashboard data from:', `${API_BASE_URL}/stats`);
+                const response = await fetch(`${API_BASE_URL}/stats`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Dashboard data received:', data);
+
+                if (!data.success) {
+                    showError(data.message || 'Failed to load dashboard data');
+                    return;
+                }
+
+                if (!data.data) {
+                    showError('No data received from server');
+                    return;
+                }
+
+                updateStats(data.data);
+                updateRooms(data.data.activeRooms || []);
+                updateLastUpdateTime();
+            } catch (error) {
+                const errorMsg = 'Error loading dashboard: ' + error.message;
+                showError(errorMsg);
+                console.error('Dashboard error:', error);
+            }
+        }
+
+        function updateStats(stats) {
+            updateStatWithTrend('totalActiveRooms', stats.totalActiveRooms || 0, 'totalActiveRooms');
+            updateStatWithTrend('totalOnlineUsers', stats.totalOnlineUsers || 0, 'totalOnlineUsers');
+            updateStatWithTrend('totalUsersInRooms', stats.totalUsersInRooms || 0, 'totalUsersInRooms');
+            updateStatWithTrend('totalWaitingRooms', stats.totalWaitingRooms || 0, 'totalWaitingRooms');
+            updateStatWithTrend('totalInGameRooms', stats.totalInGameRooms || 0, 'totalInGameRooms');
+            
+            lastStats = stats;
+        }
+
+        function updateStatWithTrend(elementId, newValue, statKey) {
+            const element = document.getElementById(elementId);
+            const oldValue = lastStats ? lastStats[statKey] : null;
+            
+            element.textContent = newValue;
+            
+            // Remove old trend indicator
+            const existingTrend = element.parentElement.querySelector('.stats-trend');
+            if (existingTrend) {
+                existingTrend.remove();
+            }
+            
+            // Add trend indicator if we have previous stats
+            if (oldValue !== null && oldValue !== newValue) {
+                const trend = document.createElement('div');
+                trend.className = 'stats-trend' + (newValue < oldValue ? ' down' : '');
+                trend.textContent = (newValue > oldValue ? '↑' : '↓') + ' ' + Math.abs(newValue - oldValue);
+                element.parentElement.appendChild(trend);
+            }
+        }
+
+        function updateRooms(rooms) {
+            const container = document.getElementById('roomsContainer');
+
+            // Apply filters
+            let filteredRooms = rooms;
+            
+            const statusFilter = document.getElementById('statusFilter');
+            if (statusFilter && statusFilter.value !== 'all') {
+                filteredRooms = filteredRooms.filter(r => r.status === statusFilter.value);
+            }
+            
+            const modeFilter = document.getElementById('modeFilter');
+            if (modeFilter && modeFilter.value !== 'all') {
+                filteredRooms = filteredRooms.filter(r => (r.mode || '').toLowerCase() === modeFilter.value.toLowerCase());
+            }
+            
+            const searchFilter = document.getElementById('searchFilter');
+            if (searchFilter && searchFilter.value) {
+                const search = searchFilter.value.toLowerCase();
+                filteredRooms = filteredRooms.filter(r => 
+                    (r.roomCode || '').toLowerCase().includes(search) ||
+                    (r.ownerUsername || '').toLowerCase().includes(search)
+                );
+            }
+
+            if (filteredRooms.length === 0) {
+                container.innerHTML = '<div class="loading">No rooms match the filters</div>';
+                return;
+            }
+
+            let html = `
+                <table class="rooms-table">
+                    <thead>
+                        <tr>
+                            <th>Room ID</th>
+                            <th>Room Code</th>
+                            <th>Status</th>
+                            <th>Mode</th>
+                            <th>Owner</th>
+                            <th>Players (${filteredRooms.reduce((sum, r) => sum + (r.playerCount || 0), 0)})</th>
+                            <th>WebSocket</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            filteredRooms.forEach(room => {
+                const statusClass = room.status === 'WAITING' ? 'status-waiting' : 
+                                   room.status === 'IN_GAME' ? 'status-ingame' : 'status-closed';
+                
+                const playersHtml = room.players && room.players.length > 0 ? room.players.map(p => {
+                    let classes = 'player-badge';
+                    if (p.isOwner) classes += ' player-owner';
+                    if (p.isReady) classes += ' player-ready';
+                    return `<span class="${classes}" title="Team ${p.team}, Slot ${p.slot}">${p.username}${p.isOwner ? ' 👑' : ''}${p.isReady ? ' ✓' : ''}</span>`;
+                }).join('') : '<span class="player-badge" style="opacity: 0.5;">No players</span>';
+
+                const createdDate = room.createdAt ? new Date(room.createdAt).toLocaleString() : '-';
+                const isPublic = room.isPublic ? '🌐' : '🔒';
+                const isLocked = room.isLocked ? '🔐' : '🔓';
+                const wsCount = room.activeWebSocketConnections || 0;
+                const wsStatus = wsCount > 0 ? '🟢' : '🔴';
+
+                html += `
+                    <tr>
+                        <td><strong>#${room.roomId}</strong></td>
+                        <td><strong style="font-size: 16px; color: #667eea;">${room.roomCode || '-'}</strong></td>
+                        <td><span class="status-badge ${statusClass}">${room.status}</span></td>
+                        <td>${room.mode || '-'}</td>
+                        <td><strong>${room.ownerUsername || '-'}</strong></td>
+                        <td>
+                            <div class="player-list">${playersHtml}</div>
+                            <div class="room-details">
+                                <small>${room.playerCount || 0}/${room.maxPlayers || 8} players | ${isPublic} ${isLocked}</small>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="ws-status">
+                                <strong>${wsCount}</strong>
+                                <span>${wsStatus}</span>
+                            </span>
+                        </td>
+                        <td><small>${createdDate}</small></td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+        }
+
+        function showError(message) {
+            const container = document.getElementById('errorContainer');
+            container.innerHTML = `<div class="error">${message}</div>`;
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
+
+        // Auto-refresh
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            if (!checkbox) return;
+            
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    startAutoRefresh();
+                } else {
+                    stopAutoRefresh();
+                }
+            });
+
+            if (checkbox.checked) {
+                startAutoRefresh();
+            }
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            autoRefreshInterval = setInterval(loadDashboard, 5000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+
+        // Setup filter event listeners
+        function setupFilters() {
+            const statusFilter = document.getElementById('statusFilter');
+            const modeFilter = document.getElementById('modeFilter');
+            const searchFilter = document.getElementById('searchFilter');
+            
+            if (statusFilter) {
+                statusFilter.addEventListener('change', () => {
+                    if (lastStats) updateRooms(lastStats.activeRooms || []);
+                });
+            }
+            
+            if (modeFilter) {
+                modeFilter.addEventListener('change', () => {
+                    if (lastStats) updateRooms(lastStats.activeRooms || []);
+                });
+            }
+            
+            if (searchFilter) {
+                searchFilter.addEventListener('input', () => {
+                    if (lastStats) updateRooms(lastStats.activeRooms || []);
+                });
+            }
+        }
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            setupFilters();
+            loadDashboard();
+            setupAutoRefresh();
+        });
+    </script>
+</body>
+</html>

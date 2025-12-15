@@ -5,7 +5,7 @@ import lombok.Data;
 
 @Data
 public class SwapRequestRequest {
-    @NotNull
+    // targetUserId can be null when swapping with empty slot
     private Long targetUserId;
 
     @NotNull

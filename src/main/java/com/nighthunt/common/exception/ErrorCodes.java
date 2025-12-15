@@ -11,6 +11,17 @@ public class ErrorCodes {
     public static final String AUTH_SESSION_EXPIRED = "AUTH_007";
     public static final String AUTH_FORCE_LOGOUT = "AUTH_008";
     public static final String AUTH_OLD_PASSWORD_INCORRECT = "AUTH_009";
+    public static final String AUTH_ACCOUNT_BANNED = "AUTH_010";
+    public static final String AUTH_IP_BANNED = "AUTH_011";
+    public static final String AUTH_DEVICE_BANNED = "AUTH_012";
+
+    // Rate limiting errors
+    public static final String RATE_LIMIT_EXCEEDED = "RATE_001";
+    
+    // Request queue errors
+    public static final String REQUEST_QUEUED = "QUEUE_001";
+    public static final String QUEUE_FULL = "QUEUE_002";
+    public static final String REQUEST_EXPIRED = "QUEUE_003";
 
     // Room errors
     public static final String ROOM_NOT_FOUND = "ROOM_001";

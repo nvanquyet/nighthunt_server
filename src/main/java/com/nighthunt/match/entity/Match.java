@@ -30,8 +30,8 @@ public class Match {
     @Column(name = "room_id", nullable = false)
     private Long roomId;
 
-    @Column(name = "headless_server_id", nullable = false)
-    private Long headlessServerId;
+    @Column(name = "headless_server_id", nullable = true)
+    private Long headlessServerId; // Nullable - will be assigned when headless server is allocated
 
     @Column(nullable = false, length = 20)
     private String status; // LOBBY, IN_GAME, FINISHED

@@ -6,7 +6,7 @@ Spring Boot backend server for NightHunt multiplayer game.
 
 ### Prerequisites
 - Docker & Docker Compose
-- Java 17+ (for local development)
+- Java 17+ (for local development - **không cần nếu chỉ dùng Docker**)
 - MySQL 8.0+ (handled by Docker)
 - Redis 7+ (handled by Docker)
 
@@ -16,13 +16,15 @@ cd NightHuntServer
 docker-compose up -d
 ```
 
+> 📖 **Xem [SETUP.md](SETUP.md) để biết chi tiết setup khi chuyển project sang máy khác**
+
 ### Stop Services
 ```bash
 docker-compose down
 ```
 
 ### Rebuild and Restart
-```bash
+```bash 
 docker-compose down
 docker-compose build backend
 docker-compose up -d
@@ -65,8 +67,9 @@ docker-compose logs -f backend
 - ✅ Player Slots (Team 1 & Team 2)
 - ✅ Change Team/Slot
 - ✅ Set Ready/Unready
-- ✅ Swap Request (Request, Accept, Reject)
-- ✅ Real-time Updates (Polling support)
+- ✅ Swap Request (Request, Accept, Reject, Cancel)
+- ✅ Swap Request Timeout (5 seconds auto-cancel)
+- ✅ Real-time Updates (WebSocket - no polling)
 - ✅ Owner Transfer (Auto + Manual)
 - ✅ Kick Player (Owner only)
 - ✅ Disband Room (Owner only)
@@ -151,10 +154,17 @@ See `src/main/resources/application.yml` for detailed configuration.
 - `POST /rooms/{roomId}/transfer-owner` - Transfer ownership (Owner only)
 
 ### Swap Requests
-- `POST /rooms/{roomId}/swap-request` - Request swap
+- `POST /rooms/{roomId}/swap-request` - Request swap (timeout 5s)
 - `POST /rooms/{roomId}/swap-accept/{requestId}` - Accept swap
 - `POST /rooms/{roomId}/swap-reject/{requestId}` - Reject swap
+- `POST /rooms/{roomId}/swap-cancel/{requestId}` - Cancel swap (requester only)
 - `GET /rooms/{roomId}/swap-requests` - Get pending requests
+
+### Security Features
+- ✅ Ban/Block System (auto-ban for failed logins, concurrent logins)
+- ✅ Rate Limiting (configurable per endpoint)
+- ✅ Device Fingerprinting
+- ✅ IP-based blocking
 
 ## 🧪 Testing
 
@@ -220,10 +230,15 @@ taskkill /PID <PID> /F
 - Check Redis container is running: `docker-compose ps`
 - Check Redis logs: `docker-compose logs redis`
 
+## 📚 Documentation
+
+- **[SETUP.md](SETUP.md)** - Hướng dẫn setup khi chuyển project sang máy khác
+- **[README.md](README.md)** - Tổng quan về project (file này)
+
 ## 📝 License
 
 Proprietary - All rights reserved
 
 ---
 
-*Last Updated: 2025-12-12*
+*Last Updated: 2025-12-14*

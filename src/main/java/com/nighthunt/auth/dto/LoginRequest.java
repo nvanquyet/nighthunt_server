@@ -9,5 +9,6 @@ public class LoginRequest {
     private String identifier; // username or email
     @NotBlank
     private String password;
+    private String deviceFingerprint; // Optional: device fingerprint for ban tracking
 }
 

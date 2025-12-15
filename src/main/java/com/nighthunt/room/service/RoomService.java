@@ -1,5 +1,7 @@
 package com.nighthunt.room.service;
 
+import com.nighthunt.game.websocket.GameWebSocketHandler;
+import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
@@ -17,6 +19,7 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,14 +32,16 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class RoomService {
-    // Placeholder server ID (headless server functionality disabled)
-    private static final Long DUMMY_SERVER_ID = -1L;
+    // Note: headlessServerId should be null when creating a room
+    // It will be assigned later when a headless server is allocated
 
     private final RoomRepository roomRepository;
     private final RoomPlayerRepository roomPlayerRepository;
     private final UserRepository userRepository;
     private final MatchRepository matchRepository;
     private final SwapRequestRepository swapRequestRepository;
+    private final GameWebSocketHandler gameWebSocketHandler; // Unified WebSocket handler for all events
+    private final MessageBrokerService messageBroker; // Message broker for event publishing
     private final Random random = new Random();
 
     @Transactional
@@ -60,16 +65,18 @@ public class RoomService {
                 .isLocked(request.getIsLocked() != null ? request.getIsLocked() : false)
                 .password(request.getPassword()) // Optional password
                 .ownerId(userId)
-                .headlessServerId(DUMMY_SERVER_ID)
+                .headlessServerId(null) // Will be assigned when headless server is allocated
                 .matchId(matchId)
                 .build();
         room = roomRepository.save(room);
 
         // Create match entity
+        // Note: Match also needs headlessServerId, but we'll set it to null for now
+        // It will be updated when a headless server is allocated
         Match match = Match.builder()
                 .matchId(matchId)
                 .roomId(room.getId())
-                .headlessServerId(DUMMY_SERVER_ID)
+                .headlessServerId(null) // Will be assigned when headless server is allocated
                 .status(GameConstants.MATCH_STATUS_LOBBY)
                 .build();
         matchRepository.save(match);
@@ -84,7 +91,18 @@ public class RoomService {
                 .build();
         roomPlayerRepository.save(ownerPlayer);
 
-        return buildRoomResponse(room, joinToken);
+        RoomResponse response = buildRoomResponse(room, joinToken);
+        
+        // Broadcast room update via WebSocket
+        User owner = userRepository.findById(userId).orElse(null);
+        String username = owner != null ? owner.getUsername() : "Unknown";
+        gameWebSocketHandler.broadcastPlayerJoined(room.getId(), userId, username);
+        gameWebSocketHandler.updateUserRoom(userId, room.getId());
+        
+        // Publish event via Message Broker
+        messageBroker.publishPlayerJoined(room.getId(), userId, username);
+        
+        return response;
     }
 
     @Transactional
@@ -148,7 +166,18 @@ public class RoomService {
         // Generate join token
         String joinToken = UUID.randomUUID().toString();
 
-        return buildRoomResponse(room, joinToken);
+        RoomResponse response = buildRoomResponse(room, joinToken);
+        
+        // Broadcast player joined event via WebSocket
+        User user = userRepository.findById(userId).orElse(null);
+        String username = user != null ? user.getUsername() : "Unknown";
+        gameWebSocketHandler.broadcastPlayerJoined(room.getId(), userId, username);
+        gameWebSocketHandler.updateUserRoom(userId, room.getId());
+        
+        // Publish event via Message Broker
+        messageBroker.publishPlayerJoined(room.getId(), userId, username);
+        
+        return response;
     }
 
     @Transactional
@@ -206,7 +235,15 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
 
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast player ready event via WebSocket
+        gameWebSocketHandler.broadcastPlayerReady(roomId, userId, player.getIsReady());
+        
+        // Publish event via Message Broker
+        messageBroker.publishPlayerReady(roomId, userId, player.getIsReady());
+        
+        return response;
     }
 
     @Transactional
@@ -223,6 +260,7 @@ public class RoomService {
         int team = request.getTeam();
         int slot = request.getSlot();
         
+        // Check if slot is occupied by another player
         boolean slotOccupied = roomPlayerRepository.findByRoomIdAndTeam(roomId, team).stream()
                 .anyMatch(p -> p.getSlot().equals(slot) && !p.getUserId().equals(userId));
 
@@ -231,12 +269,27 @@ public class RoomService {
                     "Slot already occupied");
         }
 
+        // Update player position
         player.setTeam(team);
         player.setSlot(slot);
         player.setIsReady(false); // Reset ready when changing team
-        roomPlayerRepository.save(player);
+        
+        try {
+            roomPlayerRepository.save(player);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Handle race condition: another player moved to this slot between check and save
+            log.warn("Race condition detected: slot ({}, {}) in room {} was occupied by another player", 
+                    team, slot, roomId);
+            throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                    "Slot was just occupied by another player. Please try again.");
+        }
 
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast team changed event via WebSocket
+        gameWebSocketHandler.broadcastTeamChanged(roomId, userId, team, slot);
+        
+        return response;
     }
 
     @Transactional
@@ -251,6 +304,10 @@ public class RoomService {
 
         // Remove player
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
+        
+        // Broadcast player left event via WebSocket
+        gameWebSocketHandler.broadcastPlayerLeft(roomId, userId);
+        gameWebSocketHandler.updateUserRoom(userId, null);
 
         // Handle owner transfer or room disband
         if (room.getOwnerId().equals(userId)) {
@@ -284,6 +341,10 @@ public class RoomService {
         }
 
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, targetUserId);
+        
+        // Broadcast player left event via WebSocket
+        gameWebSocketHandler.broadcastPlayerLeft(roomId, targetUserId);
+        gameWebSocketHandler.updateUserRoom(targetUserId, null);
     }
 
     @Transactional
@@ -345,7 +406,15 @@ public class RoomService {
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
 
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast room status changed event via WebSocket
+        gameWebSocketHandler.broadcastRoomStatusChanged(roomId, GameConstants.ROOM_STATUS_IN_GAME);
+        
+        // Publish event via Message Broker
+        messageBroker.publishRoomStatusChanged(roomId, room.getStatus(), GameConstants.ROOM_STATUS_IN_GAME);
+        
+        return response;
     }
 
     public RoomResponse getRoom(Long roomId) {
@@ -424,6 +493,48 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
                         "Requester not in room"));
 
+        // If targetUserId is null, it means swapping with empty slot - just move requester to that slot
+        if (targetUserId == null) {
+            // Check if slot is available (empty)
+            boolean slotOccupied = roomPlayerRepository.findByRoomIdAndTeam(roomId, targetTeam).stream()
+                    .anyMatch(p -> p.getSlot().equals(targetSlot) && !p.getUserId().equals(userId));
+
+            if (slotOccupied) {
+                throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                        "Slot is not empty");
+            }
+
+            // Move requester to empty slot (no swap request needed)
+            requester.setTeam(targetTeam);
+            requester.setSlot(targetSlot);
+            requester.setIsReady(false); // Reset ready when changing position
+            
+            try {
+                roomPlayerRepository.save(requester);
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                // Handle race condition: another player moved to this slot between check and save
+                log.warn("Race condition detected: slot ({}, {}) in room {} was occupied by another player during swap", 
+                        targetTeam, targetSlot, roomId);
+                throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                        "Slot was just occupied by another player. Please try again.");
+            }
+
+            // Broadcast team changed event via WebSocket
+            gameWebSocketHandler.broadcastTeamChanged(roomId, userId, targetTeam, targetSlot);
+
+            // Return a dummy DTO to indicate success (no actual swap request created)
+            SwapRequestDTO dto = new SwapRequestDTO();
+            dto.setRequesterId(userId);
+            dto.setRequesterTeam(requester.getTeam());
+            dto.setRequesterSlot(requester.getSlot());
+            dto.setTargetUserId(null);
+            dto.setTargetTeam(targetTeam);
+            dto.setTargetSlot(targetSlot);
+            dto.setStatus("COMPLETED"); // Direct move, no pending request
+            return dto;
+        }
+
+        // Normal swap with another player
         RoomPlayer target = roomPlayerRepository.findByRoomIdAndUserId(roomId, targetUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
                         "Target player not in room"));
@@ -463,9 +574,13 @@ public class RoomService {
         dto.setRequesterUsername(requesterUser != null ? requesterUser.getUsername() : "Unknown");
         dto.setRequesterTeam(requester.getTeam());
         dto.setRequesterSlot(requester.getSlot());
+        dto.setTargetUserId(targetUserId);
         dto.setTargetTeam(targetTeam);
         dto.setTargetSlot(targetSlot);
         dto.setStatus("PENDING");
+
+        // Broadcast swap request event via WebSocket
+        gameWebSocketHandler.broadcastSwapRequest(roomId, dto.getRequesterId(), dto.getTargetUserId(), dto.getRequestId());
 
         return dto;
     }
@@ -531,7 +646,20 @@ public class RoomService {
         swapRequest.setStatus("ACCEPTED");
         swapRequestRepository.save(swapRequest);
 
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast swap accepted event via WebSocket
+        // This will trigger team_changed events for both players
+        // Broadcast team changed for requester
+        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getRequesterId(), 
+            target.getTeam(), target.getSlot());
+        // Broadcast team changed for target
+        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getTargetId(), 
+            tempTeam, tempSlot);
+        // Broadcast swap request status
+        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "ACCEPTED");
+        
+        return response;
     }
 
     @Transactional
@@ -553,6 +681,36 @@ public class RoomService {
 
         swapRequest.setStatus("REJECTED");
         swapRequestRepository.save(swapRequest);
+        
+        // Broadcast swap rejected event via WebSocket
+        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+    }
+
+    /**
+     * Cancel swap request (requester only)
+     */
+    @Transactional
+    public void cancelSwapRequest(Long userId, Long roomId, Long requestId) {
+        SwapRequest swapRequest = swapRequestRepository.findById(requestId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "Swap request not found"));
+
+        // Verify user is the requester
+        if (!swapRequest.getRequesterId().equals(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_OWNER,
+                    "You are not the requester of this swap request");
+        }
+
+        if (!"PENDING".equals(swapRequest.getStatus())) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Swap request is no longer pending");
+        }
+
+        swapRequest.setStatus("REJECTED"); // Use REJECTED status for cancelled requests
+        swapRequestRepository.save(swapRequest);
+        
+        // Broadcast swap cancelled event via WebSocket
+        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
     }
 
     public List<SwapRequestDTO> getPendingSwapRequests(Long userId, Long roomId) {
@@ -568,6 +726,7 @@ public class RoomService {
                     dto.setRequesterUsername(requester != null ? requester.getUsername() : "Unknown");
                     dto.setRequesterTeam(r.getRequesterTeam());
                     dto.setRequesterSlot(r.getRequesterSlot());
+                    dto.setTargetUserId(r.getTargetId());
                     dto.setTargetTeam(r.getTargetTeam());
                     dto.setTargetSlot(r.getTargetSlot());
                     dto.setStatus(r.getStatus());
@@ -605,7 +764,12 @@ public class RoomService {
 
         log.info("Room {} ownership transferred from user {} to user {}", roomId, ownerId, targetUserId);
 
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast room update via WebSocket (owner changed)
+        gameWebSocketHandler.broadcastRoomUpdate(roomId);
+        
+        return response;
     }
 
     /**
@@ -642,8 +806,8 @@ public class RoomService {
 
             if (newMaxPlayers < currentPlayers) {
                 throw new BusinessException(ErrorCodes.ROOM_FULL, 
-                    String.format("Cannot change to %s mode. Current players (%d) exceed max players (%d)", 
-                        request.getMode(), currentPlayers, newMaxPlayers));
+                    String.format("Không thể đổi sang chế độ %s. Hiện tại có %d người trong phòng, nhưng chế độ %s chỉ cho phép tối đa %d người. Vui lòng yêu cầu một số người chơi rời phòng trước.", 
+                        request.getMode(), currentPlayers, request.getMode(), newMaxPlayers));
             }
 
             room.setMode(request.getMode());
@@ -690,7 +854,12 @@ public class RoomService {
         }
 
         room = roomRepository.save(room);
-        return buildRoomResponse(room, null);
+        RoomResponse response = buildRoomResponse(room, null);
+        
+        // Broadcast room update via WebSocket (settings changed)
+        gameWebSocketHandler.broadcastRoomUpdate(roomId);
+        
+        return response;
     }
 }
 

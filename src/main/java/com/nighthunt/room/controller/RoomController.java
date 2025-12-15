@@ -161,6 +161,17 @@ public class RoomController {
         return ApiResponse.ok();
     }
 
+    @PostMapping("/{roomId}/swap-cancel/{requestId}")
+    public ApiResponse<Void> cancelSwap(@PathVariable Long roomId,
+                                        @PathVariable Long requestId) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        if (userId == null) {
+            return ApiResponse.error("User not authenticated");
+        }
+        roomService.cancelSwapRequest(userId, roomId, requestId);
+        return ApiResponse.ok();
+    }
+
     @GetMapping("/{roomId}/swap-requests")
     public ApiResponse<List<SwapRequestDTO>> getPendingSwapRequests(@PathVariable Long roomId) {
         Long userId = SecurityUtils.getCurrentUserId();

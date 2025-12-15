@@ -14,6 +14,7 @@ public interface RoomPlayerRepository extends JpaRepository<RoomPlayer, Long> {
     List<RoomPlayer> findByRoomId(Long roomId);
     Optional<RoomPlayer> findByRoomIdAndUserId(Long roomId, Long userId);
     List<RoomPlayer> findByRoomIdAndTeam(Long roomId, Integer team);
+    List<RoomPlayer> findByUserId(Long userId); // Find all rooms a user is in
     void deleteByRoomId(Long roomId);
     void deleteByRoomIdAndUserId(Long roomId, Long userId);
     
