@@ -2,8 +2,11 @@ package com.nighthunt.dashboard.service;
 
 import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.dashboard.dto.DashboardStatsDTO;
+import com.nighthunt.dashboard.dto.DsSessionDTO;
 import com.nighthunt.dashboard.dto.PlayerDetailDTO;
 import com.nighthunt.dashboard.dto.RoomDetailDTO;
+import com.nighthunt.dedicatedserver.entity.DedicatedServer;
+import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
@@ -38,6 +41,7 @@ public class DashboardService {
     private final SessionStore sessionStore;
     private final ConnectionManager connectionManager;
     private final GameModeService gameModeService;
+    private final DedicatedServerRepository dsRepository;
     
     /**
      * Get comprehensive dashboard statistics
@@ -72,7 +76,18 @@ public class DashboardService {
         List<RoomDetailDTO> roomDetails = allActiveRooms.stream()
                 .map(this::buildRoomDetail)
                 .collect(Collectors.toList());
-        
+
+        // Dedicated Server stats
+        List<DedicatedServer> allDs = dsRepository.findAll();
+        List<DedicatedServer> activeDs = allDs.stream()
+                .filter(s -> !"stopped".equals(s.getStatus()))
+                .toList();
+        long totalActiveDsServers = activeDs.size();
+        long totalInGameDsServers = activeDs.stream().filter(s -> "in_game".equals(s.getStatus())).count();
+        long totalReadyDsServers  = activeDs.stream().filter(s -> "ready".equals(s.getStatus())).count();
+        long totalPlayersInDs     = activeDs.stream().mapToLong(s -> s.getCurrentPlayers() != null ? s.getCurrentPlayers() : 0).sum();
+        List<DsSessionDTO> dsSessions = activeDs.stream().map(this::buildDsSession).toList();
+
         return DashboardStatsDTO.builder()
                 .totalActiveRooms(totalActiveRooms)
                 .totalOnlineUsers(totalOnlineUsers)
@@ -80,6 +95,11 @@ public class DashboardService {
                 .totalWaitingRooms(totalWaitingRooms)
                 .totalInGameRooms(totalInGameRooms)
                 .activeRooms(roomDetails)
+                .totalActiveDsServers(totalActiveDsServers)
+                .totalInGameDsServers(totalInGameDsServers)
+                .totalReadyDsServers(totalReadyDsServers)
+                .totalPlayersInDs(totalPlayersInDs)
+                .activeDsSessions(dsSessions)
                 .build();
     }
     
@@ -171,6 +191,26 @@ public class DashboardService {
      */
     private int calculateMaxPlayers(String mode) {
         return gameModeService.getTotalPlayers(mode);
+    }
+
+    /**
+     * Build DsSessionDTO from DedicatedServer entity (excludes secret hash)
+     */
+    private DsSessionDTO buildDsSession(DedicatedServer ds) {
+        return DsSessionDTO.builder()
+                .serverId(ds.getServerId())
+                .dockerContainerId(ds.getDockerContainerId())
+                .ip(ds.getIp())
+                .port(ds.getPort())
+                .status(ds.getStatus())
+                .region(ds.getRegion())
+                .mapId(ds.getMapId())
+                .currentPlayers(ds.getCurrentPlayers())
+                .maxPlayers(ds.getMaxPlayers())
+                .imageTag(ds.getImageTag())
+                .startedAt(ds.getStartedAt())
+                .lastHeartbeatAt(ds.getLastHeartbeatAt())
+                .build();
     }
 }
 

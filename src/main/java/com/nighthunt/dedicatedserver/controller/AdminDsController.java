@@ -1,12 +1,15 @@
 package com.nighthunt.dedicatedserver.controller;
 
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.dedicatedserver.entity.DedicatedServer;
+import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -20,6 +23,7 @@ import java.util.Map;
 public class AdminDsController {
 
     private final DedicatedServerService dsService;
+    private final DedicatedServerRepository dsRepo;
 
     @Value("${ds.admin.secret:change-me-in-production}")
     private String adminSecret;
@@ -96,5 +100,36 @@ public class AdminDsController {
             "mapId",     mapId,
             "hint",      "Paste serverId+devSecret into ServerBootstrap Inspector, then press Play in Unity Editor"
         ));
+    }
+
+    /**
+     * List tất cả DS containers đang hoạt động (dành cho Dashboard).
+     * GET /api/admin/ds/servers
+     * GET /api/admin/ds/servers?status=in_game   (filter theo status)
+     */
+    @GetMapping("/servers")
+    public ApiResponse<List<DedicatedServer>> listServers(
+            @RequestHeader("X-Admin-Secret") String secret,
+            @RequestParam(required = false) String status) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+
+        List<DedicatedServer> servers;
+        if (status != null && !status.isBlank()) {
+            servers = dsRepo.findAll().stream()
+                    .filter(s -> status.equalsIgnoreCase(s.getStatus()))
+                    .toList();
+        } else {
+            // Mặc định: trả tất cả trừ stopped
+            servers = dsRepo.findAll().stream()
+                    .filter(s -> !"stopped".equals(s.getStatus()))
+                    .toList();
+        }
+
+        // Xóa serverSecretHash trước khi trả về
+        servers.forEach(s -> s.setServerSecretHash("[redacted]"));
+        return ApiResponse.ok(servers);
     }
 }
