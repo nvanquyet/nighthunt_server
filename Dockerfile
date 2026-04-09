@@ -21,7 +21,7 @@ FROM eclipse-temurin:17-jre-alpine
 RUN apk add --no-cache docker-cli wget
 
 WORKDIR /app
-COPY --from=build /app/build/libs/nighthunt-*.jar app.jar
+COPY --from=build /app/build/libs/NightHuntServer-*.jar app.jar
 
 # Expose cả hai port:
 #   8443 = HTTPS (local dev với mkcert cert)
