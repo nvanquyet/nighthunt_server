@@ -2,6 +2,7 @@ package com.nighthunt.matchmaking.repository;
 
 import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -27,5 +28,7 @@ public interface MatchmakingEntryRepository extends JpaRepository<MatchmakingEnt
     List<MatchmakingEntry> findByLobbyToken(String lobbyToken);
 
     /** Delete any existing entry for a user (re-queue clean-up). */
-    void deleteByUserId(Long userId);
+    @Modifying
+    @Query("DELETE FROM MatchmakingEntry m WHERE m.userId = :userId")
+    void deleteByUserId(@Param("userId") Long userId);
 }
