@@ -17,7 +17,7 @@ import java.util.Map;
  * Bảo mật bằng: X-DS-Secret header (verified bằng BCrypt trong service).
  */
 @RestController
-@RequestMapping("/api/ds")
+@RequestMapping("/ds")
 @RequiredArgsConstructor
 @Slf4j
 public class DedicatedServerController {

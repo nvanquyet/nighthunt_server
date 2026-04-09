@@ -119,7 +119,7 @@ app.get('/api/system/stats', requireToken, async (req, res) => {
 
 // ── Admin API proxy ───────────────────────────────────────────────────────────
 async function proxyAdmin(req, res) {
-    const url = `${BACKEND_URL}${req.path}`;
+    const url = `${BACKEND_URL}/api${req.path.replace(/^\/api/, '')}`;
     try {
         const headers = {
             'Content-Type': 'application/json',

@@ -16,7 +16,7 @@ import java.util.List;
  * Public endpoints (no authentication required for reading modes).
  */
 @RestController
-@RequestMapping("/api/game-modes")
+@RequestMapping("/game-modes")
 @RequiredArgsConstructor
 public class GameModeController {
 

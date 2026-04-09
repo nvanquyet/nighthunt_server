@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.*;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/match/end")
+@RequestMapping("/match/end")
 @RequiredArgsConstructor
 public class MatchEndController {
 

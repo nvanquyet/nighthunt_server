@@ -13,7 +13,7 @@ import java.util.List;
  * No authentication required (public endpoint).
  */
 @RestController
-@RequestMapping("/api/maps")
+@RequestMapping("/maps")
 @RequiredArgsConstructor
 public class GameMapController {
 

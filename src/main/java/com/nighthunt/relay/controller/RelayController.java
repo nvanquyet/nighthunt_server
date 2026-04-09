@@ -32,7 +32,7 @@ import java.util.List;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/relay")
+@RequestMapping("/relay")
 @RequiredArgsConstructor
 public class RelayController {
 

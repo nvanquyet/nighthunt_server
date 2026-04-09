@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
  * Yêu cầu user JWT auth (Spring Security filter xử lý).
  */
 @RestController
-@RequestMapping("/api/matchmaking")
+@RequestMapping("/matchmaking")
 @RequiredArgsConstructor
 public class MatchmakingController {
 

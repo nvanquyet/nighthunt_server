@@ -14,7 +14,7 @@ import java.util.Map;
  * Bảo mật bằng: X-Admin-Secret header.
  */
 @RestController
-@RequestMapping("/api/admin/ds")
+@RequestMapping("/admin/ds")
 @RequiredArgsConstructor
 @Slf4j
 public class AdminDsController {
