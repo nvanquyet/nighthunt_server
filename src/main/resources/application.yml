@@ -5,18 +5,18 @@ spring:
     allow-circular-references: true
   
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/nighthunt}
+    url: ${DB_URL:jdbc:mysql://mysql:3306/nighthunt}
     username: ${DB_USERNAME:nighthunt}
     password: ${DB_PASSWORD:nighthunt}
     driver-class-name: com.mysql.cj.jdbc.Driver
   
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: validate  # Changed from 'update' to 'validate' - Flyway handles migrations
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
   
   # Flyway configuration for database migrations
@@ -30,7 +30,9 @@ spring:
   
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      repositories:
+        enabled: false   # Không dùng @RedisHash repos, chỉ dùng RedisTemplate
+      host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 2000ms
@@ -42,10 +44,17 @@ spring:
 
 jwt:
   secret: ${JWT_SECRET:your-secret-key-change-in-production-min-256-bits}
-  expiration: ${JWT_EXPIRATION:3600000} # 1 hour in milliseconds
+  expiration: ${JWT_EXPIRATION:900000} # 15 minutes in milliseconds (was 3600000 = 1h)
+
+# Auth configuration
+auth:
+  refresh-token:
+    expiry-days: ${REFRESH_TOKEN_EXPIRY_DAYS:30} # Days before refresh token expires
 
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8443}
+  servlet:
+    context-path: /api  # All REST APIs now under /api prefix
   ssl:
     enabled: ${SSL_ENABLED:false}
     key-store: ${SSL_KEYSTORE:}
@@ -58,36 +67,44 @@ server:
 
 # API Base URL Configuration
 api:
-  base-url: ${API_BASE_URL:http://localhost:8080}
-  use-https: ${USE_HTTPS:false}
+  base-url: ${API_BASE_URL:https://localhost:8443}
+  use-https: ${USE_HTTPS:true}
+
+# CORS Configuration — set CORS_ALLOWED_ORIGINS env var in production
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:https://localhost:3000,https://localhost:8443}
+  security:
+    # CSRF Protection: disable for testing/development, enable for production
+    csrf-enabled: ${CSRF_ENABLED:false}
 
 logging:
   level:
     root: INFO
-    com.nighthunt: DEBUG
+    com.nighthunt: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 
-# Headless Server Configuration
-headless:
-  server:
-    build:
-      path: ${HEADLESS_BUILD_PATH:../Build/Server}
-    default:
-      version: ${HEADLESS_VERSION:Ver0.0.1}
-    log:
-      path: ${HEADLESS_LOG_PATH:./logs/headless-servers}
-    auto-scaling:
-      enabled: ${AUTO_SCALING_ENABLED:true}
-    scale-up:
-      threshold: ${SCALE_UP_THRESHOLD:0.8}  # 80% capacity
-    scale-down:
-      threshold: ${SCALE_DOWN_THRESHOLD:0.2}  # 20% capacity
-    idle-timeout:
-      minutes: ${IDLE_TIMEOUT_MINUTES:5}
-    max-servers: ${MAX_SERVERS:10}
-    default-ip: ${DEFAULT_SERVER_IP:127.0.0.1}
-    base-port: ${BASE_PORT:7777}
-    max-matches: ${MAX_MATCHES_PER_SERVER:10}
-    version: ${SERVER_VERSION:Ver0.0.1}
+# ── Dedicated Server Configuration ───────────────────────────────────────────
+ds:
+  vps:
+    public-ip: ${VPS_PUBLIC_IP:127.0.0.1}
 
+  port:
+    start: ${DS_PORT_START:7777}
+    end:   ${DS_PORT_END:7900}
+
+  max-players: ${DS_MAX_PLAYERS:16}
+
+  docker:
+    # Docker image full ref (cập nhật bởi CI/CD qua /api/admin/ds/update-image)
+    image-ref:           ${DS_IMAGE_REF:ghcr.io/yourname/nighthunt-ds:latest}
+    # URL backend mà DS dùng để gọi về (internal Docker network URL)
+    backend-internal-url: ${DS_BACKEND_INTERNAL_URL:https://nighthunt-backend:8443}
+    max-memory-mb:       ${DS_MAX_MEMORY_MB:512}
+    # false = skip docker run (dùng khi test local, không có DS image)
+    enabled:             ${DS_DOCKER_ENABLED:true}
+
+  admin:
+    # Secret dùng cho CI/CD webhook (POST /api/admin/ds/update-image)
+    secret: ${DS_ADMIN_SECRET:change-me-in-production}

@@ -22,7 +22,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String endpoint = request.getRequestURI();
+        // Use getServletPath() (without context-path prefix) so rules like /auth/login match correctly
+        String endpoint = request.getServletPath();
         String method = request.getMethod();
         
         // Get identifier based on authentication
@@ -41,13 +42,33 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             return true;
         } catch (Exception e) {
             // Rate limit exceeded
-            log.warn("Rate limit exceeded: endpoint={}, method={}, identifier={}", 
+            log.warn("Rate limit exceeded: endpoint={}, method={}, identifier={}",
                     endpoint, method, identifier);
-            
+
+            // Parse retry-after from exception message if available (e.g. "per 60 seconds")
+            int retryAfterSeconds = 60;
+            try {
+                String msg = e.getMessage();
+                if (msg != null) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                            .compile("per (\\d+) seconds").matcher(msg);
+                    if (m.find()) {
+                        retryAfterSeconds = Integer.parseInt(m.group(1));
+                    }
+                }
+            } catch (Exception ignored) {}
+
             response.setStatus(429); // HTTP 429 Too Many Requests
+            response.setContentType("application/json;charset=UTF-8");
             response.setHeader("X-RateLimit-Limit", "Exceeded");
-            response.setHeader("Retry-After", "60"); // Suggest retry after 60 seconds
-            
+            response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));
+            try {
+                response.getWriter().write(
+                    "{\"success\":false,\"data\":null,\"message\":\"Too many requests. Please try again later.\",\"errorCode\":\"RATE_LIMIT_EXCEEDED\"}"
+                );
+            } catch (Exception writeEx) {
+                log.error("Failed to write rate limit error response: {}", writeEx.getMessage());
+            }
             return false;
         }
     }

@@ -32,6 +32,17 @@ public class AuthController {
         return ApiResponse.ok(response);
     }
 
+    /**
+     * Exchange a refresh token for a new access token (+ rotated refresh token).
+     * This is the production auto-login mechanism: client stores refreshToken persistently
+     * and calls this endpoint on every app startup instead of re-prompting the user.
+     */
+    @PostMapping("/refresh-token")
+    public ApiResponse<AuthResponse> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
+        AuthResponse response = authService.refreshToken(request);
+        return ApiResponse.ok(response);
+    }
+
     @PostMapping("/change-password")
     public ApiResponse<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();

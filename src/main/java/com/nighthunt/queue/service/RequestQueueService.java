@@ -1,5 +1,6 @@
 package com.nighthunt.queue.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.queue.entity.QueuedRequest;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 public class RequestQueueService {
     
     private final RedisTemplate<String, Object> redisTemplate;
+    private final ObjectMapper objectMapper;
     
     private static final String QUEUE_KEY_PREFIX = "request_queue:";
     private static final String QUEUE_PROCESSING_KEY_PREFIX = "request_queue_processing:";
@@ -78,8 +80,7 @@ public class RequestQueueService {
         
         // Serialize QueuedRequest to JSON string for Redis storage
         try {
-            String requestJson = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .writeValueAsString(queuedRequest);
+            String requestJson = objectMapper.writeValueAsString(queuedRequest);
             redisTemplate.opsForZSet().add(queueKey, requestJson, score);
         } catch (Exception e) {
             log.error("Error serializing queued request: {}", e.getMessage());

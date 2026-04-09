@@ -29,6 +29,9 @@ public class Room {
     @Column(nullable = false, length = 20)
     private String mode; // 2v2, 3v3, 5v5
 
+    @Column(name = "map_id", nullable = false, length = 50)
+    private String mapId;
+
     @Column(nullable = false, length = 20)
     private String status; // WAITING, IN_GAME, CLOSED, FINISHED
 
@@ -43,9 +46,6 @@ public class Room {
 
     @Column(name = "owner_id", nullable = false)
     private Long ownerId;
-
-    @Column(name = "headless_server_id")
-    private Long headlessServerId;
 
     @Column(name = "match_id")
     private String matchId;

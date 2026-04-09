@@ -15,12 +15,11 @@ public class RoomResponse {
     private Long roomId;
     private String roomCode;
     private String mode;
+    private String mapId;
     private String status;
     private Boolean isPublic;
     private Boolean isLocked;
     private Long ownerId;
-    private String serverIp;
-    private Integer serverPort;
     private String matchId;
     private String joinToken;
     private List<RoomPlayerResponse> players;

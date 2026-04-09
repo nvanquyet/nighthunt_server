@@ -2,7 +2,7 @@ package com.nighthunt.room.service;
 
 import com.nighthunt.room.entity.SwapRequest;
 import com.nighthunt.room.repository.SwapRequestRepository;
-import com.nighthunt.game.websocket.GameWebSocketHandler;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,7 +21,7 @@ import java.util.List;
 public class SwapRequestCleanupTask {
 
     private final SwapRequestRepository swapRequestRepository;
-    private final GameWebSocketHandler gameWebSocketHandler;
+    private final ConnectionManager connectionManager;
 
     // Run every second
     @Scheduled(fixedDelay = 1000L)
@@ -37,7 +37,8 @@ public class SwapRequestCleanupTask {
                 sr.setStatus("REJECTED");
                 swapRequestRepository.save(sr);
                 // Notify both requester/target in room about rejection/expiry
-                gameWebSocketHandler.broadcastSwapRequestStatusChanged(sr.getRoomId(), sr.getId(), "REJECTED");
+                connectionManager.broadcastToRoom(sr.getRoomId(), "swap_request_status",
+                        java.util.Map.of("requestId", sr.getId(), "status", "REJECTED"));
             } catch (Exception ex) {
                 log.warn("Failed to expire swap request {}: {}", sr.getId(), ex.getMessage());
             }

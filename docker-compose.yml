@@ -1,20 +1,31 @@
-version: '3.8'
+# ══════════════════════════════════════════════════════════════
+# docker-compose.yml — NightHunt Backend Stack
+#
+# LOCAL DEV:   docker-compose --env-file .env.local up -d
+#              (hoặc dùng: ./dev-start.ps1 — auto setup hoàn toàn)
+#
+# PRODUCTION:  docker-compose --env-file .env.production up -d
+#              (CI/CD pipeline tự chạy — không cần config thủ công)
+# ══════════════════════════════════════════════════════════════
 
 services:
   mysql:
     image: mysql:8.0
     container_name: nighthunt-mysql
+    env_file:
+      - ${ENV_FILE:-.env.local}
     environment:
-      MYSQL_DATABASE: nighthunt
-      MYSQL_USER: nighthunt
-      MYSQL_PASSWORD: nighthunt
-      MYSQL_ROOT_PASSWORD: nighthunt
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pnighthunt"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,27 +36,38 @@ services:
   redis:
     image: redis:7-alpine
     container_name: nighthunt-redis
+    env_file:
+      - ${ENV_FILE:-.env.local}
+    # Neu REDIS_PASSWORD trong thi chay khong password
+    # Neu co password thi them --requirepass
+    command: >
+      sh -c "redis-server
+      $( [ -n \"$${REDIS_PASSWORD}\" ] && echo \"--requirepass $${REDIS_PASSWORD}\" || true )"
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
+      # Healthcheck don gian: ping truc tiep, khong can password khi REDIS_PASSWORD trong
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - nighthunt-network
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:latest
     container_name: nighthunt-phpmyadmin
+    env_file:
+      - ${ENV_FILE:-.env.local}
     environment:
       PMA_HOST: mysql
       PMA_PORT: 3306
-      PMA_USER: nighthunt
-      PMA_PASSWORD: nighthunt
-      MYSQL_ROOT_PASSWORD: nighthunt
+      PMA_USER: ${MYSQL_USER}
+      PMA_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
       - "8081:80"
     depends_on:
@@ -58,47 +80,90 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nighthunt-backend
+    env_file:
+      - ${ENV_FILE:-.env.local}
     environment:
-      DB_URL: jdbc:mysql://mysql:3306/nighthunt
-      DB_USERNAME: nighthunt
-      DB_PASSWORD: nighthunt
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-change-this-secret-key-in-production-min-256-bits}
-      SERVER_PORT: ${SERVER_PORT:-8080}
-      SSL_ENABLED: ${SSL_ENABLED:-false}
-      USE_HTTPS: ${USE_HTTPS:-false}
-      API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
+      # Database Configuration
+      DB_URL: ${DB_URL}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      
+      # Redis Configuration
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      
+      # JWT & Security
+      JWT_SECRET: ${JWT_SECRET}
+      CSRF_ENABLED: ${CSRF_ENABLED}
+      
+      # SSL/HTTPS Configuration
+      SERVER_PORT: ${SERVER_PORT}
+      SSL_ENABLED: ${SSL_ENABLED}
+      SSL_KEYSTORE: ${SSL_KEYSTORE}
+      SSL_KEYSTORE_PASSWORD: ${SSL_KEYSTORE_PASSWORD}
+      SSL_KEYSTORE_TYPE: ${SSL_KEYSTORE_TYPE}
+      SSL_KEY_ALIAS: ${SSL_KEY_ALIAS}
+      USE_HTTPS: ${USE_HTTPS}
+      API_BASE_URL: ${API_BASE_URL}
+      
+      # CORS Configuration
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      
+      # Dedicated Server Configuration
+      VPS_PUBLIC_IP: ${VPS_PUBLIC_IP}
+      DS_IMAGE_REF: ${DS_IMAGE_REF}
+      DS_ADMIN_SECRET: ${DS_ADMIN_SECRET}
+      DS_BACKEND_INTERNAL_URL: ${DS_BACKEND_INTERNAL_URL}
+      DS_PORT_START: ${DS_PORT_START}
+      DS_PORT_END: ${DS_PORT_END}
+      DS_MAX_PLAYERS: ${DS_MAX_PLAYERS}
     ports:
-      - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
+      - "${SERVER_PORT}:${SERVER_PORT}"
+    volumes:
+      # SSL Certificates
+      - ./src/main/resources/certs:/app/certs:ro
+      # Docker socket for spawning DS containers
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- --no-check-certificate https://localhost:${SERVER_PORT:-8443}/api/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - nighthunt-network
+      - game-network
 
   dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
     container_name: nighthunt-dashboard
+    env_file:
+      - ${ENV_FILE:-.env.local}
     environment:
-      BACKEND_URL: http://backend:8080
-      PORT: 3000
+      BACKEND_URL: ${DASHBOARD_BACKEND_URL}
+      PORT: ${DASHBOARD_PORT}
+      DASHBOARD_ADMIN_USER: ${DASHBOARD_ADMIN_USER}
+      DASHBOARD_ADMIN_PASS: ${DASHBOARD_ADMIN_PASS}
+      DASHBOARD_ROOT_USER: ${DASHBOARD_ROOT_USER}
+      DASHBOARD_ROOT_PASS: ${DASHBOARD_ROOT_PASS}
+      JWT_SECRET: ${JWT_SECRET}
+      DS_ADMIN_SECRET: ${DS_ADMIN_SECRET}
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     depends_on:
       - backend
     restart: unless-stopped
     networks:
       - nighthunt-network
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
 
 volumes:
   mysql_data:
@@ -107,3 +172,7 @@ volumes:
 networks:
   nighthunt-network:
     driver: bridge
+  # Network riêng cho DS containers ↔ backend (tách biệt với DB/Redis)
+  game-network:
+    driver: bridge
+    name: nighthunt_game-network   # Tên cố định để DockerManagerService reference

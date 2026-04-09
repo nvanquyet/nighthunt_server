@@ -32,5 +32,23 @@ public interface BanRepository extends JpaRepository<Ban, Long> {
     // Find all active bans for user (any type)
     @Query("SELECT b FROM Ban b WHERE b.userId = :userId AND b.isActive = true")
     List<Ban> findAllActiveBansByUserId(@Param("userId") Long userId);
+
+    // All bans for a user (history, including expired)
+    List<Ban> findByUserIdOrderByBannedAtDesc(Long userId);
+
+    // Admin queries
+    long countByIsActiveTrue();
+
+    @Query("""
+        SELECT b FROM Ban b
+        WHERE (:type IS NULL OR b.banType = :type)
+          AND (:active IS NULL OR b.isActive = :active)
+        ORDER BY b.bannedAt DESC
+        """)
+    org.springframework.data.domain.Page<Ban> findFiltered(
+        @Param("type")   com.nighthunt.ban.entity.Ban.BanType type,
+        @Param("active") Boolean active,
+        org.springframework.data.domain.Pageable pageable
+    );
 }
 

@@ -1,0 +1,30 @@
+package com.nighthunt.game.websocket.port;
+
+/**
+ * Port (interface) for managing real-time client connections.
+ * Decouples business logic from the WebSocket transport layer.
+ * Implementation can be WebSocket, SSE, or any other protocol.
+ */
+public interface ConnectionManager {
+
+    /**
+     * Send a typed message to a specific user.
+     */
+    void sendToUser(Long userId, String eventType, Object data);
+
+    /**
+     * Broadcast a typed message to all users in a room.
+     */
+    void broadcastToRoom(Long roomId, String eventType, Object data);
+
+    /**
+     * Track which room a user is currently in (for broadcast routing).
+     * Pass null roomId to clear the mapping (user left room).
+     */
+    void updateUserRoom(Long userId, Long roomId);
+
+    /**
+     * Get count of active WebSocket connections.
+     */
+    int getActiveConnectionCount();
+}

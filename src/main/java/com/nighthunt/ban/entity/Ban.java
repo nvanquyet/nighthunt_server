@@ -30,8 +30,8 @@ public class Ban {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "user_id", nullable = false)
-    private Long userId;
+    @Column(name = "user_id", nullable = true)
+    private Long userId; // NULL for IP/device bans not tied to a specific user
 
     @Column(name = "ban_type", nullable = false, length = 20, columnDefinition = "VARCHAR(20)")
     @Enumerated(EnumType.STRING)

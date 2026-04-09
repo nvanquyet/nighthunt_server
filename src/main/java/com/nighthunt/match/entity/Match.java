@@ -12,7 +12,6 @@ import java.time.LocalDateTime;
 @Table(name = "matches", indexes = {
         @Index(name = "idx_match_id", columnList = "matchId", unique = true),
         @Index(name = "idx_room_id", columnList = "roomId"),
-        @Index(name = "idx_headless_server_id", columnList = "headlessServerId"),
         @Index(name = "idx_status", columnList = "status")
 })
 @Data
@@ -25,16 +24,25 @@ public class Match {
     private Long id;
 
     @Column(name = "match_id", nullable = false, unique = true, length = 50)
-    private String matchId; // unique identifier from headless server
+    private String matchId; // unique UUID identifier
 
     @Column(name = "room_id", nullable = false)
     private Long roomId;
 
-    @Column(name = "headless_server_id", nullable = true)
-    private Long headlessServerId; // Nullable - will be assigned when headless server is allocated
-
     @Column(nullable = false, length = 20)
     private String status; // LOBBY, IN_GAME, FINISHED
+
+    /** -1 means DRAW. Null until match finished. */
+    @Column(name = "winner_team_id")
+    private Integer winnerTeamId;
+
+    /** TEAM_ELIMINATED | TIMER_EXPIRED | DRAW — null until match finished. */
+    @Column(name = "end_reason", length = 30)
+    private String endReason;
+
+    /** Denormalized game mode for reporting. */
+    @Column(name = "game_mode", length = 20)
+    private String gameMode;
 
     @Column(name = "started_at")
     private LocalDateTime startedAt;

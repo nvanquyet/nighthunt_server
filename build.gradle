@@ -52,3 +52,27 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+// Load production-localhost defaults into bootRun environment variables.
+def loadEnvFile = { fileName ->
+    def env = [:]
+    def envFile = file(fileName)
+    if (envFile.exists()) {
+        envFile.eachLine { line ->
+            line = line.trim()
+            if (!line.isEmpty() && !line.startsWith('#') && line.contains('=')) {
+                def idx = line.indexOf('=')
+                def key = line.substring(0, idx).trim()
+                def value = line.substring(idx + 1).trim()
+                env[key] = value
+            }
+        }
+    }
+    return env
+}
+
+bootRun {
+    def envVars = loadEnvFile('.env.production')
+    environment envVars
+    jvmArgs = ['-Dfile.encoding=UTF-8']
+}

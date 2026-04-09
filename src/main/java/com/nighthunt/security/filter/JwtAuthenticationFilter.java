@@ -1,6 +1,6 @@
 package com.nighthunt.security.filter;
 
-import com.nighthunt.game.websocket.GameWebSocketHandler;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.common.constants.GameConstants;
@@ -29,7 +29,7 @@ import java.util.Collections;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final TokenProvider tokenProvider;
     private final SessionStore sessionStore;
-    private final GameWebSocketHandler gameWebSocketHandler;
+    private final ConnectionManager connectionManager;
     private static final String SESSION_HEADER = "X-Session-Id";
 
     @Override
@@ -53,12 +53,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 if (sessionStore.isForceLogout(String.valueOf(userId))) {
                     // Send force_logout event via WebSocket
                     try {
-                        gameWebSocketHandler.sendForceLogout(userId, "Tài khoản đã đăng nhập ở nơi khác");
+                        connectionManager.sendToUser(userId, "force_logout", java.util.Map.of(
+                                "reason", "Account logged in from another location",
+                                "message", "You have been logged out. Please log in again."
+                        ));
                     } catch (Exception e) {
                         log.error("Error sending force_logout event to user {}: {}", userId, e.getMessage());
                     }
                     throw new BusinessException(ErrorCodes.AUTH_FORCE_LOGOUT,
-                            "Tài khoản đã đăng nhập ở nơi khác. Vui lòng đăng nhập lại.");
+                            "Account is already logged in elsewhere. Please log in again.");
                 }
 
                 // Check session validity
@@ -67,24 +70,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     log.warn("Session not found in Redis for user {} - session expired or never existed", userId);
                     // Send session_expired event via WebSocket
                     try {
-                        gameWebSocketHandler.sendSessionExpired(userId);
+                        connectionManager.sendToUser(userId, "session_expired", java.util.Map.of(
+                                "message", "Session expired. Please log in again."
+                        ));
                     } catch (Exception e) {
                         log.error("Error sending session_expired event to user {}: {}", userId, e.getMessage());
                     }
                     throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
-                            "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+                            "Session expired. Please log in again.");
                 }
                 if (!StringUtils.hasText(clientSessionId) || !currentSessionId.equals(clientSessionId)) {
                     log.warn("Session mismatch for user {} - Redis sessionId: {}, Client sessionId: {}", 
                             userId, currentSessionId, clientSessionId);
                     // Send session_expired event via WebSocket
                     try {
-                        gameWebSocketHandler.sendSessionExpired(userId);
+                        connectionManager.sendToUser(userId, "session_expired", java.util.Map.of(
+                                "message", "Session expired. Please log in again."
+                        ));
                     } catch (Exception e) {
                         log.error("Error sending session_expired event to user {}: {}", userId, e.getMessage());
                     }
                     throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
-                            "Session không hợp lệ hoặc đã hết hạn.");
+                            "Session is invalid or has expired.");
                 }
 
                 // Refresh TTL for active session

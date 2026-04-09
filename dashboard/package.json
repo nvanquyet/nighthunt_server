@@ -11,7 +11,8 @@
     "express": "^4.18.2",
     "axios": "^1.6.0",
     "systeminformation": "^5.21.0",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "jsonwebtoken": "^9.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

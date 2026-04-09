@@ -1,12 +1,16 @@
 package com.nighthunt.room.service;
 
-import com.nighthunt.game.websocket.GameWebSocketHandler;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
+import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.relay.model.RelaySession;
+import com.nighthunt.relay.service.RelaySessionManager;
+import com.nighthunt.party.service.PartyRoomService;
 import com.nighthunt.room.dto.*;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
@@ -32,20 +36,28 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class RoomService {
-    // Note: headlessServerId should be null when creating a room
-    // It will be assigned later when a headless server is allocated
+
+    private static final String DEFAULT_MAP_ID = "map_01";
 
     private final RoomRepository roomRepository;
     private final RoomPlayerRepository roomPlayerRepository;
     private final UserRepository userRepository;
     private final MatchRepository matchRepository;
     private final SwapRequestRepository swapRequestRepository;
-    private final GameWebSocketHandler gameWebSocketHandler; // Unified WebSocket handler for all events
-    private final MessageBrokerService messageBroker; // Message broker for event publishing
+    private final ConnectionManager connectionManager;
+    private final MessageBrokerService messageBroker;
+    private final RoomResponseAssembler roomResponseAssembler;
+    private final TeamSlotAllocator teamSlotAllocator;
+    private final RelaySessionManager relaySessionManager;
+    private final PartyRoomService partyRoomService;
+    private final GameModeService gameModeService;
     private final Random random = new Random();
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
+        // Validate game mode upfront so invalid modes are rejected at creation time
+        gameModeService.validateModeOrThrow(request.getMode());
+
         // Generate match ID and join token
         String matchId = UUID.randomUUID().toString();
         String joinToken = UUID.randomUUID().toString();
@@ -60,23 +72,20 @@ public class RoomService {
         Room room = Room.builder()
                 .roomCode(roomCode)
                 .mode(request.getMode())
+            .mapId(normalizeMapId(request.getMapId()))
                 .status(GameConstants.ROOM_STATUS_WAITING)
                 .isPublic(request.getIsPublic() != null ? request.getIsPublic() : true)
                 .isLocked(request.getIsLocked() != null ? request.getIsLocked() : false)
                 .password(request.getPassword()) // Optional password
                 .ownerId(userId)
-                .headlessServerId(null) // Will be assigned when headless server is allocated
                 .matchId(matchId)
                 .build();
         room = roomRepository.save(room);
 
         // Create match entity
-        // Note: Match also needs headlessServerId, but we'll set it to null for now
-        // It will be updated when a headless server is allocated
         Match match = Match.builder()
                 .matchId(matchId)
                 .roomId(room.getId())
-                .headlessServerId(null) // Will be assigned when headless server is allocated
                 .status(GameConstants.MATCH_STATUS_LOBBY)
                 .build();
         matchRepository.save(match);
@@ -91,13 +100,13 @@ public class RoomService {
                 .build();
         roomPlayerRepository.save(ownerPlayer);
 
-        RoomResponse response = buildRoomResponse(room, joinToken);
+        RoomResponse response = roomResponseAssembler.toResponse(room, joinToken);
         
         // Broadcast room update via WebSocket
         User owner = userRepository.findById(userId).orElse(null);
         String username = owner != null ? owner.getUsername() : "Unknown";
-        gameWebSocketHandler.broadcastPlayerJoined(room.getId(), userId, username);
-        gameWebSocketHandler.updateUserRoom(userId, room.getId());
+        connectionManager.sendToUser(userId, "player_joined", response);
+        connectionManager.updateUserRoom(userId, room.getId());
         
         // Publish event via Message Broker
         messageBroker.publishPlayerJoined(room.getId(), userId, username);
@@ -132,7 +141,7 @@ public class RoomService {
         }
 
         // Check room capacity based on mode
-        int maxPlayers = getMaxPlayersForMode(room.getMode());
+        int maxPlayers = gameModeService.getTotalPlayers(room.getMode());
         int currentPlayers = roomPlayerRepository.countByRoomId(room.getId());
         if (currentPlayers >= maxPlayers) {
             throw new BusinessException(ErrorCodes.ROOM_FULL,
@@ -140,18 +149,9 @@ public class RoomService {
         }
 
         // Find available slot
-        int team = GameConstants.TEAM_1;
-        int slot = 0;
-        int team1Count = roomPlayerRepository.countByRoomIdAndTeam(room.getId(), GameConstants.TEAM_1);
-        int team2Count = roomPlayerRepository.countByRoomIdAndTeam(room.getId(), GameConstants.TEAM_2);
-        
-        if (team1Count <= team2Count) {
-            team = GameConstants.TEAM_1;
-            slot = team1Count;
-        } else {
-            team = GameConstants.TEAM_2;
-            slot = team2Count;
-        }
+        int[] allocation = teamSlotAllocator.allocate(room.getId());
+        int team = allocation[0];
+        int slot = allocation[1];
 
         // Add player
         RoomPlayer player = RoomPlayer.builder()
@@ -166,13 +166,13 @@ public class RoomService {
         // Generate join token
         String joinToken = UUID.randomUUID().toString();
 
-        RoomResponse response = buildRoomResponse(room, joinToken);
+        RoomResponse response = roomResponseAssembler.toResponse(room, joinToken);
         
         // Broadcast player joined event via WebSocket
         User user = userRepository.findById(userId).orElse(null);
         String username = user != null ? user.getUsername() : "Unknown";
-        gameWebSocketHandler.broadcastPlayerJoined(room.getId(), userId, username);
-        gameWebSocketHandler.updateUserRoom(userId, room.getId());
+        connectionManager.broadcastToRoom(room.getId(), "player_joined", response);
+        connectionManager.updateUserRoom(userId, room.getId());
         
         // Publish event via Message Broker
         messageBroker.publishPlayerJoined(room.getId(), userId, username);
@@ -189,7 +189,7 @@ public class RoomService {
         availableRooms = availableRooms.stream()
                 .filter(room -> room.getMode().equals(request.getMode()))
                 .filter(room -> {
-                    int maxPlayers = getMaxPlayersForMode(room.getMode());
+                    int maxPlayers = gameModeService.getTotalPlayers(room.getMode());
                     int currentPlayers = roomPlayerRepository.countByRoomId(room.getId());
                     return currentPlayers < maxPlayers;
                 })
@@ -222,6 +222,58 @@ public class RoomService {
         return joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
     }
 
+    /**
+     * Create a private, locked room for a ranked match group.
+     * All players are auto-added and auto-readied. No relay session is created
+     * (DS handles the connection). Called by MatchmakingQueueService when all players accept.
+     */
+    @Transactional
+    public RoomResponse createRankedRoom(List<Long> userIds, String gameMode, String mapId) {
+        gameModeService.validateModeOrThrow(gameMode);
+
+        String matchId = UUID.randomUUID().toString();
+        String roomCode;
+        do {
+            roomCode = RoomCodeGenerator.generate();
+        } while (roomRepository.findByRoomCode(roomCode).isPresent());
+
+        String resolvedMapId = (mapId != null && !mapId.isBlank()) ? mapId : DEFAULT_MAP_ID;
+        Room room = Room.builder()
+                .roomCode(roomCode)
+                .mode(gameMode)
+            .mapId(resolvedMapId)
+                .status(GameConstants.ROOM_STATUS_WAITING)
+                .isPublic(false)
+                .isLocked(true)
+                .ownerId(userIds.get(0))
+                .matchId(matchId)
+                .build();
+        room = roomRepository.save(room);
+
+        Match match = Match.builder()
+                .matchId(matchId)
+                .roomId(room.getId())
+                .status(GameConstants.MATCH_STATUS_LOBBY)
+                .build();
+        matchRepository.save(match);
+
+        for (Long uid : userIds) {
+            int[] alloc = teamSlotAllocator.allocate(room.getId());
+            RoomPlayer rp = RoomPlayer.builder()
+                    .roomId(room.getId())
+                    .userId(uid)
+                    .team(alloc[0])
+                    .slot(alloc[1])
+                    .isReady(true) // auto-ready in ranked
+                    .build();
+            roomPlayerRepository.save(rp);
+            connectionManager.updateUserRoom(uid, room.getId());
+        }
+
+        log.info("[RankedMM] Created ranked room {} (mode={}, players={})", roomCode, gameMode, userIds.size());
+        return roomResponseAssembler.toResponse(room, null);
+    }
+
     @Transactional
     public RoomResponse setReady(Long userId, Long roomId, ReadyRequest request) {
         RoomPlayer player = roomPlayerRepository.findByRoomIdAndUserId(roomId, userId)
@@ -235,10 +287,10 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
 
-        RoomResponse response = buildRoomResponse(room, null);
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast player ready event via WebSocket
-        gameWebSocketHandler.broadcastPlayerReady(roomId, userId, player.getIsReady());
+        connectionManager.broadcastToRoom(roomId, "player_ready", response);
         
         // Publish event via Message Broker
         messageBroker.publishPlayerReady(roomId, userId, player.getIsReady());
@@ -284,10 +336,10 @@ public class RoomService {
                     "Slot was just occupied by another player. Please try again.");
         }
 
-        RoomResponse response = buildRoomResponse(room, null);
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast team changed event via WebSocket
-        gameWebSocketHandler.broadcastTeamChanged(roomId, userId, team, slot);
+        connectionManager.broadcastToRoom(roomId, "team_changed", response);
         
         return response;
     }
@@ -305,9 +357,16 @@ public class RoomService {
         // Remove player
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
         
+        // Clear party room status if player is in a party
+        try {
+            partyRoomService.clearPartyRoomStatus(userId);
+        } catch (Exception e) {
+            log.warn("Failed to clear party room status for user {}: {}", userId, e.getMessage());
+        }
+        
         // Broadcast player left event via WebSocket
-        gameWebSocketHandler.broadcastPlayerLeft(roomId, userId);
-        gameWebSocketHandler.updateUserRoom(userId, null);
+        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
+        connectionManager.updateUserRoom(userId, null);
 
         // Handle owner transfer or room disband
         if (room.getOwnerId().equals(userId)) {
@@ -343,8 +402,8 @@ public class RoomService {
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, targetUserId);
         
         // Broadcast player left event via WebSocket
-        gameWebSocketHandler.broadcastPlayerLeft(roomId, targetUserId);
-        gameWebSocketHandler.updateUserRoom(targetUserId, null);
+        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
+        connectionManager.updateUserRoom(targetUserId, null);
     }
 
     @Transactional
@@ -392,7 +451,7 @@ public class RoomService {
 
         // Check enough players for mode
         int currentPlayerCount = players.size();
-        int requiredPlayerCount = getMaxPlayersForMode(room.getMode());
+        int requiredPlayerCount = gameModeService.getTotalPlayers(room.getMode());
         if (currentPlayerCount != requiredPlayerCount) {
             throw new BusinessException(ErrorCodes.ROOM_NOT_ENOUGH_PLAYERS,
                     String.format("Room requires %d players for %s mode, but has %d players",
@@ -406,11 +465,32 @@ public class RoomService {
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
 
-        RoomResponse response = buildRoomResponse(room, null);
-        
+        // ── BE-27: Create relay session for Custom mode ──────────────────────
+        // If the room is a Custom (non-ranked) lobby, spin up a Mini-Relay session
+        // so clients get host/port info via WS game_starting event.
+        RelaySession relaySession = null;
+        boolean isCustomMode = room.getIsPublic() != null && !room.getIsPublic(); // Custom rooms are private
+        // Use a simple heuristic: rooms without dedicated-server assignment use relay.
+        // A proper "mode" field can be added to Room later; for now, any non-DS room gets relay.
+        relaySession = relaySessionManager.createSession(roomId, room.getMatchId());
+
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
+
+        // Include relay info in the game_starting broadcast
+        java.util.Map<String, Object> startPayload = new java.util.HashMap<>();
+        startPayload.put("room", response);
+        if (relaySession != null) {
+            startPayload.put("relayToken",  relaySession.getSessionToken());
+            startPayload.put("relayHost",   relaySession.getRelayHost());
+            startPayload.put("relayPort",   relaySession.getRelayPort());
+        }
+
+        // Broadcast game_starting event via WebSocket
+        connectionManager.broadcastToRoom(roomId, "game_starting", startPayload);
+
         // Broadcast room status changed event via WebSocket
-        gameWebSocketHandler.broadcastRoomStatusChanged(roomId, GameConstants.ROOM_STATUS_IN_GAME);
-        
+        connectionManager.broadcastToRoom(roomId, "room_status_changed", response);
+
         // Publish event via Message Broker
         messageBroker.publishRoomStatusChanged(roomId, room.getStatus(), GameConstants.ROOM_STATUS_IN_GAME);
         
@@ -421,51 +501,14 @@ public class RoomService {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
-        return buildRoomResponse(room, null);
+        return roomResponseAssembler.toResponse(room, null);
     }
 
+    /**
+     * Delegates to RoomResponseAssembler (kept for backward compatibility if needed externally).
+     */
     public RoomResponse buildRoomResponse(Room room, String joinToken) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
-        List<RoomPlayerResponse> playerResponses = players.stream()
-                .map(p -> {
-                    User user = userRepository.findById(p.getUserId()).orElse(null);
-                    return RoomPlayerResponse.builder()
-                            .userId(p.getUserId())
-                            .username(user != null ? user.getUsername() : "Unknown")
-                            .team(p.getTeam())
-                            .slot(p.getSlot())
-                            .isReady(p.getIsReady())
-                            .build();
-                })
-                .collect(Collectors.toList());
-
-        // Placeholder server info (headless server functionality disabled)
-        String serverIp = "127.0.0.1";
-        int serverPort = 0;
-
-        return RoomResponse.builder()
-                .roomId(room.getId())
-                .roomCode(room.getRoomCode())
-                .mode(room.getMode())
-                .status(room.getStatus())
-                .isPublic(room.getIsPublic())
-                .isLocked(room.getIsLocked())
-                .ownerId(room.getOwnerId())
-                .serverIp(serverIp)
-                .serverPort(serverPort)
-                .matchId(room.getMatchId())
-                .joinToken(joinToken)
-                .players(playerResponses)
-                .build();
-    }
-
-    private int getMaxPlayersForMode(String mode) {
-        return switch (mode) {
-            case GameConstants.MODE_2V2 -> 4;
-            case GameConstants.MODE_3V3 -> 6;
-            case GameConstants.MODE_5V5 -> 10;
-            default -> 4;
-        };
+        return roomResponseAssembler.toResponse(room, joinToken);
     }
 
     /**
@@ -520,7 +563,7 @@ public class RoomService {
             }
 
             // Broadcast team changed event via WebSocket
-            gameWebSocketHandler.broadcastTeamChanged(roomId, userId, targetTeam, targetSlot);
+            connectionManager.broadcastToRoom(roomId, "team_changed", roomResponseAssembler.toResponseById(roomId));
 
             // Return a dummy DTO to indicate success (no actual swap request created)
             SwapRequestDTO dto = new SwapRequestDTO();
@@ -580,7 +623,7 @@ public class RoomService {
         dto.setStatus("PENDING");
 
         // Broadcast swap request event via WebSocket
-        gameWebSocketHandler.broadcastSwapRequest(roomId, dto.getRequesterId(), dto.getTargetUserId(), dto.getRequestId());
+        connectionManager.sendToUser(dto.getTargetUserId(), "swap_request", dto);
 
         return dto;
     }
@@ -608,7 +651,7 @@ public class RoomService {
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
             swapRequest.setStatus("REJECTED");
             swapRequestRepository.save(swapRequest);
-            gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
             throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                     "Swap request is no longer pending");
         }
@@ -702,19 +745,10 @@ public class RoomService {
         swapRequest.setStatus("ACCEPTED");
         swapRequestRepository.save(swapRequest);
 
-        RoomResponse response = buildRoomResponse(room, null);
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast swap accepted event via WebSocket
-        // This will trigger team_changed events for both players
-        // Final positions after swap:
-        // requester -> origTargetTeam/slot
-        // target    -> origRequesterTeam/slot
-        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getRequesterId(),
-                requester.getTeam(), requester.getSlot());
-        gameWebSocketHandler.broadcastTeamChanged(roomId, swapRequest.getTargetId(),
-                target.getTeam(), target.getSlot());
-        // Broadcast swap request status
-        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "ACCEPTED");
+        connectionManager.broadcastToRoom(roomId, "swap_accepted", response);
         
         return response;
     }
@@ -738,7 +772,7 @@ public class RoomService {
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
             swapRequest.setStatus("REJECTED");
             swapRequestRepository.save(swapRequest);
-            gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
             throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                     "Swap request is no longer pending");
         }
@@ -747,7 +781,7 @@ public class RoomService {
         swapRequestRepository.save(swapRequest);
         
         // Broadcast swap rejected event via WebSocket
-        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
     }
 
     /**
@@ -774,7 +808,7 @@ public class RoomService {
         swapRequestRepository.save(swapRequest);
         
         // Broadcast swap cancelled event via WebSocket
-        gameWebSocketHandler.broadcastSwapRequestStatusChanged(roomId, requestId, "REJECTED");
+        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
     }
 
     public List<SwapRequestDTO> getPendingSwapRequests(Long userId, Long roomId) {
@@ -836,10 +870,10 @@ public class RoomService {
 
         log.info("Room {} ownership transferred from user {} to user {}", roomId, ownerId, targetUserId);
 
-        RoomResponse response = buildRoomResponse(room, null);
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast room update via WebSocket (owner changed)
-        gameWebSocketHandler.broadcastRoomUpdate(roomId);
+        connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
     }
@@ -865,24 +899,28 @@ public class RoomService {
         // Update mode if provided
         if (request.getMode() != null && !request.getMode().isEmpty()) {
             // Validate mode
-            if (!request.getMode().equals(GameConstants.MODE_2V2) &&
-                !request.getMode().equals(GameConstants.MODE_3V3) &&
-                !request.getMode().equals(GameConstants.MODE_5V5)) {
-                throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND, "Invalid mode. Must be 2v2, 3v3, or 5v5");
+            if (!gameModeService.isGameModeAvailable(request.getMode())) {
+                throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND, "Invalid or unavailable game mode: " + request.getMode());
             }
 
             // Check if mode change requires player count adjustment
-            int currentMaxPlayers = getMaxPlayersForMode(room.getMode());
-            int newMaxPlayers = getMaxPlayersForMode(request.getMode());
+            int currentMaxPlayers = gameModeService.getTotalPlayers(room.getMode());
+            int newMaxPlayers = gameModeService.getTotalPlayers(request.getMode());
             int currentPlayers = roomPlayerRepository.findByRoomId(roomId).size();
 
             if (newMaxPlayers < currentPlayers) {
                 throw new BusinessException(ErrorCodes.ROOM_FULL, 
-                    String.format("Không thể đổi sang chế độ %s. Hiện tại có %d người trong phòng, nhưng chế độ %s chỉ cho phép tối đa %d người. Vui lòng yêu cầu một số người chơi rời phòng trước.", 
+                    String.format("Cannot switch to %s mode. Currently %d players in room, but %s mode only allows %d players.", 
                         request.getMode(), currentPlayers, request.getMode(), newMaxPlayers));
             }
 
             room.setMode(request.getMode());
+        }
+
+        if (request.getMapId() != null) {
+            room.setMapId(normalizeMapId(request.getMapId()));
+        } else if (room.getMapId() == null || room.getMapId().isBlank()) {
+            room.setMapId(DEFAULT_MAP_ID);
         }
 
         // Update public/private if provided
@@ -926,12 +964,20 @@ public class RoomService {
         }
 
         room = roomRepository.save(room);
-        RoomResponse response = buildRoomResponse(room, null);
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast room update via WebSocket (settings changed)
-        gameWebSocketHandler.broadcastRoomUpdate(roomId);
+        connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
+    }
+
+    private String normalizeMapId(String mapId) {
+        if (mapId == null || mapId.isBlank()) {
+            return DEFAULT_MAP_ID;
+        }
+
+        return mapId.trim();
     }
 }
 

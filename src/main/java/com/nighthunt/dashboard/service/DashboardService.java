@@ -4,11 +4,12 @@ import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.dashboard.dto.DashboardStatsDTO;
 import com.nighthunt.dashboard.dto.PlayerDetailDTO;
 import com.nighthunt.dashboard.dto.RoomDetailDTO;
+import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.repository.RoomRepository;
-import com.nighthunt.game.websocket.GameWebSocketHandler;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.session.port.SessionStore;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -35,7 +36,8 @@ public class DashboardService {
     private final RoomPlayerRepository roomPlayerRepository;
     private final UserRepository userRepository;
     private final SessionStore sessionStore;
-    private final com.nighthunt.game.websocket.GameWebSocketHandler gameWebSocketHandler; // For WebSocket connection count
+    private final ConnectionManager connectionManager;
+    private final GameModeService gameModeService;
     
     /**
      * Get comprehensive dashboard statistics
@@ -157,7 +159,7 @@ public class DashboardService {
             // Get total active connections (GameWebSocketHandler tracks all user sessions)
             // For room-specific count, we can count users in that room who have active WebSocket
             // For now, return total active connections as estimate
-            return gameWebSocketHandler.getActiveConnectionCount();
+            return connectionManager.getActiveConnectionCount();
         } catch (Exception e) {
             log.warn("Error getting WebSocket connection count for room {}: {}", roomId, e.getMessage());
             return 0;
@@ -168,16 +170,7 @@ public class DashboardService {
      * Calculate max players based on game mode
      */
     private int calculateMaxPlayers(String mode) {
-        if (mode == null) return 8; // Default
-        
-        switch (mode.toUpperCase()) {
-            case "2V2":
-                return 4;
-            case "4V4":
-                return 8;
-            default:
-                return 8;
-        }
+        return gameModeService.getTotalPlayers(mode);
     }
 }
 

@@ -1,20 +1,18 @@
 package com.nighthunt.game.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nighthunt.game.websocket.dto.WebSocketMessageDTO;
+import com.nighthunt.friend.service.PlayerStatusService;
+import com.nighthunt.game.websocket.dto.*;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.dto.RoomResponse;
-import com.nighthunt.room.dto.RoomPlayerResponse;
-import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
-import com.nighthunt.room.repository.RoomRepository;
-import com.nighthunt.room.service.RoomService;
+import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.security.port.TokenProvider;
-import com.nighthunt.user.entity.User;
+import com.nighthunt.session.port.SessionStore;
 import com.nighthunt.user.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -22,178 +20,267 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 /**
- * Unified WebSocket handler for all game events
- * Handles both session-level events (force_logout, session_expired) and room-level events
- * Single WebSocket connection per user, established after login and kept alive throughout session
+ * Unified WebSocket handler for all game events.
+ * Implements {@link ConnectionManager} so business services only depend on the port.
+ *
+ * Responsibilities (simplified from original 621-line God class):
+ * - Connection lifecycle (open, close, error)
+ * - Authentication via JWT token in query param + Redis session validation
+ * - Single-device policy (close old session when new one arrives)
+ * - Routing messages to users / rooms
+ *
+ * All room-level broadcasts are called from the service layer
+ * through the {@link ConnectionManager} interface.
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
-public class GameWebSocketHandler extends TextWebSocketHandler {
-    
-    private final RoomRepository roomRepository;
+public class GameWebSocketHandler extends TextWebSocketHandler implements ConnectionManager {
+
     private final RoomPlayerRepository roomPlayerRepository;
-    private final UserRepository userRepository;
-    // Removed RoomService dependency to break circular dependency - using buildRoomResponse() directly
+    private final RoomResponseAssembler roomResponseAssembler;
     private final ObjectMapper objectMapper;
     private final TokenProvider tokenProvider;
-    
-    // Store active user sessions by userId -> session
+    private final SessionStore sessionStore;
+    private final UserRepository userRepository;
+    private final PlayerStatusService playerStatusService;
+
+    // userId -> session
     private final Map<Long, WebSocketSession> userSessions = new ConcurrentHashMap<>();
-    
-    // Store user's current room (userId -> roomId)
+    // userId -> roomId
     private final Map<Long, Long> userRooms = new ConcurrentHashMap<>();
-    
-    // Store session metadata
+    // session -> metadata
     private final Map<WebSocketSession, SessionMetadata> sessionMetadata = new ConcurrentHashMap<>();
-    
+    // userId -> last activity timestamp (for heartbeat / stale-connection eviction)
+    private final Map<Long, Instant> lastActivityAt = new ConcurrentHashMap<>();
+
+    /** Sessions idle longer than this (seconds) are considered crashed/dead. */
+    private static final long STALE_TIMEOUT_SECONDS = 30;
+
+    public GameWebSocketHandler(
+            RoomPlayerRepository roomPlayerRepository,
+            RoomResponseAssembler roomResponseAssembler,
+            ObjectMapper objectMapper,
+            TokenProvider tokenProvider,
+            SessionStore sessionStore,
+            UserRepository userRepository,
+            PlayerStatusService playerStatusService) {
+        this.roomPlayerRepository = roomPlayerRepository;
+        this.roomResponseAssembler = roomResponseAssembler;
+        this.objectMapper = objectMapper;
+        this.tokenProvider = tokenProvider;
+        this.sessionStore = sessionStore;
+        this.userRepository = userRepository;
+        this.playerStatusService = playerStatusService;
+    }
+
+    // ==================== WebSocket Lifecycle ====================
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        log.info("Game WebSocket connection established: {}", session.getId());
-        
-        // Extract token from URI
-        String uri = session.getUri().toString();
-        String token = extractToken(uri);
-        
+        String token = extractToken(session.getUri().toString());
         if (token == null) {
-            log.warn("Invalid WebSocket connection: missing token");
+            log.warn("WebSocket connection rejected: missing token");
             session.close(CloseStatus.BAD_DATA);
             return;
         }
-        
-        // Authenticate user from token
+
         Long userId = authenticateUser(token);
         if (userId == null) {
             log.warn("WebSocket authentication failed for session: {}", session.getId());
             session.close(CloseStatus.NOT_ACCEPTABLE);
             return;
         }
-        
-        // Check if there's already a session for this user (close old one)
-        WebSocketSession existingSession = userSessions.get(userId);
-        if (existingSession != null && existingSession.isOpen()) {
-            log.info("Closing existing WebSocket session for user {} (new connection)", userId);
-            try {
-                existingSession.close(CloseStatus.NORMAL);
-            } catch (Exception e) {
-                log.error("Error closing existing session: {}", e.getMessage());
-            }
+
+        // SEC-1: Validate Redis session is still alive and not force-logged-out
+        String redisSession = sessionStore.getSessionId(String.valueOf(userId));
+        if (redisSession == null) {
+            log.warn("WebSocket rejected: no active session in Redis for userId={}", userId);
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+            return;
         }
-        
-        // Store new session
+        if (sessionStore.isForceLogout(String.valueOf(userId))) {
+            log.warn("WebSocket rejected: force logout flag set for userId={}", userId);
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+            return;
+        }
+
+        // Single-device policy: close existing session
+        WebSocketSession existing = userSessions.get(userId);
+        if (existing != null && existing.isOpen()) {
+            log.info("Closing existing WebSocket for user {} (new connection)", userId);
+            closeQuietly(existing);
+        }
+
         userSessions.put(userId, session);
         sessionMetadata.put(session, new SessionMetadata(userId, token));
-        
-        // Check if user is in a room
-        Long roomId = getCurrentRoomId(userId);
+        lastActivityAt.put(userId, Instant.now());
+
+        // A reconnect after focus-loss/app-resume must mark the user online again.
+        // Otherwise status can remain OFFLINE even though WS is already active.
+        try {
+            playerStatusService.setOnline(userId);
+        } catch (Exception e) {
+            log.error("Error setting player online status for userId={}: {}", userId, e.getMessage());
+        }
+
+        // Restore room mapping if user is in a room
+        Long roomId = findCurrentRoomId(userId);
         if (roomId != null) {
             userRooms.put(userId, roomId);
-            log.info("User {} connected via Game WebSocket, currently in room {}", userId, roomId);
-        } else {
-            log.info("User {} connected via Game WebSocket, not in any room", userId);
         }
-        
-        // Send initial connection confirmation
-        sendMessage(session, "connected", Map.of(
-            "userId", userId,
-            "roomId", roomId != null ? roomId : 0,
-            "message", "Game WebSocket connected"
+
+        // Send connection confirmation
+        sendToUser(userId, "connected", Map.of(
+                "userId", userId,
+                "roomId", roomId != null ? roomId : 0,
+                "message", "Game WebSocket connected"
         ));
 
-        // On connect, push latest room state if user is in a room (helps client recover after reconnect)
+        // Push latest room state for reconnection recovery
         if (roomId != null) {
-            sendRoomUpdate(userId, roomId);
+            RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+            if (roomResponse != null) {
+                sendToUser(userId, "room_updated", roomResponse);
+            }
         }
+
+        log.info("WebSocket connected: userId={}, roomId={}", userId, roomId);
     }
-    
+
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        // Handle client messages (ping/pong, room join/leave, etc.)
-        log.debug("Received message from session {}: {}", session.getId(), message.getPayload());
-        
-        // For now, we only handle server-to-client messages
-        // Client can send ping/pong for keepalive if needed
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        // Client can send a {"type":"ping"} message to keep the connection alive.
+        SessionMetadata meta = sessionMetadata.get(session);
+        if (meta != null) {
+            lastActivityAt.put(meta.getUserId(), Instant.now());
+        }
+        String payload = message.getPayload();
+        if (payload != null && payload.contains("\"ping\"")) {
+            // Reply with a pong so the client knows the server is alive
+            try {
+                session.sendMessage(new TextMessage("{\"type\":\"pong\"}"));
+            } catch (Exception ignored) {}
+        }
+        log.debug("Received message from {}: {}", session.getId(), message.getPayload());
     }
-    
+
     @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         SessionMetadata metadata = sessionMetadata.remove(session);
         if (metadata != null) {
             Long userId = metadata.getUserId();
-            userSessions.remove(userId);
-            userRooms.remove(userId);
-            log.info("Game WebSocket disconnected for user {} (status: {})", userId, status);
-        } else {
-            log.info("Game WebSocket disconnected (status: {})", status);
+            // Only remove maps if THIS session is still the active one.
+            // A new session may have already replaced it in afterConnectionEstablished,
+            // in which case we must NOT evict the new session's entries.
+            boolean wasActive = userSessions.remove(userId, session);
+            if (wasActive) {
+                userRooms.remove(userId);
+                lastActivityAt.remove(userId);
+                // Set player status to OFFLINE and broadcast to friends
+                try {
+                    playerStatusService.setOffline(userId);
+                } catch (Exception e) {
+                    log.error("Error setting player offline status for userId={}: {}", userId, e.getMessage());
+                }
+            }
+            log.info("WebSocket disconnected: userId={}, status={}, wasActive={}", userId, status, wasActive);
         }
     }
-    
+
     @Override
-    public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-        log.error("Game WebSocket transport error for session {}: {}", session.getId(), exception.getMessage());
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.error("WebSocket transport error for {}: {}", session.getId(), exception.getMessage());
         SessionMetadata metadata = sessionMetadata.remove(session);
         if (metadata != null) {
             Long userId = metadata.getUserId();
-            userSessions.remove(userId);
-            userRooms.remove(userId);
+            boolean wasActive = userSessions.remove(userId, session);
+            if (wasActive) {
+                userRooms.remove(userId);
+                lastActivityAt.remove(userId);
+                // Set player status to OFFLINE and broadcast to friends
+                try {
+                    playerStatusService.setOffline(userId);
+                } catch (Exception e) {
+                    log.error("Error setting player offline status for userId={}: {}", userId, e.getMessage());
+                }
+            }
         }
     }
-    
-    // ==================== Session Events ====================
-    
+
     /**
-     * Send force logout event to user
+     * Stale connection eviction.
+     * Runs every 15 seconds. Any WebSocket session that has not sent a ping (or any message)
+     * in the last {@value #STALE_TIMEOUT_SECONDS} seconds is treated as a crashed/dead client:
+     * the connection is closed, the user is marked OFFLINE, and friends are notified.
+     *
+     * Unity client should send a {"type":"ping"} frame every 10–15 seconds.
      */
-    public void sendForceLogout(Long userId, String reason) {
+    @Scheduled(fixedDelay = 15_000)
+    public void evictStaleConnections() {
+        Instant cutoff = Instant.now().minusSeconds(STALE_TIMEOUT_SECONDS);
+        List<Long> stale = new ArrayList<>();
+        lastActivityAt.forEach((userId, lastSeen) -> {
+            if (lastSeen.isBefore(cutoff)) {
+                stale.add(userId);
+            }
+        });
+        for (Long userId : stale) {
+            WebSocketSession session = userSessions.get(userId);
+            log.warn("Evicting stale WS connection for userId={} (no activity for {}s)",
+                    userId, STALE_TIMEOUT_SECONDS);
+            if (session != null && session.isOpen()) {
+                closeQuietly(session);   // triggers afterConnectionClosed → setOffline
+            } else {
+                // Session already gone from map but lastActivityAt wasn't cleaned up
+                lastActivityAt.remove(userId);
+                userSessions.remove(userId);
+                userRooms.remove(userId);
+                try {
+                    playerStatusService.setOffline(userId);
+                } catch (Exception e) {
+                    log.error("Error marking stale userId={} offline: {}", userId, e.getMessage());
+                }
+            }
+        }
+        if (!stale.isEmpty()) {
+            log.info("Stale WS eviction: {} session(s) cleaned up", stale.size());
+        }
+    }
+
+    // ==================== ConnectionManager Implementation ====================
+
+    @Override
+    public void sendToUser(Long userId, String eventType, Object data) {
         WebSocketSession session = userSessions.get(userId);
-        if (session == null || !session.isOpen()) {
-            return;
-        }
-        
+        if (session == null || !session.isOpen()) return;
+
         try {
-            String message = createWebSocketMessage("force_logout", Map.of(
-                "reason", reason != null ? reason : "Tài khoản đã đăng nhập ở nơi khác",
-                "message", "Bạn đã bị đăng xuất. Vui lòng đăng nhập lại."
-            ));
-            session.sendMessage(new TextMessage(message));
-            log.info("Sent force_logout event to user {}", userId);
+            String json = createWebSocketMessage(eventType, data);
+            if (json != null) {
+                session.sendMessage(new TextMessage(json));
+            }
         } catch (IOException e) {
-            log.error("Error sending force_logout event to user {}: {}", userId, e.getMessage());
+            log.error("Failed to send {} to user {}: {}", eventType, userId, e.getMessage());
         }
     }
-    
-    /**
-     * Send session expired event to user
-     */
-    public void sendSessionExpired(Long userId) {
-        WebSocketSession session = userSessions.get(userId);
-        if (session == null || !session.isOpen()) {
-            return;
-        }
-        
-        try {
-            String message = createWebSocketMessage("session_expired", Map.of(
-                "message", "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
-            ));
-            session.sendMessage(new TextMessage(message));
-            log.info("Sent session_expired event to user {}", userId);
-        } catch (IOException e) {
-            log.error("Error sending session_expired event to user {}: {}", userId, e.getMessage());
-        }
+
+    @Override
+    public void broadcastToRoom(Long roomId, String eventType, Object data) {
+        userRooms.forEach((userId, mappedRoomId) -> {
+            if (roomId.equals(mappedRoomId)) {
+                sendToUser(userId, eventType, data);
+            }
+        });
     }
-    
-    // ==================== Room Events ====================
-    
-    /**
-     * Update user's current room (called when user joins/leaves a room)
-     */
+
+    @Override
     public void updateUserRoom(Long userId, Long roomId) {
         if (roomId != null && roomId > 0) {
             userRooms.put(userId, roomId);
@@ -201,245 +288,103 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             userRooms.remove(userId);
         }
     }
-    
-    /**
-     * Send room update event to user (when user is in a room)
-     */
-    public void sendRoomUpdate(Long userId, Long roomId) {
-        WebSocketSession session = userSessions.get(userId);
-        if (session == null || !session.isOpen()) {
-            return;
-        }
-        
-        try {
-            // Build room response directly to avoid circular dependency with RoomService
-            RoomResponse roomResponse = buildRoomResponse(roomId);
-            if (roomResponse != null) {
-                String message = createWebSocketMessage("room_updated", roomResponse);
-                session.sendMessage(new TextMessage(message));
-                log.debug("Sent room_updated event to user {} for room {}", userId, roomId);
-            }
-        } catch (Exception e) {
-            log.error("Error sending room_updated event to user {}: {}", userId, e.getMessage());
-        }
+
+    @Override
+    public int getActiveConnectionCount() {
+        return userSessions.size();
     }
-    
-    /**
-     * Broadcast room update to all users in room
-     */
-    public void broadcastRoomUpdate(Long roomId) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        for (RoomPlayer player : players) {
-            sendRoomUpdate(player.getUserId(), roomId);
-        }
+
+    // ==================== Session-Level Events ====================
+
+    public void sendForceLogout(Long userId, String reason) {
+        sendToUser(userId, "force_logout", Map.of(
+                "reason", reason != null ? reason : "Account logged in from another location",
+                "message", "You have been logged out. Please log in again."
+        ));
     }
-    
-    /**
-     * Broadcast player joined event to all users in room
-     */
+
+    public void sendSessionExpired(Long userId) {
+        sendToUser(userId, "session_expired", Map.of(
+                "message", "Session expired. Please log in again."
+        ));
+    }
+
+    // ==================== Room-Level Broadcasts ====================
+
     public void broadcastPlayerJoined(Long roomId, Long userId, String username) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        PlayerJoinedEvent event = new PlayerJoinedEvent(userId, username, roomResponse);
-        String message = createWebSocketMessage("player_joined", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending player_joined event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
-        }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "player_joined",
+                PlayerJoinedEventDTO.builder().userId(userId).username(username).room(roomResponse).build());
     }
-    
-    /**
-     * Broadcast player left event to all users in room
-     */
+
     public void broadcastPlayerLeft(Long roomId, Long userId) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        PlayerLeftEvent event = new PlayerLeftEvent(userId, roomResponse);
-        String message = createWebSocketMessage("player_left", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending player_left event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
-        }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "player_left",
+                PlayerLeftEventDTO.builder().userId(userId).room(roomResponse).build());
     }
-    
-    /**
-     * Broadcast player ready event to all users in room
-     */
+
     public void broadcastPlayerReady(Long roomId, Long userId, boolean isReady) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        PlayerReadyEvent event = new PlayerReadyEvent(userId, isReady, roomResponse);
-        String message = createWebSocketMessage("player_ready", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending player_ready event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
-        }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "player_ready",
+                PlayerReadyEventDTO.builder().userId(userId).isReady(isReady).room(roomResponse).build());
     }
-    
-    /**
-     * Broadcast team changed event to all users in room
-     */
+
     public void broadcastTeamChanged(Long roomId, Long userId, Integer newTeam, Integer newSlot) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        TeamChangedEvent event = new TeamChangedEvent(userId, newTeam, newSlot, roomResponse);
-        String message = createWebSocketMessage("team_changed", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending team_changed event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
-        }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "team_changed",
+                TeamChangedEventDTO.builder().userId(userId).newTeam(newTeam).newSlot(newSlot).room(roomResponse).build());
     }
-    
-    /**
-     * Broadcast room status changed event to all users in room
-     */
+
     public void broadcastRoomStatusChanged(Long roomId, String newStatus) {
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        RoomStatusChangedEvent event = new RoomStatusChangedEvent(newStatus, roomResponse);
-        String message = createWebSocketMessage("room_status_changed", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending room_status_changed event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "room_status_changed",
+                RoomStatusChangedEventDTO.builder().newStatus(newStatus).room(roomResponse).build());
+    }
+
+    public void broadcastRoomUpdate(Long roomId) {
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        if (roomResponse != null) {
+            broadcastToRoom(roomId, "room_updated", roomResponse);
         }
     }
-    
-    /**
-     * Broadcast swap request event to target user
-     */
+
     public void broadcastSwapRequest(Long roomId, Long requesterId, Long targetUserId, Long requestId) {
-        WebSocketSession session = userSessions.get(targetUserId);
-        if (session == null || !session.isOpen()) {
-            return;
-        }
-        
-        try {
-            SwapRequestEvent event = new SwapRequestEvent(requesterId, targetUserId, requestId);
-            String message = createWebSocketMessage("swap_request", event);
-            session.sendMessage(new TextMessage(message));
-        } catch (IOException e) {
-            log.error("Error sending swap_request event to user {}: {}", targetUserId, e.getMessage());
-        }
+        // BUG-3 fix: look up requester's username so the UI can display "Swap request from <name>"
+        String requesterUsername = userRepository.findById(requesterId)
+                .map(u -> u.getUsername())
+                .orElse("Unknown");
+        sendToUser(targetUserId, "swap_request",
+                SwapRequestEventDTO.builder()
+                        .requesterId(requesterId)
+                        .requesterUsername(requesterUsername)
+                        .targetUserId(targetUserId)
+                        .requestId(requestId)
+                        .build());
     }
-    
-    /**
-     * Broadcast swap request status changed event to requester and target
-     */
+
     public void broadcastSwapRequestStatusChanged(Long roomId, Long requestId, String status) {
-        // Get swap request details from repository (simplified - you may need to adjust)
-        // For now, broadcast to all users in room
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        RoomResponse roomResponse = buildRoomResponse(roomId);
-        
-        SwapRequestStatusEvent event = new SwapRequestStatusEvent(requestId, status, roomResponse);
-        String message = createWebSocketMessage("swap_request_status", event);
-        
-        for (RoomPlayer player : players) {
-            WebSocketSession session = userSessions.get(player.getUserId());
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(message));
-                } catch (IOException e) {
-                    log.error("Error sending swap_request_status event to user {}: {}", player.getUserId(), e.getMessage());
-                }
-            }
-        }
+        RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
+        broadcastToRoom(roomId, "swap_request_status",
+                SwapRequestStatusEventDTO.builder().requestId(requestId).status(status).room(roomResponse).build());
     }
-    
-    // ==================== Helper Methods ====================
-    
-    private Long getCurrentRoomId(Long userId) {
-        RoomPlayer player = roomPlayerRepository.findByUserId(userId)
-            .stream()
-            .findFirst()
-            .orElse(null);
-        return player != null ? player.getRoomId() : null;
+
+    // ==================== Private Helpers ====================
+
+    private Long findCurrentRoomId(Long userId) {
+        return roomPlayerRepository.findByUserId(userId).stream()
+                .findFirst()
+                .map(RoomPlayer::getRoomId)
+                .orElse(null);
     }
-    
-    private RoomResponse buildRoomResponse(Long roomId) {
-        try {
-            Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new RuntimeException("Room not found: " + roomId));
-            
-            List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-            List<RoomPlayerResponse> playerResponses = players.stream()
-                .map(p -> {
-                    User user = userRepository.findById(p.getUserId()).orElse(null);
-                    return RoomPlayerResponse.builder()
-                        .userId(p.getUserId())
-                        .username(user != null ? user.getUsername() : "Unknown")
-                        .team(p.getTeam())
-                        .slot(p.getSlot())
-                        .isReady(p.getIsReady())
-                        .build();
-                })
-                .collect(Collectors.toList());
-            
-            return RoomResponse.builder()
-                .roomId(room.getId())
-                .roomCode(room.getRoomCode())
-                .mode(room.getMode())
-                .status(room.getStatus())
-                .isPublic(room.getIsPublic())
-                .isLocked(room.getIsLocked())
-                .ownerId(room.getOwnerId())
-                .players(playerResponses)
-                .build();
-        } catch (Exception e) {
-            log.error("Error building room response: {}", e.getMessage());
-            return null;
-        }
-    }
-    
+
     private String extractToken(String uri) {
         try {
             String[] parts = uri.split("\\?");
             if (parts.length > 1) {
-                String[] params = parts[1].split("&");
-                for (String param : params) {
-                    String[] keyValue = param.split("=");
-                    if (keyValue.length == 2 && keyValue[0].equals("token")) {
-                        return keyValue[1];
+                for (String param : parts[1].split("&")) {
+                    String[] kv = param.split("=");
+                    if (kv.length == 2 && "token".equals(kv[0])) {
+                        return kv[1];
                     }
                 }
             }
@@ -448,173 +393,41 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         }
         return null;
     }
-    
+
     private Long authenticateUser(String token) {
         try {
             return tokenProvider.getUserIdFromToken(token);
         } catch (Exception e) {
-            log.error("Error authenticating user with token: {}", e.getMessage());
+            log.debug("Token authentication failed: {}", e.getMessage());
             return null;
         }
     }
-    
-    private void sendMessage(WebSocketSession session, String type, Object data) {
-        try {
-            String message = createWebSocketMessage(type, data);
-            session.sendMessage(new TextMessage(message));
-        } catch (IOException e) {
-            log.error("Error sending message: {}", e.getMessage());
-        }
-    }
-    
+
     private String createWebSocketMessage(String type, Object data) {
         try {
-            // Format: {"type": "event_type", "data": "{\"key\":\"value\"}"}
-            // data is serialized as JSON string for compatibility with Unity JsonUtility
             String dataJson = objectMapper.writeValueAsString(data);
             WebSocketMessageDTO message = WebSocketMessageDTO.builder()
-                .type(type)
-                .data(dataJson) // data as JSON string for Unity compatibility
-                .build();
+                    .type(type)
+                    .data(dataJson)
+                    .build();
             return objectMapper.writeValueAsString(message);
         } catch (Exception e) {
             log.error("Error creating WebSocket message: {}", e.getMessage());
             return null;
         }
     }
-    
-    /**
-     * Get active WebSocket connection count
-     */
-    public int getActiveConnectionCount() {
-        return userSessions.size();
-    }
-    
-    // ==================== Inner Classes ====================
-    
-    private static class SessionMetadata {
-        private final Long userId;
-        private final String token;
-        
-        public SessionMetadata(Long userId, String token) {
-            this.userId = userId;
-            this.token = token;
+
+    private void closeQuietly(WebSocketSession session) {
+        try {
+            session.close(CloseStatus.NORMAL);
+        } catch (Exception ignored) {
         }
-        
-        public Long getUserId() { return userId; }
-        public String getToken() { return token; }
     }
-    
-    // WebSocketMessageDTO is now in separate file for consistency
-    
-    // Event classes
-    private static class PlayerJoinedEvent {
-        private Long userId;
-        private String username;
-        private RoomResponse room;
-        
-        public PlayerJoinedEvent(Long userId, String username, RoomResponse room) {
-            this.userId = userId;
-            this.username = username;
-            this.room = room;
-        }
-        
-        public Long getUserId() { return userId; }
-        public String getUsername() { return username; }
-        public RoomResponse getRoom() { return room; }
-    }
-    
-    private static class PlayerLeftEvent {
-        private Long userId;
-        private RoomResponse room;
-        
-        public PlayerLeftEvent(Long userId, RoomResponse room) {
-            this.userId = userId;
-            this.room = room;
-        }
-        
-        public Long getUserId() { return userId; }
-        public RoomResponse getRoom() { return room; }
-    }
-    
-    private static class PlayerReadyEvent {
-        private Long userId;
-        private boolean isReady;
-        private RoomResponse room;
-        
-        public PlayerReadyEvent(Long userId, boolean isReady, RoomResponse room) {
-            this.userId = userId;
-            this.isReady = isReady;
-            this.room = room;
-        }
-        
-        public Long getUserId() { return userId; }
-        public boolean getIsReady() { return isReady; }
-        public RoomResponse getRoom() { return room; }
-    }
-    
-    private static class TeamChangedEvent {
-        private Long userId;
-        private Integer newTeam;
-        private Integer newSlot;
-        private RoomResponse room;
-        
-        public TeamChangedEvent(Long userId, Integer newTeam, Integer newSlot, RoomResponse room) {
-            this.userId = userId;
-            this.newTeam = newTeam;
-            this.newSlot = newSlot;
-            this.room = room;
-        }
-        
-        public Long getUserId() { return userId; }
-        public Integer getNewTeam() { return newTeam; }
-        public Integer getNewSlot() { return newSlot; }
-        public RoomResponse getRoom() { return room; }
-    }
-    
-    private static class RoomStatusChangedEvent {
-        private String newStatus;
-        private RoomResponse room;
-        
-        public RoomStatusChangedEvent(String newStatus, RoomResponse room) {
-            this.newStatus = newStatus;
-            this.room = room;
-        }
-        
-        public String getNewStatus() { return newStatus; }
-        public RoomResponse getRoom() { return room; }
-    }
-    
-    private static class SwapRequestEvent {
-        private Long requesterId;
-        private Long targetUserId;
-        private Long requestId;
-        
-        public SwapRequestEvent(Long requesterId, Long targetUserId, Long requestId) {
-            this.requesterId = requesterId;
-            this.targetUserId = targetUserId;
-            this.requestId = requestId;
-        }
-        
-        public Long getRequesterId() { return requesterId; }
-        public Long getTargetUserId() { return targetUserId; }
-        public Long getRequestId() { return requestId; }
-    }
-    
-    private static class SwapRequestStatusEvent {
-        private Long requestId;
-        private String status;
-        private RoomResponse room;
-        
-        public SwapRequestStatusEvent(Long requestId, String status, RoomResponse room) {
-            this.requestId = requestId;
-            this.status = status;
-            this.room = room;
-        }
-        
-        public Long getRequestId() { return requestId; }
-        public String getStatus() { return status; }
-        public RoomResponse getRoom() { return room; }
+
+    // ==================== Session Metadata ====================
+
+    private record SessionMetadata(Long userId, String token) {
+        Long getUserId() { return userId; }
+        String getToken() { return token; }
     }
 }
-

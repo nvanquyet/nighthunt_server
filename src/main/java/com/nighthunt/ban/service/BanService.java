@@ -132,13 +132,12 @@ public class BanService {
             log.warn("Auto-banning due to failed login attempts: identifier={}, ip={}, attempts={}",
                     identifier, ipAddress, attempt.getAttemptCount());
             
-            // Create ban
+            // Create ban — userId left null for IP bans (not tied to a specific user account)
             Ban ban = Ban.builder()
-                    .userId(null) // Will be set when user is found
                     .banType(Ban.BanType.IP)
                     .ipAddress(ipAddress)
                     .deviceFingerprint(deviceFingerprint)
-                    .reason(String.format("Quá nhiều lần đăng nhập sai (%d lần trong %d phút)", 
+                    .reason(String.format("Quá nhiều lần đăng nhập sai (%d lần trong %d phút)",
                             attempt.getAttemptCount(), windowMinutes))
                     .banDurationMinutes(banDurationMinutes)
                     .bannedBy(null) // Auto-ban
@@ -193,12 +192,12 @@ public class BanService {
             log.warn("Auto-banning due to concurrent login attempts: ip={}, attempts={}",
                     ipAddress, attempt.getAttemptCount());
             
-            // Create ban
+            // Create ban — userId left null for IP bans (not tied to a specific user account)
             Ban ban = Ban.builder()
                     .banType(Ban.BanType.IP)
                     .ipAddress(ipAddress)
                     .deviceFingerprint(deviceFingerprint)
-                    .reason(String.format("Quá nhiều lần đăng nhập đồng thời (%d lần trong %d giây)", 
+                    .reason(String.format("Quá nhiều lần đăng nhập đồng thời (%d lần trong %d giây)",
                             attempt.getAttemptCount(), windowSeconds))
                     .banDurationMinutes(banDurationMinutes)
                     .bannedBy(null) // Auto-ban

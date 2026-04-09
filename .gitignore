@@ -55,7 +55,6 @@ bin/
 
 # Application specific
 application-local.yml
-application-dev.yml
 *.log
 logs/
 
@@ -65,7 +64,20 @@ docker-compose.override.yml
 # Environment files
 .env
 .env.local
+.env.production
+.env.staging
 .env.*.local
+# Keep example template tracked
+!.env.example
+
+# SSL Certificates (NEVER commit to git!)
+src/main/resources/certs/
+*.p12
+*.jks
+*.keystore
+*.pem
+*.crt
+*.key
 
 # Build artifacts
 *.jar

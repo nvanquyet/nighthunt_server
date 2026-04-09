@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
@@ -26,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class RedisMessageBroker implements MessagePublisher {
     
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
     private final RedisMessageListenerContainer messageListenerContainer;
     private final ObjectMapper objectMapper;
     
@@ -77,8 +78,10 @@ public class RedisMessageBroker implements MessagePublisher {
             // Serialize message to JSON
             String messageJson = objectMapper.writeValueAsString(message);
             
-            // Publish to Redis channel
-            redisTemplate.convertAndSend(topic, messageJson);
+            // Publish to Redis channel — use StringRedisTemplate so the
+            // already-serialized JSON string is sent as raw bytes without
+            // double-serialization by GenericJackson2JsonRedisSerializer.
+            stringRedisTemplate.convertAndSend(topic, messageJson);
             
             log.debug("Published message: topic={}, type={}, id={}", topic, message.getType(), message.getId());
         } catch (Exception e) {

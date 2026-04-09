@@ -14,6 +14,9 @@ public class UpdateRoomSettingsRequest {
     @Size(min = 3, max = 10, message = "Mode must be 2v2, 3v3, or 5v5")
     private String mode; // Optional: 2v2, 3v3, 5v5
 
+    @Size(min = 3, max = 50, message = "Map ID must be between 3 and 50 characters")
+    private String mapId; // Optional map selection (e.g. map_01)
+
     private Boolean isPublic; // Optional: true/false
 
     private Boolean isLocked; // Optional: true/false

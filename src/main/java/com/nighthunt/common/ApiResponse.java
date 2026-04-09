@@ -23,6 +23,10 @@ public class ApiResponse<T> {
         return ApiResponse.<Void>builder().success(true).build();
     }
 
+    public static ApiResponse<Void> okMessage(String message) {
+        return ApiResponse.<Void>builder().success(true).message(message).build();
+    }
+
     public static <T> ApiResponse<T> error(String message, String errorCode, Class<T> type) {
         return ApiResponse.<T>builder()
                 .success(false)
