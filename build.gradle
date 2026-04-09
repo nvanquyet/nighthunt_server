@@ -53,6 +53,11 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+// Disable plain jar — only produce the Spring Boot fat jar
+jar {
+    enabled = false
+}
+
 // Load production-localhost defaults into bootRun environment variables.
 def loadEnvFile = { fileName ->
     def env = [:]
