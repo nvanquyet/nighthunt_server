@@ -40,6 +40,12 @@ public class DockerManagerService {
     @Value("${ds.docker.enabled:true}")
     private boolean dockerEnabled;
 
+    @Value("${ds.docker.ghcr-token:}")
+    private String ghcrToken;
+
+    @Value("${ds.docker.ghcr-owner:}")
+    private String ghcrOwner;
+
     // Đây là imageRef hiện tại - được cập nhật khi CI/CD push image mới
     private volatile String currentImageRef;
 
@@ -147,12 +153,45 @@ public class DockerManagerService {
     }
 
     /**
-     * Pull image từ registry về VPS cache (nếu chưa có hoặc có version mới)
+     * Pull image từ registry về VPS cache (nếu chưa có hoặc có version mới).
+     * Tự động docker login ghcr.io nếu GHCR_TOKEN được cấu hình.
      */
     public void pullImage(String imageRef) {
+        if (ghcrToken != null && !ghcrToken.isBlank()
+                && ghcrOwner != null && !ghcrOwner.isBlank()) {
+            log.info("[DockerManager] Logging in to ghcr.io as {}", ghcrOwner);
+            loginGhcr();
+        }
         log.info("[DockerManager] Pulling image: {}", imageRef);
         runDockerCommand("docker", "pull", imageRef);
         log.info("[DockerManager] Image pull done: {}", imageRef);
+    }
+
+    /**
+     * docker login ghcr.io dùng Personal Access Token (ghcrToken).
+     */
+    private void loginGhcr() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                "docker", "login", "ghcr.io",
+                "-u", ghcrOwner.toLowerCase(),
+                "--password-stdin"
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            process.getOutputStream().write((ghcrToken + "\n").getBytes());
+            process.getOutputStream().close();
+            String output  = new String(process.getInputStream().readAllBytes()).trim();
+            int exitCode   = process.waitFor();
+            if (exitCode != 0) {
+                log.warn("[DockerManager] ghcr.io login failed (exit {}):\n{}", exitCode, output);
+            } else {
+                log.info("[DockerManager] ghcr.io login OK");
+            }
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[DockerManager] ghcr.io login error: {}", e.getMessage());
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

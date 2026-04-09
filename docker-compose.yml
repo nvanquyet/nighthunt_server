@@ -116,6 +116,8 @@ services:
       DS_PORT_START: ${DS_PORT_START}
       DS_PORT_END: ${DS_PORT_END}
       DS_MAX_PLAYERS: ${DS_MAX_PLAYERS}
+      GHCR_TOKEN: ${GHCR_TOKEN:-}
+      GHCR_OWNER: ${GHCR_OWNER:-}
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     volumes:

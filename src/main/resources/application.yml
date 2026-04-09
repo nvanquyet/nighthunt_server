@@ -104,6 +104,9 @@ ds:
     max-memory-mb:       ${DS_MAX_MEMORY_MB:512}
     # false = skip docker run (dùng khi test local, không có DS image)
     enabled:             ${DS_DOCKER_ENABLED:true}
+    # GHCR credentials để docker login trước khi pull private image
+    ghcr-token:          ${GHCR_TOKEN:}
+    ghcr-owner:          ${GHCR_OWNER:}
 
   admin:
     # Secret dùng cho CI/CD webhook (POST /api/admin/ds/update-image)
