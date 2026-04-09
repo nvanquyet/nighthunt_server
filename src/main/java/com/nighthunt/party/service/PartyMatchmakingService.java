@@ -99,7 +99,7 @@ public class PartyMatchmakingService {
         
         // Add all members to matchmaking queue
         for (Long memberId : memberIds) {
-            matchmakingQueueService.enqueue(memberId, request.getGameMode());
+            matchmakingQueueService.enqueue(memberId, request.getGameMode(), null);
             log.info("Party member {} queued for matchmaking (party={}, mode={})", 
                 memberId, party.getId(), request.getGameMode());
         }

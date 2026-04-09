@@ -41,8 +41,7 @@ services:
     # Neu REDIS_PASSWORD trong thi chay khong password
     # Neu co password thi them --requirepass
     command: >
-      sh -c "redis-server
-      $( [ -n \"$${REDIS_PASSWORD}\" ] && echo \"--requirepass $${REDIS_PASSWORD}\" || true )"
+      sh -c "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-server --requirepass $$REDIS_PASSWORD; else redis-server; fi"
     ports:
       - "6379:6379"
     volumes:
