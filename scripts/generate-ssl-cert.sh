@@ -24,9 +24,11 @@ echo ""
 # Configuration
 CERTS_DIR="src/main/resources/certs"
 KEYSTORE_FILE="$CERTS_DIR/keystore.p12"
-KEYSTORE_PASSWORD="nighthunt-ssl-2026"
+KEYSTORE_PASSWORD="nighthunt-dev"   # must match SSL_KEYSTORE_PASSWORD in .env.production
 KEY_ALIAS="nighthunt"
 VALIDITY_DAYS=365
+# Public IP included in SAN so TLS hostname validation works on direct-IP connections
+VPS_IP="${VPS_PUBLIC_IP:-20.2.235.140}"
 
 # Check if keytool is available
 if ! command -v keytool &> /dev/null; then
@@ -64,7 +66,7 @@ keytool -genkeypair \
     -storepass "$KEYSTORE_PASSWORD" \
     -keypass "$KEYSTORE_PASSWORD" \
     -dname "CN=localhost, OU=NightHunt Development, O=NightHunt, L=Ho Chi Minh, ST=Vietnam, C=VN" \
-    -ext "SAN=dns:localhost,ip:127.0.0.1,ip:::1"
+    -ext "SAN=dns:localhost,ip:127.0.0.1,ip:::1,ip:${VPS_IP}"
 
 echo ""
 echo -e "${GREEN}✅ SSL Certificate generated successfully!${NC}"

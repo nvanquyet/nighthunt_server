@@ -118,6 +118,8 @@ services:
       DS_MAX_PLAYERS: ${DS_MAX_PLAYERS}
       GHCR_TOKEN: ${GHCR_TOKEN:-}
       GHCR_OWNER: ${GHCR_OWNER:-}
+      # [PRODUCTION] Backend runs HTTP internally — nginx handles TLS on 443.
+      # Port exposed here for debug access; firewall port 8080 on VPS if desired.
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     volumes:
@@ -132,7 +134,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- --no-check-certificate https://localhost:${SERVER_PORT:-8443}/api/actuator/health || exit 1"]
+      test: ["CMD", "sh", "-c", "if [ \"$${SSL_ENABLED:-false}\" = 'true' ]; then wget -qO- --no-check-certificate https://localhost:$${SERVER_PORT:-8443}/api/actuator/health; else wget -qO- http://localhost:$${SERVER_PORT:-8080}/api/actuator/health; fi || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -140,6 +142,42 @@ services:
     networks:
       - nighthunt-network
       - game-network
+
+  # ── nginx — SSL termination + reverse proxy ────────────────────────────────
+  # Handles HTTPS (443) with Let's Encrypt cert and redirects HTTP (80) → HTTPS.
+  # Backend runs plain HTTP internally; nginx is the only TLS endpoint.
+  # NOTE: only used in production (.env.production).  Local dev connects directly
+  #       to backend:8443 (SSL_ENABLED=true via mkcert).
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nighthunt-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - letsencrypt_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - nighthunt-network
+
+  # ── certbot — automatic Let's Encrypt renewal ──────────────────────────────
+  # Runs `certbot renew` every 12 h; nginx picks up renewed cert on next reload.
+  # First-time cert issuance: run  scripts/init-letsencrypt.sh  on the VPS.
+  certbot:
+    image: certbot/certbot:latest
+    container_name: nighthunt-certbot
+    volumes:
+      - letsencrypt_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
+    networks:
+      - nighthunt-network
 
   dashboard:
     build:
@@ -168,6 +206,8 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  letsencrypt_certs:   # Let's Encrypt certs managed by certbot container
+  certbot_www:         # ACME HTTP-01 challenge webroot
 
 networks:
   nighthunt-network:

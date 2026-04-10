@@ -55,15 +55,28 @@ server:
   port: ${SERVER_PORT:8443}
   servlet:
     context-path: /api  # All REST APIs now under /api prefix
+  # Trust X-Forwarded-Proto/Host headers from nginx reverse proxy.
+  # Required so Spring Boot generates correct https:// links in responses.
+  forward-headers-strategy: native
   ssl:
     enabled: ${SSL_ENABLED:false}
-    key-store: ${SSL_KEYSTORE:}
-    key-store-password: ${SSL_KEYSTORE_PASSWORD:}
-    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
-    key-alias: ${SSL_KEY_ALIAS:}
   error:
     include-message: always
     include-stacktrace: on_param
+
+---
+# SSL profile — only loaded by local dev (.env.local: SPRING_PROFILES_ACTIVE=dev,ssl)
+# Production uses nginx for TLS termination; Spring Boot runs plain HTTP internally.
+spring:
+  config:
+    activate:
+      on-profile: ssl
+server:
+  ssl:
+    key-store: ${SSL_KEYSTORE}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
+    key-alias: ${SSL_KEY_ALIAS}
 
 # API Base URL Configuration
 api:
