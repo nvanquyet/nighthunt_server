@@ -79,6 +79,7 @@ public class GameMapService {
         if (req.isLocked      != null) map.setLocked(req.isLocked);
         if (req.displayName   != null) map.setDisplayName(req.displayName);
         if (req.description   != null) map.setDescription(req.description);
+        if (req.sceneName     != null) map.setSceneName(req.sceneName);
         if (req.displayOrder  != null) map.setDisplayOrder(req.displayOrder);
         if (req.supportedModes != null) {
             try {
@@ -131,6 +132,7 @@ public class GameMapService {
         public Boolean       isLocked;
         public String        displayName;
         public String        description;
+        public String        sceneName;
         public Integer       displayOrder;
         public java.util.List<String> supportedModes;
     }

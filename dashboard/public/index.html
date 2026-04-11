@@ -900,9 +900,9 @@ async function loadMapsConfig() {
       <thead><tr><th>Map ID</th><th>Scene</th><th>Display Name</th><th>Supported Modes</th><th>Order</th><th>Active</th><th>Locked</th><th>Actions</th></tr></thead>
       <tbody>${maps.map(m=>`<tr>
         <td><code style="color:var(--cyan);font-size:.78rem">${m.mapId}</code></td>
-        <td style="font-size:.78rem;color:var(--muted)">${m.sceneName||'—'}</td>
+        <td><input type="text" id="mscene-${m.mapId}" value="${m.sceneName||''}" class="filter-input" style="width:130px;font-size:.78rem;padding:4px 8px"></td>
         <td><input type="text" id="mname-${m.mapId}" value="${m.displayName||''}" class="filter-input" style="width:140px;font-size:.78rem;padding:4px 8px"></td>
-        <td style="font-size:.78rem;color:var(--muted)">${(m.supportedModes||[]).join(', ')||'—'}</td>
+        <td><input type="text" id="mmodes-${m.mapId}" value="${(m.supportedModes||[]).join(', ')}" class="filter-input" placeholder="2v2,3v3" style="width:130px;font-size:.78rem;padding:4px 8px"></td>
         <td><input type="number" id="mord-${m.mapId}" value="${m.displayOrder||0}" class="filter-input" style="width:60px;font-size:.78rem;padding:4px 8px"></td>
         <td style="text-align:center"><input type="checkbox" ${m.isActive?'checked':''} id="mactive-${m.mapId}"></td>
         <td style="text-align:center"><input type="checkbox" ${m.isLocked?'checked':''} id="mlocked-${m.mapId}"></td>
@@ -923,12 +923,16 @@ async function loadMapsConfig() {
   } catch(e) { $('config-body').innerHTML=`<div class="alert alert-error">Error: ${e.message}</div>`; }
 }
 async function saveMapConfig(mapId) {
+  const modesRaw = $('mmodes-' + mapId).value.trim();
   const patch = {
     displayName: $('mname-' + mapId).value,
+    sceneName: $('mscene-' + mapId).value.trim() || undefined,
+    supportedModes: modesRaw ? modesRaw.split(',').map(s=>s.trim()).filter(Boolean) : [],
     displayOrder: parseInt($('mord-' + mapId).value) || 0,
     isActive: $('mactive-' + mapId).checked,
     isLocked: $('mlocked-' + mapId).checked
   };
+  if (!patch.sceneName) delete patch.sceneName;
   try {
     await api('PATCH', `/api/admin/config/maps/${mapId}`, patch);
     showAlert(`Map "${mapId}" saved`);

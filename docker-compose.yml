@@ -29,6 +29,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
       - nighthunt-network
     command: --default-authentication-plugin=mysql_native_password
@@ -52,6 +53,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
     networks:
       - nighthunt-network
 
@@ -69,7 +71,9 @@ services:
     ports:
       - "8081:80"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - nighthunt-network
 
@@ -176,6 +180,7 @@ services:
       - letsencrypt_certs:/etc/letsencrypt
       - certbot_www:/var/www/certbot
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
+    restart: unless-stopped
     networks:
       - nighthunt-network
 

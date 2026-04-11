@@ -146,6 +146,7 @@ async function proxyAdmin(req, res) {
 app.get   ('/api/admin/*', requireToken, proxyAdmin);
 app.post  ('/api/admin/*', requireToken, proxyAdmin);
 app.put   ('/api/admin/*', requireToken, proxyAdmin);
+app.patch ('/api/admin/*', requireToken, proxyAdmin);
 app.delete('/api/admin/*', requireToken, proxyAdmin);
 
 // ── Legacy backend stats ──────────────────────────────────────────────────────

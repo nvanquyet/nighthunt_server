@@ -106,7 +106,10 @@ public class GameMode {
 
     /**
      * Dev/test mode flag.
-     * true = excluded from client-facing API; still accepted by matchmaking queue.
+     * true  = (1) excluded from client-facing GET /api/game-modes;
+     *         (2) matchmaking tick allows a single-player lobby so the
+     *             DS container boot + client join flow can be tested
+     *             without filling a full lobby.
      * false = normal production mode.
      */
     @Column(name = "is_dev_mode", nullable = false)

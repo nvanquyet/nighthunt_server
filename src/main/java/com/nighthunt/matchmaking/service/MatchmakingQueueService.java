@@ -132,7 +132,11 @@ public class MatchmakingQueueService {
         // Process each DB-configured mode where matchmaking is enabled
         for (GameModeDTO mode : gameModeService.getMatchmakingEnabledModes()) {
             List<MatchmakingEntry> candidates = entryRepository.findSearchingByMode(mode.getModeKey());
-            if (candidates.size() < mode.getTotalPlayers()) continue;
+
+            // Dev/test modes: allow single-player match formation so DS container boot
+            // can be tested without waiting for a full lobby.
+            int minRequired = mode.isDevMode() ? 1 : mode.getTotalPlayers();
+            if (candidates.size() < minRequired) continue;
 
             tryFormMatches(candidates, mode);
         }
@@ -325,6 +329,9 @@ public class MatchmakingQueueService {
             payload.put("dsIp",         ds.getIp());
             payload.put("dsPort",       ds.getPort());
             payload.put("sessionToken", ds.getSessionToken());
+            // Only populated when ds.docker.enabled=false (local dev/test).
+            // Developer uses this to simulate DS boot: POST /api/ds/register.
+            if (ds.getDevSecret() != null) payload.put("devSecret", ds.getDevSecret());
 
             // Clean up queue entries
             for (MatchmakingEntry e : group) {
