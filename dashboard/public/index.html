@@ -162,6 +162,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
       <div class="nav-item" onclick="nav('system')" id="nav-system"><span class="icon">&#128268;</span><span class="nav-label">System Health</span></div>
       <div class="nav-item" onclick="nav('online')" id="nav-online"><span class="icon">&#128994;</span><span class="nav-label">Online Users</span></div>
       <div class="nav-item" onclick="nav('dssessions')" id="nav-dssessions"><span class="icon">&#127918;</span><span class="nav-label">DS Sessions</span></div>
+      <div class="nav-item" onclick="nav('config')" id="nav-config"><span class="icon">&#9881;</span><span class="nav-label">Game Config</span></div>
     </nav>
     <div class="sidebar-footer">
       <div class="admin-name" id="sidebar-admin">admin</div>
@@ -281,7 +282,7 @@ function nav(page) {
   clearInterval(refreshTimer);
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const ni=$('nav-'+page); if(ni) ni.classList.add('active');
-  ({overview:renderOverview,users:renderUsers,activity:renderActivity,rooms:renderRooms,matches:renderMatches,bans:renderBans,system:renderSystem,online:renderOnlineUsers,dssessions:renderDsSessions}[page]||renderOverview)();
+  ({overview:renderOverview,users:renderUsers,activity:renderActivity,rooms:renderRooms,matches:renderMatches,bans:renderBans,system:renderSystem,online:renderOnlineUsers,dssessions:renderDsSessions,config:renderConfig}[page]||renderOverview)();
 }
 
 // ─── DS Sessions ─────────────────────────────────────────────────────────────
@@ -816,6 +817,166 @@ async function renderOnlineUsers() {
       </tr>`;
     }).join('');
   } catch(e) { $('ol-stats').innerHTML=`<div class="alert alert-error">Error: ${e.message}</div>`; }
+}
+
+// ─── Game Config ─────────────────────────────────────────────────────────────
+let cfgActiveTab = 'modes';
+async function renderConfig() {
+  $('main-content').innerHTML=`
+  <div class="page-header"><h1><span>&#9881;</span> Game Config</h1><button class="btn btn-info btn-sm" onclick="loadConfigTab(cfgActiveTab)">&#8635; Refresh</button></div>
+  <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:12px">
+    <button class="btn btn-sm config-tab-btn" id="ctab-modes" onclick="loadConfigTab('modes')">&#127918; Game Modes</button>
+    <button class="btn btn-sm config-tab-btn" id="ctab-maps" onclick="loadConfigTab('maps')">&#128506; Maps</button>
+    <button class="btn btn-sm config-tab-btn" id="ctab-runtime" onclick="loadConfigTab('runtime')">&#128295; Runtime Config</button>
+  </div>
+  <div id="config-body"><div style="text-align:center;padding:60px;color:var(--muted)"><div class="spinner"></div></div></div>`;
+  loadConfigTab(cfgActiveTab);
+}
+function setActiveConfigTab(name) {
+  cfgActiveTab = name;
+  document.querySelectorAll('.config-tab-btn').forEach(b => {
+    const isActive = b.id === 'ctab-' + name;
+    b.style.background = isActive ? 'var(--cyan)' : '';
+    b.style.color = isActive ? '#000' : '';
+  });
+}
+async function loadConfigTab(name) {
+  setActiveConfigTab(name);
+  if (name === 'modes') await loadModesConfig();
+  else if (name === 'maps') await loadMapsConfig();
+  else await loadRuntimeConfig();
+}
+
+// ── Modes tab ───────────────────────────────────────────────────────
+async function loadModesConfig() {
+  $('config-body').innerHTML='<div style="text-align:center;padding:40px"><div class="spinner"></div></div>';
+  try {
+    const r = await api('GET', '/api/admin/config/modes');
+    const modes = r.data || r;
+    const modeStatusOpts = ['AVAILABLE','COMING_SOON','DISABLED'].map(s=>`<option value="${s}">${s}</option>`).join('');
+    $('config-body').innerHTML=`
+    <div class="panel">
+      <div class="panel-header"><h3>&#127918; Game Modes <span style="color:var(--muted);font-size:.82rem">(${modes.length} total)</span></h3></div>
+      <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Display Name</th><th>Players</th><th>ELO Range</th><th>Status</th><th>Matchmaking</th><th>Dev Mode</th><th>Active</th><th>Actions</th></tr></thead>
+      <tbody>${modes.map(m=>`<tr id="mode-row-${m.modeKey}">
+        <td><code style="color:var(--cyan)">${m.modeKey}</code></td>
+        <td>${m.displayName}</td>
+        <td style="font-size:.82rem">${m.playersPerTeam}v${m.playersPerTeam} (${m.totalPlayers} total)</td>
+        <td style="font-size:.82rem;color:var(--muted)">${m.minElo}–${m.maxElo}</td>
+        <td><select class="filter-select" style="font-size:.78rem;padding:4px 8px" id="mstatus-${m.modeKey}">${['AVAILABLE','COMING_SOON','DISABLED'].map(s=>`<option value="${s}" ${m.modeStatus===s?'selected':''}>${s}</option>`).join('')}</select></td>
+        <td style="text-align:center"><input type="checkbox" ${m.matchmakingEnabled?'checked':''} id="mmatch-${m.modeKey}"></td>
+        <td style="text-align:center"><input type="checkbox" ${m.isDevMode?'checked':''} id="mdev-${m.modeKey}"></td>
+        <td style="text-align:center"><input type="checkbox" ${m.isActive?'checked':''} id="mact-${m.modeKey}"></td>
+        <td><button class="btn btn-success btn-sm" onclick="saveModeConfig('${m.modeKey}')">Save</button></td>
+      </tr>`).join('')}
+      </tbody></table></div>
+    </div>`;
+  } catch(e) { $('config-body').innerHTML=`<div class="alert alert-error">Error: ${e.message}</div>`; }
+}
+async function saveModeConfig(key) {
+  const patch = {
+    modeStatus: $('mstatus-' + key).value,
+    matchmakingEnabled: $('mmatch-' + key).checked,
+    isDevMode: $('mdev-' + key).checked,
+    isActive: $('mact-' + key).checked
+  };
+  try {
+    await api('PATCH', `/api/admin/config/modes/${key}`, patch);
+    showAlert(`Mode "${key}" saved`);
+  } catch(e) { showAlert(e.message, 'error'); }
+}
+
+// ── Maps tab ────────────────────────────────────────────────────────
+async function loadMapsConfig() {
+  $('config-body').innerHTML='<div style="text-align:center;padding:40px"><div class="spinner"></div></div>';
+  try {
+    const r = await api('GET', '/api/admin/config/maps');
+    const maps = r.data || r;
+    $('config-body').innerHTML=`
+    <div class="panel">
+      <div class="panel-header"><h3>&#128506; Maps <span style="color:var(--muted);font-size:.82rem">(${maps.length} total)</span></h3></div>
+      <div class="table-wrap"><table>
+      <thead><tr><th>Map ID</th><th>Scene</th><th>Display Name</th><th>Supported Modes</th><th>Order</th><th>Active</th><th>Locked</th><th>Actions</th></tr></thead>
+      <tbody>${maps.map(m=>`<tr>
+        <td><code style="color:var(--cyan);font-size:.78rem">${m.mapId}</code></td>
+        <td style="font-size:.78rem;color:var(--muted)">${m.sceneName||'—'}</td>
+        <td><input type="text" id="mname-${m.mapId}" value="${m.displayName||''}" class="filter-input" style="width:140px;font-size:.78rem;padding:4px 8px"></td>
+        <td style="font-size:.78rem;color:var(--muted)">${(m.supportedModes||[]).join(', ')||'—'}</td>
+        <td><input type="number" id="mord-${m.mapId}" value="${m.displayOrder||0}" class="filter-input" style="width:60px;font-size:.78rem;padding:4px 8px"></td>
+        <td style="text-align:center"><input type="checkbox" ${m.isActive?'checked':''} id="mactive-${m.mapId}"></td>
+        <td style="text-align:center"><input type="checkbox" ${m.isLocked?'checked':''} id="mlocked-${m.mapId}"></td>
+        <td><button class="btn btn-success btn-sm" onclick="saveMapConfig('${m.mapId}')">Save</button></td>
+      </tr>`).join('')}
+      </tbody></table></div>
+    </div>
+    <div class="panel" style="margin-top:20px">
+      <div class="panel-header"><h3>&#10133; Add New Map</h3></div>
+      <div class="panel-body" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div><label style="color:var(--muted);font-size:.78rem;display:block;margin-bottom:4px">Map ID</label><input id="new-map-id" class="filter-input" placeholder="map_03" style="width:120px"></div>
+        <div><label style="color:var(--muted);font-size:.78rem;display:block;margin-bottom:4px">Scene Name</label><input id="new-map-scene" class="filter-input" placeholder="GameMap_03" style="width:140px"></div>
+        <div><label style="color:var(--muted);font-size:.78rem;display:block;margin-bottom:4px">Display Name</label><input id="new-map-name" class="filter-input" placeholder="New Map" style="width:140px"></div>
+        <div><label style="color:var(--muted);font-size:.78rem;display:block;margin-bottom:4px">Modes (comma-sep)</label><input id="new-map-modes" class="filter-input" placeholder="2v2,3v3" style="width:140px"></div>
+        <button class="btn btn-success" onclick="addMap()">&#10133; Add Map</button>
+      </div>
+    </div>`;
+  } catch(e) { $('config-body').innerHTML=`<div class="alert alert-error">Error: ${e.message}</div>`; }
+}
+async function saveMapConfig(mapId) {
+  const patch = {
+    displayName: $('mname-' + mapId).value,
+    displayOrder: parseInt($('mord-' + mapId).value) || 0,
+    isActive: $('mactive-' + mapId).checked,
+    isLocked: $('mlocked-' + mapId).checked
+  };
+  try {
+    await api('PATCH', `/api/admin/config/maps/${mapId}`, patch);
+    showAlert(`Map "${mapId}" saved`);
+  } catch(e) { showAlert(e.message, 'error'); }
+}
+async function addMap() {
+  const mapId=$('new-map-id').value.trim(), sceneName=$('new-map-scene').value.trim();
+  const displayName=$('new-map-name').value.trim(), modesRaw=$('new-map-modes').value.trim();
+  if (!mapId || !sceneName || !displayName) { showAlert('Map ID, Scene Name and Display Name are required','error'); return; }
+  const supportedModes = modesRaw ? modesRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  try {
+    await api('POST', '/api/admin/config/maps', {mapId, sceneName, displayName, supportedModes});
+    showAlert(`Map "${mapId}" added`); loadMapsConfig();
+  } catch(e) { showAlert(e.message, 'error'); }
+}
+
+// ── Runtime Config tab ──────────────────────────────────────────────
+async function loadRuntimeConfig() {
+  $('config-body').innerHTML='<div style="text-align:center;padding:40px"><div class="spinner"></div></div>';
+  try {
+    const r = await api('GET', '/api/admin/config/runtime');
+    const entries = r.data || r;
+    const typeColor = t => t==='INT'?'var(--cyan)':t==='FLOAT'?'var(--yellow)':t==='BOOL'?'var(--green)':t==='JSON'?'var(--purple)':'var(--muted)';
+    $('config-body').innerHTML=`
+    <div class="panel">
+      <div class="panel-header"><h3>&#128295; Runtime Config <span style="color:var(--muted);font-size:.82rem">${entries.length} keys — changes take effect immediately without restart</span></h3></div>
+      <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Type</th><th>Value</th><th>Description</th><th>Last Updated</th><th>Actions</th></tr></thead>
+      <tbody>${entries.map(e=>`<tr>
+        <td><code style="color:var(--cyan);font-size:.82rem">${e.configKey}</code></td>
+        <td><span class="badge" style="background:rgba(0,0,0,.2);color:${typeColor(e.valueType)}">${e.valueType}</span></td>
+        <td><input type="text" id="rval-${e.configKey.replace(/\./g,'_')}" value="${e.configValue}" class="filter-input" style="width:120px;font-size:.82rem;padding:4px 8px"></td>
+        <td style="color:var(--muted);font-size:.78rem;max-width:200px">${e.description||'—'}</td>
+        <td style="font-size:.75rem;color:var(--muted)">${fmtDate(e.updatedAt)}</td>
+        <td><button class="btn btn-success btn-sm" onclick="saveRuntimeConfig('${e.configKey}')">Save</button></td>
+      </tr>`).join('')}
+      </tbody></table></div>
+    </div>`;
+  } catch(e) { $('config-body').innerHTML=`<div class="alert alert-error">Error: ${e.message}</div>`; }
+}
+async function saveRuntimeConfig(key) {
+  const inputId = 'rval-' + key.replace(/\./g, '_');
+  const val = $(inputId);
+  if (!val) return;
+  try {
+    await api('PATCH', `/api/admin/config/runtime/${key}`, {value: val.value});
+    showAlert(`Config "${key}" updated`);
+  } catch(e) { showAlert(e.message, 'error'); }
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
