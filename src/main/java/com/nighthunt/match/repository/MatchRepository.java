@@ -21,6 +21,17 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // Admin queries
     long countByCreatedAtAfter(LocalDateTime after);
 
+    /** Count matches that finished after the given time (for rolling-window metrics). */
+    long countByFinishedAtAfter(LocalDateTime after);
+
+    /** Count finished matches grouped by gameMode — returns [gameMode, count] pairs. */
+    @Query("""
+        SELECT m.gameMode, COUNT(m) FROM Match m
+        WHERE m.status = 'FINISHED' AND m.finishedAt >= :after
+        GROUP BY m.gameMode
+        """)
+    List<Object[]> countFinishedByModeAfter(@Param("after") LocalDateTime after);
+
     @Query("""
         SELECT m FROM Match m
         WHERE (:status IS NULL OR m.status = :status)

@@ -28,4 +28,6 @@ public class GameModeDTO {
     private int    displayOrder;
     @JsonProperty("isActive")
     private boolean isActive;
+    @JsonProperty("isDevMode")
+    private boolean isDevMode;            // true = dev/test mode, excluded from client-facing API
 }

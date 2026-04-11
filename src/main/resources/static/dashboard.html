@@ -260,6 +260,137 @@
             align-items: center;
             gap: 5px;
         }
+
+        /* ── Admin Game Config ─────────────────────────────────────── */
+        .admin-secret-bar {
+            background: rgba(255,255,255,0.95);
+            padding: 12px 20px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .admin-secret-bar label { font-size: 13px; font-weight: 600; color: #667eea; }
+        .admin-secret-bar input {
+            padding: 6px 12px; border: 1px solid #ddd; border-radius: 5px;
+            font-size: 13px; font-family: monospace; width: 280px;
+        }
+        .tab-nav {
+            display: flex; gap: 8px; margin-bottom: 16px;
+        }
+        .tab-btn {
+            padding: 8px 20px; border: 2px solid #667eea; border-radius: 20px;
+            background: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+            color: #667eea; transition: all 0.2s;
+        }
+        .tab-btn.active { background: #667eea; color: #fff; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .config-section {
+            background: rgba(255,255,255,0.95); padding: 20px; border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 16px;
+        }
+        .config-section h2 { color: #667eea; margin-bottom: 16px; }
+        .config-table { width: 100%; border-collapse: collapse; }
+        .config-table th, .config-table td {
+            padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+        .config-table th { background: #f8f9fa; font-weight: 600; color: #667eea; }
+        .config-table tr:hover { background: #fafafa; }
+        .toggle-btn {
+            padding: 4px 12px; border: none; border-radius: 4px;
+            cursor: pointer; font-size: 12px; font-weight: 600; transition: background 0.2s;
+        }
+        .toggle-btn.on  { background: #28a745; color: #fff; }
+        .toggle-btn.off { background: #dc3545; color: #fff; }
+        .toggle-btn.locked { background: #ffc107; color: #000; }
+        .status-select {
+            padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;
+        }
+        .inline-edit { display: flex; align-items: center; gap: 6px; }
+        .inline-edit input {
+            padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+            font-size: 12px; width: 120px; font-family: monospace;
+        }
+        .save-btn {
+            padding: 4px 10px; background: #667eea; color: #fff;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+        }
+        .save-btn:hover { background: #5568d3; }
+        .dev-badge {
+            display: inline-block; padding: 2px 8px; background: #6f42c1;
+            color: #fff; border-radius: 10px; font-size: 10px; margin-left: 4px;
+        }
+        .add-map-form {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;
+        }
+        .add-map-form input, .add-map-form select {
+            padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;
+        }
+        .add-map-form label { font-size: 11px; font-weight: 600; color: #666; }
+        .form-field { display: flex; flex-direction: column; gap: 2px; }
+        .success-msg { color: #28a745; font-size: 12px; font-weight: 600; }
+        .error-msg   { color: #dc3545; font-size: 12px; font-weight: 600; }
+
+        /* ── Analytics ─────────────────────────────────────────────── */
+        .analytics-section {
+            background: rgba(255,255,255,0.95);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+        .analytics-header {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+        }
+        .analytics-header h2 { color: #667eea; margin: 0; }
+        .analytics-controls { display: flex; gap: 10px; align-items: center; }
+        .analytics-controls select {
+            padding: 6px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px;
+        }
+        .analytics-stat-row {
+            display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;
+        }
+        .a-stat {
+            flex: 1 1 100px; background: #f8f9ff; border-radius: 8px; padding: 12px;
+            text-align: center; border: 1px solid #e0e4ff;
+        }
+        .a-val { display: block; font-size: 24px; font-weight: 700; color: #667eea; }
+        .a-lbl { font-size: 11px; color: #888; text-transform: uppercase; }
+        .charts-row {
+            display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+        }
+        .chart-card {
+            background: #fafbff; border-radius: 8px; padding: 16px;
+            flex: 1 1 300px; min-width: 0; border: 1px solid #e8eaff;
+        }
+        .chart-card.wide { flex: 2 1 500px; }
+        .chart-card h3 { font-size: 14px; color: #555; margin-bottom: 12px; }
+        .chart-card canvas { max-height: 240px; }
+        .leaderboard-card { overflow-x: auto; }
+
+        /* Leaderboard table */
+        .lb-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .lb-table th { background: #667eea; color: #fff; padding: 6px 8px; text-align: left; }
+        .lb-table td { padding: 5px 8px; border-bottom: 1px solid #eee; }
+        .lb-table tr:hover td { background: #f0f4ff; }
+        .rank-badge { font-weight: 700; color: #667eea; }
+        .online-dot { color: #28a745; font-size: 10px; }
+        .offline-dot { color: #999; font-size: 10px; }
+        .tier-badge {
+            display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px;
+            font-weight: 600; background: #e0e4ff; color: #667eea;
+        }
+        .status-online  { color: #28a745; font-weight: 600; font-size: 11px; }
+        .status-queue   { color: #fd7e14; font-weight: 600; font-size: 11px; }
+        .status-ingame  { color: #dc3545; font-weight: 600; font-size: 11px; }
+        .status-offline { color: #aaa;    font-size: 11px; }
     </style>
 </head>
 <body>
@@ -321,10 +452,148 @@
                 <div class="loading">Loading rooms...</div>
             </div>
         </div>
-    </div>
 
+        <!-- ═══════════════════════════════════════════════════════════════
+             ADMIN GAME CONFIG — requires X-Admin-Secret
+        ════════════════════════════════════════════════════════════════ -->
+        <div class="admin-secret-bar">
+            <label>🔐 Admin Secret</label>
+            <input type="password" id="adminSecret" placeholder="Enter admin secret…" />
+            <button class="tab-btn" onclick="loadGameConfig()">Load Config Panel</button>
+            <span id="configLoadMsg" style="font-size:12px;color:#dc3545;"></span>
+        </div>
+
+        <div id="gameConfigPanel" style="display:none;">
+            <div class="tab-nav">
+                <button class="tab-btn active" onclick="switchConfigTab('modes', this)">🎮 Game Modes</button>
+                <button class="tab-btn"        onclick="switchConfigTab('maps',  this)">🗺️ Maps</button>
+                <button class="tab-btn"        onclick="switchConfigTab('runtime',this)">⚙️ Runtime Config</button>
+            </div>
+
+            <!-- ── Game Modes Tab ─────────────────────────────────────── -->
+            <div id="configTab-modes" class="tab-panel active">
+                <div class="config-section">
+                    <h2>Game Modes</h2>
+                    <p style="font-size:13px;color:#666;margin-bottom:12px;">
+                        Changes apply immediately. Client refreshes on next app startup.
+                    </p>
+                    <div id="modesTable"><div class="loading">Loading…</div></div>
+                </div>
+            </div>
+
+            <!-- ── Maps Tab ───────────────────────────────────────────── -->
+            <div id="configTab-maps" class="tab-panel">
+                <div class="config-section">
+                    <h2>Maps</h2>
+                    <p style="font-size:13px;color:#666;margin-bottom:12px;">
+                        <strong>sceneName</strong> must match a pre-baked SceneId in the client build (e.g. <code>GameMap_03</code>).
+                        Enable/disable existing maps at any time. Add new maps once their scene is baked into the build.
+                    </p>
+                    <div id="mapsTable"><div class="loading">Loading…</div></div>
+                    <details style="margin-top:16px;">
+                        <summary style="cursor:pointer;font-weight:600;color:#667eea;">➕ Add New Map Entry</summary>
+                        <div class="add-map-form" id="addMapForm">
+                            <div class="form-field"><label>mapId *</label><input id="nm_mapId" placeholder="map_03" /></div>
+                            <div class="form-field"><label>displayName *</label><input id="nm_displayName" placeholder="Desert Ruins" /></div>
+                            <div class="form-field"><label>sceneName * (client SceneId)</label><input id="nm_sceneName" placeholder="GameMap_03" /></div>
+                            <div class="form-field"><label>description</label><input id="nm_description" placeholder="Short description…" /></div>
+                            <div class="form-field"><label>supportedModes (comma-sep)</label><input id="nm_modes" placeholder="2v2,3v3,4v4" /></div>
+                            <div class="form-field"><label>displayOrder</label><input id="nm_order" type="number" placeholder="3" /></div>
+                            <div class="form-field" style="justify-content:flex-end;">
+                                <button class="save-btn" style="margin-top:18px;" onclick="submitAddMap()">Add Map</button>
+                                <span id="addMapMsg" class="success-msg"></span>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <!-- ── Runtime Config Tab ─────────────────────────────────── -->
+            <div id="configTab-runtime" class="tab-panel">
+                <div class="config-section">
+                    <h2>Runtime Config</h2>
+                    <p style="font-size:13px;color:#666;margin-bottom:12px;">
+                        All values take effect immediately — no server restart required.
+                    </p>
+                    <div id="runtimeTable"><div class="loading">Loading…</div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             ANALYTICS — Charts & Live Player Status
+        ════════════════════════════════════════════════════════════════ -->
+        <div class="analytics-section">
+            <div class="analytics-header">
+                <h2>📊 Analytics</h2>
+                <div class="analytics-controls">
+                    <select id="historyHours" onchange="loadAnalytics()">
+                        <option value="1">Last 1 hour</option>
+                        <option value="3">Last 3 hours</option>
+                        <option value="6">Last 6 hours</option>
+                        <option value="24" selected>Last 24 hours</option>
+                        <option value="72">Last 3 days</option>
+                        <option value="168">Last 7 days</option>
+                    </select>
+                    <button class="refresh-btn" onclick="loadAnalytics()">🔄 Refresh Analytics</button>
+                </div>
+            </div>
+
+            <!-- Summary stat cards row -->
+            <div class="analytics-stat-row" id="analyticsStatRow">
+                <div class="a-stat"><span class="a-val" id="a_queueTotal">-</span><span class="a-lbl">In Queue</span></div>
+                <div class="a-stat"><span class="a-val" id="a_avgWait">-</span><span class="a-lbl">Avg Wait (s)</span></div>
+                <div class="a-stat"><span class="a-val" id="a_matchesHour">-</span><span class="a-lbl">Matches/hr</span></div>
+                <div class="a-stat"><span class="a-val" id="a_totalMatches">-</span><span class="a-lbl">Matches (period)</span></div>
+                <div class="a-stat"><span class="a-val" id="a_totalUsers">-</span><span class="a-lbl">Registered Users</span></div>
+                <div class="a-stat"><span class="a-val" id="a_newToday">-</span><span class="a-lbl">New Today</span></div>
+                <div class="a-stat"><span class="a-val" id="a_avgElo">-</span><span class="a-lbl">Avg ELO</span></div>
+            </div>
+
+            <!-- Charts row 1 -->
+            <div class="charts-row">
+                <div class="chart-card wide">
+                    <h3>Online Users & Queue Depth</h3>
+                    <canvas id="chartOnline"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Matches by Mode</h3>
+                    <canvas id="chartMatchesByMode"></canvas>
+                </div>
+            </div>
+
+            <!-- Charts row 2 -->
+            <div class="charts-row">
+                <div class="chart-card">
+                    <h3>ELO Distribution</h3>
+                    <canvas id="chartElo"></canvas>
+                </div>
+                <div class="chart-card wide">
+                    <h3>Matchmaking Queue by Mode</h3>
+                    <canvas id="chartQueue"></canvas>
+                </div>
+            </div>
+
+            <!-- Leaderboard + Live Status row -->
+            <div class="charts-row">
+                <div class="chart-card leaderboard-card">
+                    <h3>🏆 Top Players</h3>
+                    <div id="leaderboardTable"><div class="loading">Loading…</div></div>
+                </div>
+                <div class="chart-card leaderboard-card">
+                    <h3>🟢 Live Player Status</h3>
+                    <div id="playerStatusTable"><div class="loading">Loading…</div></div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /.container -->
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
         // Auto-detect API base URL
+        const ADMIN_URL  = window.location.origin + '/api/admin/config';
         const API_BASE_URL = window.location.origin + '/api/dashboard';
         let autoRefreshInterval = null;
         let lastStats = null;
@@ -567,6 +836,446 @@
             loadDashboard();
             setupAutoRefresh();
         });
+
+        // ════════════════════════════════════════════════════════════════
+        // ADMIN GAME CONFIG
+        // ════════════════════════════════════════════════════════════════
+
+        function adminSecret() {
+            return document.getElementById('adminSecret').value.trim();
+        }
+
+        function adminHeaders() {
+            return { 'Content-Type': 'application/json', 'X-Admin-Secret': adminSecret() };
+        }
+
+        function switchConfigTab(name, btn) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab-nav .tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('configTab-' + name).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        async function loadGameConfig() {
+            const msg = document.getElementById('configLoadMsg');
+            msg.textContent = '';
+            try {
+                await Promise.all([loadGameModes(), loadMaps(), loadRuntimeConfig()]);
+                document.getElementById('gameConfigPanel').style.display = 'block';
+                msg.style.color = '#28a745';
+                msg.textContent = '✓ Loaded';
+            } catch (e) {
+                msg.style.color = '#dc3545';
+                msg.textContent = '✗ ' + e.message;
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // GAME MODES
+        // ────────────────────────────────────────────────────────────────
+
+        async function loadGameModes() {
+            const r = await fetch(`${ADMIN_URL}/modes`, { headers: adminHeaders() });
+            if (!r.ok) throw new Error(`Modes: HTTP ${r.status}`);
+            const data = await r.json();
+            renderModesTable(data.data || []);
+        }
+
+        function renderModesTable(modes) {
+            const STATUS_OPTIONS = ['AVAILABLE','LOCKED','COMING_SOON','DISABLED'];
+            let html = `<table class="config-table">
+                <thead><tr>
+                    <th>Mode Key</th><th>Display Name</th><th>Players/Team</th>
+                    <th>Status</th><th>Matchmaking</th><th>Dev Mode</th><th>Active</th>
+                </tr></thead><tbody>`;
+            modes.forEach(m => {
+                const devBadge = m.isDevMode ? '<span class="dev-badge">DEV</span>' : '';
+                const statusOpts = STATUS_OPTIONS.map(s =>
+                    `<option value="${s}" ${m.modeStatus===s?'selected':''}>${s}</option>`).join('');
+                html += `<tr>
+                    <td><strong>${m.modeKey}</strong>${devBadge}</td>
+                    <td>${m.displayName}</td>
+                    <td>${m.playersPerTeam}</td>
+                    <td>
+                        <select class="status-select" onchange="patchMode('${m.modeKey}',{modeStatus:this.value})">
+                            ${statusOpts}
+                        </select>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${m.matchmakingEnabled?'on':'off'}"
+                            onclick="patchMode('${m.modeKey}',{matchmakingEnabled:${!m.matchmakingEnabled}});this.closest('tr').style.opacity='0.5'">
+                            ${m.matchmakingEnabled ? 'ON' : 'OFF'}
+                        </button>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${m.isDevMode?'on':'off'}"
+                            onclick="patchMode('${m.modeKey}',{isDevMode:${!m.isDevMode}});this.closest('tr').style.opacity='0.5'">
+                            ${m.isDevMode ? 'YES' : 'NO'}
+                        </button>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${m.isActive?'on':'off'}"
+                            onclick="patchMode('${m.modeKey}',{isActive:${!m.isActive}});this.closest('tr').style.opacity='0.5'">
+                            ${m.isActive ? 'ACTIVE' : 'INACTIVE'}
+                        </button>
+                    </td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('modesTable').innerHTML = html;
+        }
+
+        async function patchMode(modeKey, patch) {
+            const r = await fetch(`${ADMIN_URL}/modes/${modeKey}`, {
+                method: 'PATCH', headers: adminHeaders(), body: JSON.stringify(patch)
+            });
+            if (!r.ok) { alert('Error: ' + (await r.text())); }
+            await loadGameModes();
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // MAPS
+        // ────────────────────────────────────────────────────────────────
+
+        async function loadMaps() {
+            const r = await fetch(`${ADMIN_URL}/maps`, { headers: adminHeaders() });
+            if (!r.ok) throw new Error(`Maps: HTTP ${r.status}`);
+            const data = await r.json();
+            renderMapsTable(data.data || []);
+        }
+
+        function renderMapsTable(maps) {
+            let html = `<table class="config-table">
+                <thead><tr>
+                    <th>Map ID</th><th>Display Name</th><th>Scene Name</th>
+                    <th>Supported Modes</th><th>Active</th><th>Locked</th><th>Order</th>
+                </tr></thead><tbody>`;
+            maps.forEach(m => {
+                const modesStr = (m.supportedModes||[]).join(',') || 'all';
+                html += `<tr>
+                    <td><strong>${m.mapId}</strong></td>
+                    <td>${m.displayName}</td>
+                    <td><code>${m.sceneName}</code></td>
+                    <td>
+                        <div class="inline-edit">
+                            <input id="modes_${m.mapId}" value="${modesStr}" title="Comma-separated modeKeys" />
+                            <button class="save-btn" onclick="patchMapModes('${m.mapId}')">Save</button>
+                        </div>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${m.isActive?'on':'off'}"
+                            onclick="patchMap('${m.mapId}',{isActive:${!m.isActive}});this.closest('tr').style.opacity='0.5'">
+                            ${m.isActive ? 'ACTIVE' : 'INACTIVE'}
+                        </button>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${m.isLocked?'locked':'on'}"
+                            onclick="patchMap('${m.mapId}',{isLocked:${!m.isLocked}});this.closest('tr').style.opacity='0.5'">
+                            ${m.isLocked ? '🔒 LOCKED' : '🔓 OPEN'}
+                        </button>
+                    </td>
+                    <td>
+                        <div class="inline-edit">
+                            <input id="order_${m.mapId}" type="number" value="${m.displayOrder}" style="width:60px;" />
+                            <button class="save-btn" onclick="patchMapOrder('${m.mapId}')">Save</button>
+                        </div>
+                    </td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('mapsTable').innerHTML = html;
+        }
+
+        async function patchMap(mapId, patch) {
+            const r = await fetch(`${ADMIN_URL}/maps/${mapId}`, {
+                method: 'PATCH', headers: adminHeaders(), body: JSON.stringify(patch)
+            });
+            if (!r.ok) { alert('Error: ' + (await r.text())); }
+            await loadMaps();
+        }
+
+        async function patchMapModes(mapId) {
+            const raw = document.getElementById('modes_' + mapId).value.trim();
+            const modes = raw === 'all' ? null : raw.split(',').map(s => s.trim()).filter(Boolean);
+            await patchMap(mapId, { supportedModes: modes });
+        }
+
+        async function patchMapOrder(mapId) {
+            const v = parseInt(document.getElementById('order_' + mapId).value);
+            if (!isNaN(v)) await patchMap(mapId, { displayOrder: v });
+        }
+
+        async function submitAddMap() {
+            const msg = document.getElementById('addMapMsg');
+            msg.textContent = '';
+            const mapId      = document.getElementById('nm_mapId').value.trim();
+            const displayName= document.getElementById('nm_displayName').value.trim();
+            const sceneName  = document.getElementById('nm_sceneName').value.trim();
+            const description= document.getElementById('nm_description').value.trim();
+            const modesRaw   = document.getElementById('nm_modes').value.trim();
+            const order      = parseInt(document.getElementById('nm_order').value) || 99;
+            if (!mapId || !displayName || !sceneName) {
+                msg.className = 'error-msg'; msg.textContent = 'mapId, displayName and sceneName are required.'; return;
+            }
+            const supportedModes = modesRaw ? modesRaw.split(',').map(s=>s.trim()).filter(Boolean) : null;
+            const body = { mapId, displayName, description, sceneName, supportedModes, displayOrder: order, isActive: true };
+            const r = await fetch(`${ADMIN_URL}/maps`, {
+                method: 'POST', headers: adminHeaders(), body: JSON.stringify(body)
+            });
+            if (r.ok) {
+                msg.className = 'success-msg'; msg.textContent = '✓ Map added!';
+                await loadMaps();
+            } else {
+                msg.className = 'error-msg'; msg.textContent = '✗ ' + (await r.text());
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // RUNTIME CONFIG
+        // ────────────────────────────────────────────────────────────────
+
+        async function loadRuntimeConfig() {
+            const r = await fetch(`${ADMIN_URL}/runtime`, { headers: adminHeaders() });
+            if (!r.ok) throw new Error(`Config: HTTP ${r.status}`);
+            const data = await r.json();
+            renderRuntimeTable(data.data || []);
+        }
+
+        function renderRuntimeTable(entries) {
+            let html = `<table class="config-table">
+                <thead><tr>
+                    <th>Key</th><th>Value</th><th>Type</th><th>Description</th><th></th>
+                </tr></thead><tbody>`;
+            entries.forEach(e => {
+                html += `<tr>
+                    <td><code>${e.configKey}</code></td>
+                    <td>
+                        <div class="inline-edit">
+                            <input id="cfg_${e.configKey}" value="${e.configValue}" />
+                            <button class="save-btn" onclick="saveConfigValue('${e.configKey}')">Save</button>
+                            <span id="cfgMsg_${e.configKey}" style="font-size:11px;"></span>
+                        </div>
+                    </td>
+                    <td><span style="font-size:11px;color:#888;">${e.valueType}</span></td>
+                    <td style="font-size:12px;color:#555;">${e.description||''}</td>
+                    <td></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('runtimeTable').innerHTML = html;
+        }
+
+        async function saveConfigValue(key) {
+            const input = document.getElementById('cfg_' + key);
+            const msgEl = document.getElementById('cfgMsg_' + key);
+            const r = await fetch(`${ADMIN_URL}/runtime/${encodeURIComponent(key)}`, {
+                method: 'PATCH',
+                headers: adminHeaders(),
+                body: JSON.stringify({ value: input.value })
+            });
+            if (r.ok) {
+                msgEl.style.color = '#28a745'; msgEl.textContent = '✓';
+                setTimeout(() => { msgEl.textContent = ''; }, 2000);
+            } else {
+                msgEl.style.color = '#dc3545'; msgEl.textContent = '✗ Error';
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // ANALYTICS
+        // ═══════════════════════════════════════════════════════════════
+        const ANALYTICS_URL = window.location.origin + '/api/dashboard/analytics';
+
+        let chartOnline      = null;
+        let chartMatchesByMode = null;
+        let chartElo         = null;
+        let chartQueue       = null;
+
+        async function loadAnalytics() {
+            const hours = parseInt(document.getElementById('historyHours').value) || 24;
+            try {
+                const [history, mm, matches, elo, top, statuses] = await Promise.all([
+                    fetch(`${ANALYTICS_URL}/online-history?hours=${hours}`).then(r => r.json()),
+                    fetch(`${ANALYTICS_URL}/matchmaking`).then(r => r.json()),
+                    fetch(`${ANALYTICS_URL}/matches?hours=${hours}`).then(r => r.json()),
+                    fetch(`${ANALYTICS_URL}/elo-distribution`).then(r => r.json()),
+                    fetch(`${ANALYTICS_URL}/top-players?limit=20`).then(r => r.json()),
+                    fetch(`${ANALYTICS_URL}/player-statuses?limit=50`).then(r => r.json()),
+                ]);
+
+                renderSummaryStats(mm.data, matches.data, elo.data);
+                renderOnlineChart(history.data);
+                renderMatchesByModeChart(matches.data);
+                renderEloChart(elo.data);
+                renderQueueChart(mm.data);
+                renderLeaderboard(top.data || []);
+                renderPlayerStatuses(statuses.data || []);
+            } catch (e) {
+                console.error('Analytics load error:', e);
+            }
+        }
+
+        function renderSummaryStats(mm, matches, elo) {
+            if (mm) {
+                document.getElementById('a_queueTotal').textContent = mm.totalInQueue || 0;
+                document.getElementById('a_avgWait').textContent    = mm.avgWaitSeconds || 0;
+                document.getElementById('a_matchesHour').textContent = mm.matchesLastHour || 0;
+            }
+            if (matches) {
+                document.getElementById('a_totalMatches').textContent = matches.totalMatchesInPeriod || 0;
+                document.getElementById('a_totalUsers').textContent   = matches.totalRegisteredUsers || 0;
+                document.getElementById('a_newToday').textContent     = matches.newUsersToday || 0;
+            }
+            if (elo) {
+                document.getElementById('a_avgElo').textContent = elo.averageElo || 1000;
+            }
+        }
+
+        function renderOnlineChart(data) {
+            const ctx = document.getElementById('chartOnline').getContext('2d');
+            if (chartOnline) chartOnline.destroy();
+            if (!data || !data.labels || data.labels.length === 0) return;
+
+            // Downsample to max 120 points for readability
+            const step = Math.max(1, Math.floor(data.labels.length / 120));
+            const labels   = data.labels.filter((_,i) => i % step === 0);
+            const online   = data.onlineUsers.filter((_,i) => i % step === 0);
+            const queue    = data.queueDepth.filter((_,i) => i % step === 0);
+            const inGame   = data.inGameRooms.filter((_,i) => i % step === 0);
+
+            chartOnline = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Online Users', data: online, borderColor: '#667eea', backgroundColor: 'rgba(102,126,234,0.1)', fill: true, tension: 0.3, pointRadius: 2 },
+                        { label: 'In Queue',     data: queue, borderColor: '#fd7e14', backgroundColor: 'rgba(253,126,20,0.05)',  fill: false, tension: 0.3, pointRadius: 2 },
+                        { label: 'In-Game Rooms',data: inGame, borderColor: '#28a745', backgroundColor: 'rgba(40,167,69,0.05)',   fill: false, tension: 0.3, pointRadius: 2 },
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true } } }
+            });
+        }
+
+        function renderMatchesByModeChart(data) {
+            const ctx = document.getElementById('chartMatchesByMode').getContext('2d');
+            if (chartMatchesByMode) chartMatchesByMode.destroy();
+            if (!data || !data.matchesByMode) return;
+
+            const labels = Object.keys(data.matchesByMode);
+            const values = Object.values(data.matchesByMode);
+            const colors = ['#667eea','#764ba2','#fd7e14','#28a745','#dc3545','#17a2b8'];
+
+            chartMatchesByMode = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Matches', data: values, backgroundColor: colors.slice(0, labels.length) }] },
+                options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+            });
+        }
+
+        function renderEloChart(data) {
+            const ctx = document.getElementById('chartElo').getContext('2d');
+            if (chartElo) chartElo.destroy();
+            if (!data || !data.buckets) return;
+
+            const labels = Object.keys(data.buckets);
+            const values = Object.values(data.buckets);
+            const colors = ['#cd7f32','#c0c0c0','#ffd700','#b9f2ff','#a8d8ea','#9b59b6'];
+
+            chartElo = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels, datasets: [{ data: values, backgroundColor: colors.slice(0, labels.length), borderWidth: 2 }] },
+                options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { font: { size: 10 } } } } }
+            });
+        }
+
+        function renderQueueChart(data) {
+            const ctx = document.getElementById('chartQueue').getContext('2d');
+            if (chartQueue) chartQueue.destroy();
+            if (!data || !data.queueByMode) return;
+
+            const labels = Object.keys(data.queueByMode);
+            const values = Object.values(data.queueByMode);
+            const colors = ['#667eea','#764ba2','#fd7e14','#28a745','#dc3545','#17a2b8'];
+
+            chartQueue = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Players in Queue', data: values, backgroundColor: colors.slice(0, labels.length), borderRadius: 4 }] },
+                options: { responsive: true, maintainAspectRatio: true, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } }
+            });
+        }
+
+        function renderLeaderboard(players) {
+            if (!players || players.length === 0) {
+                document.getElementById('leaderboardTable').innerHTML = '<p style="color:#888;font-size:12px;">No data</p>';
+                return;
+            }
+            let html = `<table class="lb-table">
+                <thead><tr>
+                    <th>#</th><th>Player</th><th>ELO</th><th>Tier</th>
+                    <th>W/L/D</th><th>KDA</th><th>Status</th>
+                </tr></thead><tbody>`;
+            players.forEach((p, i) => {
+                const onlineDot = p.online ? '<span class="online-dot">●</span>' : '<span class="offline-dot">○</span>';
+                const banned   = p.banned ? ' <span style="color:#dc3545;font-size:10px;">[BAN]</span>' : '';
+                html += `<tr>
+                    <td class="rank-badge">${i+1}</td>
+                    <td>${onlineDot} ${p.username}${banned}</td>
+                    <td><strong>${p.elo}</strong></td>
+                    <td><span class="tier-badge">${p.tier}</span></td>
+                    <td>${p.totalWins}/${p.totalLosses}/${p.totalDraws}</td>
+                    <td>${p.kda.toFixed(2)}</td>
+                    <td>${p.online ? '<span class="status-online">ONLINE</span>' : '<span class="status-offline">offline</span>'}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('leaderboardTable').innerHTML = html;
+        }
+
+        function renderPlayerStatuses(players) {
+            if (!players || players.length === 0) {
+                document.getElementById('playerStatusTable').innerHTML = '<p style="color:#888;font-size:12px;">No online players</p>';
+                return;
+            }
+            const statusClass = { ONLINE: 'status-online', IN_QUEUE: 'status-queue', IN_GAME: 'status-ingame', OFFLINE: 'status-offline' };
+            let html = `<table class="lb-table">
+                <thead><tr><th>Player</th><th>ELO</th><th>Tier</th><th>Status</th></tr></thead><tbody>`;
+            players.forEach(p => {
+                const cls = statusClass[p.status] || 'status-offline';
+                const banned = p.banned ? ' <span style="color:#dc3545;font-size:10px;">[BAN]</span>' : '';
+                html += `<tr>
+                    <td>${p.username}${banned}</td>
+                    <td>${p.elo}</td>
+                    <td><span class="tier-badge">${p.tier}</span></td>
+                    <td><span class="${cls}">${p.status}</span></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('playerStatusTable').innerHTML = html;
+        }
+
+        // ── Init ──────────────────────────────────────────────────────────────
+        // (dashboard loadDashboard() + setupAutoRefresh() called by DOMContentLoaded above)
+        // Load analytics immediately, then every 30s by extending setupAutoRefresh
+        document.addEventListener('DOMContentLoaded', loadAnalytics);
+
+        // Patch startAutoRefresh to also refresh analytics every ~30s (every 6th stats tick)
+        let _analyticsRefreshCount = 0;
+        const _origStart = startAutoRefresh;
+        // Override only: analytics gets an independent 30s interval
+        let _analyticsInterval = null;
+        function _startAnalyticsRefresh() {
+            if (_analyticsInterval) clearInterval(_analyticsInterval);
+            _analyticsInterval = setInterval(loadAnalytics, 30000);
+        }
+        function _stopAnalyticsRefresh() {
+            if (_analyticsInterval) { clearInterval(_analyticsInterval); _analyticsInterval = null; }
+        }
+        document.getElementById('autoRefresh').addEventListener('change', function() {
+            if (this.checked) _startAnalyticsRefresh(); else _stopAnalyticsRefresh();
+        });
+        document.addEventListener('DOMContentLoaded', _startAnalyticsRefresh);
+
     </script>
 </body>
 </html>

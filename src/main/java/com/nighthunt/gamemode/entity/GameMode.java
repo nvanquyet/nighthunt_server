@@ -104,6 +104,15 @@ public class GameMode {
     @Builder.Default
     private boolean isActive = true;
 
+    /**
+     * Dev/test mode flag.
+     * true = excluded from client-facing API; still accepted by matchmaking queue.
+     * false = normal production mode.
+     */
+    @Column(name = "is_dev_mode", nullable = false)
+    @Builder.Default
+    private boolean isDevMode = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

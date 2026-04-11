@@ -190,6 +190,51 @@ public class GameModeService {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
+    // ADMIN API — runtime patch (no service restart needed)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Patches any subset of a game mode's admin-controlled fields.
+     * Null fields in the request are ignored (partial update).
+     * Called by AdminGameConfigController via dashboard.
+     */
+    @Transactional
+    public GameModeDTO patchMode(String modeKey, PatchGameModeRequest req) {
+        GameMode gm = gameModeRepository.findByModeKey(modeKey)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "Game mode not found: " + modeKey));
+
+        if (req.modeStatus       != null) gm.setModeStatus(req.modeStatus);
+        if (req.matchmakingEnabled!= null) gm.setMatchmakingEnabled(req.matchmakingEnabled);
+        if (req.isDevMode        != null) gm.setDevMode(req.isDevMode);
+        if (req.isActive         != null) gm.setActive(req.isActive);
+        if (req.displayOrder     != null) gm.setDisplayOrder(req.displayOrder);
+        if (req.displayName      != null) gm.setDisplayName(req.displayName);
+        if (req.description      != null) gm.setDescription(req.description);
+
+        log.info("[AdminConfig] patchMode {} → {}", modeKey, req);
+        return toGameModeDTO(gameModeRepository.save(gm));
+    }
+
+    /** Request DTO for patchMode — all fields optional (null = no change). */
+    public static class PatchGameModeRequest {
+        public String  modeStatus;
+        public Boolean matchmakingEnabled;
+        public Boolean isDevMode;
+        public Boolean isActive;
+        public Integer displayOrder;
+        public String  displayName;
+        public String  description;
+
+        @Override public String toString() {
+            return "PatchGameModeRequest{status=" + modeStatus
+                    + ",matchmakingEnabled=" + matchmakingEnabled
+                    + ",isDevMode=" + isDevMode
+                    + ",isActive=" + isActive + "}";
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
     // DTO CONVERSION
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -208,6 +253,7 @@ public class GameModeService {
                 .modeStatus(gameMode.getModeStatus())
                 .displayOrder(gameMode.getDisplayOrder())
                 .isActive(gameMode.isActive())
+                .isDevMode(gameMode.isDevMode())
                 .build();
     }
 }

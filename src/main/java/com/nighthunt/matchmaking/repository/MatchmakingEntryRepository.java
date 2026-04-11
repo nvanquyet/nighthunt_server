@@ -31,4 +31,12 @@ public interface MatchmakingEntryRepository extends JpaRepository<MatchmakingEnt
     @Modifying
     @Query("DELETE FROM MatchmakingEntry m WHERE m.userId = :userId")
     void deleteByUserId(@Param("userId") Long userId);
+
+    /** Total number of entries currently in SEARCHING state. */
+    @Query("SELECT COUNT(m) FROM MatchmakingEntry m WHERE m.status = 'SEARCHING'")
+    long countSearching();
+
+    /** Count of SEARCHING entries grouped by gameMode — returns [gameMode, count] pairs. */
+    @Query("SELECT m.gameMode, COUNT(m) FROM MatchmakingEntry m WHERE m.status = 'SEARCHING' GROUP BY m.gameMode")
+    List<Object[]> countSearchingByMode();
 }

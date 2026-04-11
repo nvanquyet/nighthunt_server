@@ -18,6 +18,7 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +43,7 @@ public class DashboardService {
     private final ConnectionManager connectionManager;
     private final GameModeService gameModeService;
     private final DedicatedServerRepository dsRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
     
     /**
      * Get comprehensive dashboard statistics
@@ -104,21 +106,18 @@ public class DashboardService {
     }
     
     /**
-     * Count online users (users with active sessions in Redis)
-     * Note: This counts users in rooms as online, which is a reasonable estimate
-     * For more accurate count, you would need to track all active sessions in Redis
+     * Count online users via Redis session keys (session:*).
      */
     private long countOnlineUsers() {
-        // Count unique users in active rooms
-        // This gives a good estimate of online users
-        Set<Long> usersInRooms = roomPlayerRepository.findAll().stream()
-                .map(RoomPlayer::getUserId)
-                .collect(Collectors.toSet());
-        
-        // You could also check Redis for active sessions, but that requires
-        // iterating through all possible user IDs or maintaining a separate set
-        // For now, users in rooms are considered online
-        return usersInRooms.size();
+        try {
+            Set<String> keys = redisTemplate.keys(GameConstants.REDIS_KEY_SESSION_PREFIX + "*");
+            return keys != null ? keys.size() : 0;
+        } catch (Exception e) {
+            log.warn("Redis unavailable for online count, falling back to room-player count: {}", e.getMessage());
+            return roomPlayerRepository.findAll().stream()
+                    .map(RoomPlayer::getUserId)
+                    .collect(Collectors.toSet()).size();
+        }
     }
     
     /**
