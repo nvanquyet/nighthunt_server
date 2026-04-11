@@ -138,10 +138,17 @@ public class AuthService {
             } catch (Exception e) {
                 log.warn("Could not notify old WebSocket session for userId={}: {}", userIdStr, e.getMessage());
             }
-            // Clear the old session so this new login is allowed to continue below
+            // Clear the old session — old client is now kicked.
             sessionStore.deleteSession(userIdStr);
             sessionStore.deleteForceLogout(userIdStr);
-            log.info("Kicked existing session for userId={} to allow fresh login", userIdStr);
+            log.info("Kicked existing session for userId={} — rejecting new login attempt (AUTH_014)", userIdStr);
+
+            // Also reject the NEW login: both clients must log in again from scratch.
+            // Old client: evicted via force_logout WS (above).
+            // New client: receives AUTH_SESSION_CONFLICT error and is prompted to retry.
+            // On retry the old session is gone, so login succeeds immediately.
+            throw new BusinessException(ErrorCodes.AUTH_SESSION_CONFLICT,
+                    "Phiên đăng nhập trước đã bị đăng xuất. Vui lòng đăng nhập lại.");
         }
 
         // Always clean up any leftover force-logout flag and stale session before creating new one

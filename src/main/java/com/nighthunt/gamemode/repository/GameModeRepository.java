@@ -32,9 +32,12 @@ public interface GameModeRepository extends JpaRepository<GameMode, Long> {
     List<GameMode> findByModeStatusAndIsActiveTrueOrderByDisplayOrderAsc(String modeStatus);
 
     /**
-     * Find all active game modes with specific status (AVAILABLE, LOCKED, COMING_SOON).
+     * Find all active game modes that should be shown in the client UI.
+     * Includes AVAILABLE, LOCKED, COMING_SOON and dev/test modes.
+     * Only DISABLED modes are excluded.
+     * Client is responsible for hiding dev modes in production builds.
      */
-    @Query("SELECT gm FROM GameMode gm WHERE gm.isActive = true AND gm.modeStatus IN ('AVAILABLE', 'LOCKED', 'COMING_SOON') AND gm.isDevMode = false ORDER BY gm.displayOrder ASC")
+    @Query("SELECT gm FROM GameMode gm WHERE gm.isActive = true AND gm.modeStatus IN ('AVAILABLE', 'LOCKED', 'COMING_SOON') ORDER BY gm.displayOrder ASC")
     List<GameMode> findDisplayableGameModes();
 
     /**

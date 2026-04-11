@@ -249,6 +249,9 @@ public class FriendService {
         friendRequestRepository.save(request);
         
         log.info("Friend request cancelled: {} cancelled request to {}", requesterId, request.getAddresseeUserId());
+
+        // Notify the addressee in real time so their incoming-requests list refreshes.
+        messageBrokerService.publishFriendRequestCancelled(requesterId, request.getAddresseeUserId());
     }
 
     /**

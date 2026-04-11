@@ -182,6 +182,18 @@ public class MessageBrokerService implements MessagePublisher {
         );
         publish(MessageTopics.FRIEND_REQUEST_DECLINED, "friend.request.declined", payload);
     }
+
+    /**
+     * Publish friend request cancelled event (requester withdrew the request).
+     * Sent to the ADDRESSEE so their incoming-requests list refreshes in real time.
+     */
+    public void publishFriendRequestCancelled(Long requesterUserId, Long addresseeUserId) {
+        Map<String, Object> payload = Map.of(
+                "requesterUserId", requesterUserId,
+                "addresseeUserId", addresseeUserId
+        );
+        publish(MessageTopics.FRIEND_REQUEST_CANCELLED, "friend.request.cancelled", payload);
+    }
     
     /**
      * Publish friend removed event

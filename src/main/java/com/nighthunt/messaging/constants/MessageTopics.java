@@ -50,12 +50,13 @@ public class MessageTopics {
     public static final String SYSTEM_ALERT = "system.alert";
     
     // ==================== Friend System Topics ====================
-    public static final String FRIEND_REQUEST_RECEIVED = "friend.request.received";
-    public static final String FRIEND_REQUEST_ACCEPTED = "friend.request.accepted";
-    public static final String FRIEND_REQUEST_DECLINED = "friend.request.declined";
-    public static final String FRIEND_REMOVED = "friend.removed";
-    public static final String FRIEND_STATUS_CHANGED = "friend.status.changed";
-    public static final String FRIEND_BLOCKED = "friend.blocked";
+    public static final String FRIEND_REQUEST_RECEIVED  = "friend.request.received";
+    public static final String FRIEND_REQUEST_ACCEPTED  = "friend.request.accepted";
+    public static final String FRIEND_REQUEST_DECLINED  = "friend.request.declined";
+    public static final String FRIEND_REQUEST_CANCELLED = "friend.request.cancelled";
+    public static final String FRIEND_REMOVED           = "friend.removed";
+    public static final String FRIEND_STATUS_CHANGED    = "friend.status.changed";
+    public static final String FRIEND_BLOCKED           = "friend.blocked";
     
     // ==================== Party System Topics ====================
     public static final String PARTY_CREATED = "party.created";

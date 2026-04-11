@@ -15,6 +15,7 @@ public class ErrorCodes {
     public static final String AUTH_IP_BANNED = "AUTH_011";
     public static final String AUTH_DEVICE_BANNED = "AUTH_012";
     public static final String AUTH_REFRESH_TOKEN_INVALID = "AUTH_013"; // Refresh token not found, expired, or revoked
+    public static final String AUTH_SESSION_CONFLICT = "AUTH_014"; // Login attempted while existing session active — old session terminated, retry required
 
     // Rate limiting errors
     public static final String RATE_LIMIT_EXCEEDED = "RATE_001";
