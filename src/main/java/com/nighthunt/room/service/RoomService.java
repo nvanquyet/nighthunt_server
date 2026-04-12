@@ -337,10 +337,24 @@ public class RoomService {
         }
 
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
-        
-        // Broadcast team changed event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "team_changed", response);
-        
+
+        // Build explicit payload so the client knows WHICH player moved WHERE.
+        // Bare RoomResponse alone forces the client to diff the entire player list
+        // to discover what changed; provide userId/newTeam/newSlot up-front.
+        java.util.Map<String, Object> teamChangedPayload = new java.util.HashMap<>();
+        teamChangedPayload.put("userId",   userId);
+        teamChangedPayload.put("newTeam",  team);
+        teamChangedPayload.put("newSlot",  slot);
+        teamChangedPayload.put("room",     response);
+
+        try {
+            connectionManager.broadcastToRoom(roomId, "team_changed", teamChangedPayload);
+            log.info("[Room] Broadcast team_changed: room={} userId={} team={} slot={}",
+                    roomId, userId, team, slot);
+        } catch (Exception e) {
+            log.error("Failed to broadcast team_changed for room {}: {}", roomId, e.getMessage());
+        }
+
         return response;
     }
 

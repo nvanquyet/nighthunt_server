@@ -261,13 +261,18 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         WebSocketSession session = userSessions.get(userId);
         if (session == null || !session.isOpen()) return;
 
-        try {
-            String json = createWebSocketMessage(eventType, data);
-            if (json != null) {
-                session.sendMessage(new TextMessage(json));
+        // Synchronize per session to prevent TEXT_PARTIAL_WRITING when two threads
+        // (e.g. HTTP handler + scheduler) try to write to the same WS connection.
+        synchronized (session) {
+            if (!session.isOpen()) return;
+            try {
+                String json = createWebSocketMessage(eventType, data);
+                if (json != null) {
+                    session.sendMessage(new TextMessage(json));
+                }
+            } catch (IOException e) {
+                log.error("Failed to send {} to user {}: {}", eventType, userId, e.getMessage());
             }
-        } catch (IOException e) {
-            log.error("Failed to send {} to user {}: {}", eventType, userId, e.getMessage());
         }
     }
 

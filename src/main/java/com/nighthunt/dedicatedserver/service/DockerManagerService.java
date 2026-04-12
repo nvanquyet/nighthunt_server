@@ -115,8 +115,22 @@ public class DockerManagerService {
             imageRef
         ));
 
-        log.info("[DockerManager] Starting container: {} on port {} expectedPlayers={}", containerName, port, expectedPlayers);
+        log.info("[DockerManager] Starting container: {} image={} port={} expectedPlayers={}",
+                containerName, imageRef, port, expectedPlayers);
         log.debug("[DockerManager] Command: {}", String.join(" ", cmd));
+
+        // ── Authenticate + pre-pull image so docker run doesn't fail with 'denied' ──
+        if (ghcrToken != null && !ghcrToken.isBlank()) {
+            try {
+                log.info("[DockerManager] Logging in to ghcr.io and pulling {} …", imageRef);
+                loginGhcr();
+                runDockerCommand("docker", "pull", imageRef);
+                log.info("[DockerManager] Image pull succeeded: {}", imageRef);
+            } catch (Exception pullEx) {
+                log.error("[DockerManager] Pre-pull failed for {}: {} — will attempt docker run anyway",
+                        imageRef, pullEx.getMessage());
+            }
+        }
 
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
