@@ -294,6 +294,12 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         return userSessions.size();
     }
 
+    @Override
+    public boolean isUserConnected(Long userId) {
+        WebSocketSession s = userSessions.get(userId);
+        return s != null && s.isOpen();
+    }
+
     // ==================== Session-Level Events ====================
 
     public void sendForceLogout(Long userId, String reason) {

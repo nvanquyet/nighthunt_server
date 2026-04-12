@@ -27,4 +27,11 @@ public interface ConnectionManager {
      * Get count of active WebSocket connections.
      */
     int getActiveConnectionCount();
+
+    /**
+     * Check if a user currently has an active (open) WebSocket connection.
+     * Used by AuthService to distinguish live sessions from orphaned ones
+     * (client crashed / closed without logout).
+     */
+    boolean isUserConnected(Long userId);
 }

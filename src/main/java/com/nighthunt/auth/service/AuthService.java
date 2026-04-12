@@ -126,29 +126,30 @@ public class AuthService {
         boolean hasForceLogout    = sessionStore.isForceLogout(userIdStr);
 
         if (existingSessionId != null && !hasForceLogout) {
-            // Another session is active. Notify the old client via WebSocket (best-effort)
-            // then clear everything so this login proceeds immediately.
-            // We do NOT throw here anymore — requiring the user to log in twice after a
-            // game crash was causing the "locked out" UX bug.
-            sessionStore.setForceLogout(userIdStr, true);
-            try {
-                connectionManager.sendToUser(user.getId(), "force_logout", java.util.Map.of(
-                        "reason", "Account logged in from another location",
-                        "message", "You have been logged out. Please log in again."));
-            } catch (Exception e) {
-                log.warn("Could not notify old WebSocket session for userId={}: {}", userIdStr, e.getMessage());
+            boolean wsActive = connectionManager.isUserConnected(user.getId());
+            if (!wsActive) {
+                // Orphaned session: client closed/crashed without logout.
+                // No live WS connection — safe to clean up and proceed immediately.
+                sessionStore.deleteSession(userIdStr);
+                sessionStore.deleteForceLogout(userIdStr);
+                log.info("Cleaned up orphaned session for userId={} (no active WS). Proceeding with login.", userIdStr);
+            } else {
+                // Live session on another device/client. Kick the old client, then
+                // require the new client to log in once more so both sides are clean.
+                sessionStore.setForceLogout(userIdStr, true);
+                try {
+                    connectionManager.sendToUser(user.getId(), "force_logout", java.util.Map.of(
+                            "reason", "Account logged in from another location",
+                            "message", "You have been logged out. Please log in again."));
+                } catch (Exception e) {
+                    log.warn("Could not notify old WS for userId={}: {}", userIdStr, e.getMessage());
+                }
+                sessionStore.deleteSession(userIdStr);
+                sessionStore.deleteForceLogout(userIdStr);
+                log.info("Kicked live session for userId={} — client must retry login (AUTH_SESSION_CONFLICT)", userIdStr);
+                throw new BusinessException(ErrorCodes.AUTH_SESSION_CONFLICT,
+                        "Account logged in from another location. Please log in again.");
             }
-            // Clear the old session — old client is now kicked.
-            sessionStore.deleteSession(userIdStr);
-            sessionStore.deleteForceLogout(userIdStr);
-            log.info("Kicked existing session for userId={} — rejecting new login attempt (AUTH_014)", userIdStr);
-
-            // Also reject the NEW login: both clients must log in again from scratch.
-            // Old client: evicted via force_logout WS (above).
-            // New client: receives AUTH_SESSION_CONFLICT error and is prompted to retry.
-            // On retry the old session is gone, so login succeeds immediately.
-            throw new BusinessException(ErrorCodes.AUTH_SESSION_CONFLICT,
-                    "Phiên đăng nhập trước đã bị đăng xuất. Vui lòng đăng nhập lại.");
         }
 
         // Always clean up any leftover force-logout flag and stale session before creating new one

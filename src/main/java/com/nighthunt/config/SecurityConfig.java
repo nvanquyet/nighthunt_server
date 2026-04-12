@@ -63,6 +63,8 @@ public class SecurityConfig {
                 .requestMatchers("/ds/**").permitAll()
                 // Admin dashboard API (validates X-Admin-Secret internally)
                 .requestMatchers("/admin/**").permitAll()
+                // Public game config endpoints — client fetches these at startup (may be before auth)
+                .requestMatchers("/maps/**", "/game-modes/**").permitAll()
                 // Matchmaking cần JWT (user phải login trước)
                 .requestMatchers("/matchmaking/**").authenticated()
                 // Profile API
