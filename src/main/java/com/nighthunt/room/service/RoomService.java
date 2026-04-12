@@ -421,9 +421,17 @@ public class RoomService {
                     "Only room owner can disband room");
         }
 
+        // Collect all players BEFORE deleting so we can clear their WS room mapping
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
+
         // Broadcast room_disbanded BEFORE deleting players so all connected clients are notified
         connectionManager.broadcastToRoom(roomId, "room_disbanded",
                 java.util.Map.of("roomId", roomId, "reason", "disbanded"));
+
+        // Clear WS userRooms mapping for every player so they can immediately join a new room
+        for (RoomPlayer p : players) {
+            connectionManager.updateUserRoom(p.getUserId(), null);
+        }
 
         // Delete all players
         roomPlayerRepository.deleteByRoomId(roomId);

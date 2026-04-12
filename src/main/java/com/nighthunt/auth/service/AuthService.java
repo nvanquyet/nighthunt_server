@@ -134,21 +134,21 @@ public class AuthService {
                 sessionStore.deleteForceLogout(userIdStr);
                 log.info("Cleaned up orphaned session for userId={} (no active WS). Proceeding with login.", userIdStr);
             } else {
-                // Live session on another device/client. Kick the old client, then
-                // require the new client to log in once more so both sides are clean.
-                sessionStore.setForceLogout(userIdStr, true);
+                // Live session detected. Kick the old client immediately and proceed
+                // with this login in a single step (no second attempt required).
+                // This avoids the disruptive double-login UX during development rebuilds
+                // while still enforcing single-device policy.
                 try {
                     connectionManager.sendToUser(user.getId(), "force_logout", java.util.Map.of(
                             "reason", "Account logged in from another location",
-                            "message", "You have been logged out. Please log in again."));
+                            "message", "Your session has been taken over by a new login."));
                 } catch (Exception e) {
                     log.warn("Could not notify old WS for userId={}: {}", userIdStr, e.getMessage());
                 }
                 sessionStore.deleteSession(userIdStr);
                 sessionStore.deleteForceLogout(userIdStr);
-                log.info("Kicked live session for userId={} — client must retry login (AUTH_SESSION_CONFLICT)", userIdStr);
-                throw new BusinessException(ErrorCodes.AUTH_SESSION_CONFLICT,
-                        "Account logged in from another location. Please log in again.");
+                log.info("Kicked live session for userId={} — proceeding with new login (single-device policy)", userIdStr);
+                // Fall through to token generation below
             }
         }
 
