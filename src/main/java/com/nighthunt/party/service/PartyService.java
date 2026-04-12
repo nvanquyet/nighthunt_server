@@ -183,6 +183,9 @@ public class PartyService {
         if (invitation.getExpiresAt().isBefore(LocalDateTime.now())) {
             invitation.setInvitationStatus("EXPIRED");
             partyInvitationRepository.save(invitation);
+            // Notify both sides so they can clean up UI.
+            messageBrokerService.publishPartyInvitationExpired(
+                invitation.getPartyId(), invitation.getInviterUserId(), invitation.getInviteeUserId(), invitation.getId());
             throw new BusinessException("PARTY_INVITATION_EXPIRED", "Invitation has expired");
         }
 
@@ -256,6 +259,10 @@ public class PartyService {
         partyInvitationRepository.save(invitation);
 
         log.info("Party invitation cancelled: inviter={}, invitation={}", inviterUserId, invitationId);
+
+        // Notify invitee so their countdown popup is dismissed immediately.
+        messageBrokerService.publishPartyInvitationCancelled(
+            invitation.getPartyId(), inviterUserId, invitation.getInviteeUserId(), invitationId);
     }
 
     /**
@@ -278,8 +285,12 @@ public class PartyService {
         // Update invitation status
         invitation.setInvitationStatus("DECLINED");
         partyInvitationRepository.save(invitation);
-        
+
         log.info("Party invitation declined: invitee={}, invitation={}", inviteeUserId, invitationId);
+
+        // Notify inviter so they can remove the pending-invite spinner.
+        messageBrokerService.publishPartyInvitationDeclined(
+            invitation.getPartyId(), invitation.getInviterUserId(), inviteeUserId, invitationId);
     }
 
     /**

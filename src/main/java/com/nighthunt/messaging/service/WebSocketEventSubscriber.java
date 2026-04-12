@@ -72,6 +72,9 @@ public class WebSocketEventSubscriber {
         // Friend request declined
         messageBroker.subscribe(MessageTopics.FRIEND_REQUEST_DECLINED, this::handleFriendRequestDeclined);
         
+        // Friend request cancelled (requester withdrew before addressee responded)
+        messageBroker.subscribe(MessageTopics.FRIEND_REQUEST_CANCELLED, this::handleFriendRequestCancelled);
+        
         // Friend removed (already sent to both users in service, but we can log)
         messageBroker.subscribe(MessageTopics.FRIEND_REMOVED, this::handleFriendRemoved);
         
@@ -194,6 +197,30 @@ public class WebSocketEventSubscriber {
     }
 
     /**
+     * Handle friend request cancelled event.
+     * Notify the addressee so their incoming-requests list removes the item in real time.
+     */
+    private void handleFriendRequestCancelled(Message message) {
+        try {
+            Map<String, Object> payload = message.getPayload();
+            Long requesterUserId = getLong(payload, "requesterUserId");
+            Long addresseeUserId = getLong(payload, "addresseeUserId");
+
+            Map<String, Object> eventData = Map.of(
+                "requesterUserId", requesterUserId,
+                "addresseeUserId", addresseeUserId
+            );
+
+            connectionManager.sendToUser(addresseeUserId, "friend_request_cancelled", eventData);
+
+            log.debug("Sent friend request cancelled notification to user {} (cancelled by {})",
+                addresseeUserId, requesterUserId);
+        } catch (Exception e) {
+            log.error("Error handling friend request cancelled event: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
      * Handle friend removed event.
      * Note: Service already sends to both users, this is just for logging.
      */
@@ -249,6 +276,15 @@ public class WebSocketEventSubscriber {
         
         // Party invitation received
         messageBroker.subscribe(MessageTopics.PARTY_INVITATION_RECEIVED, this::handlePartyInvitationReceived);
+        
+        // Party invitation declined (invitee declined — notify inviter)
+        messageBroker.subscribe(MessageTopics.PARTY_INVITATION_DECLINED, this::handlePartyInvitationDeclined);
+
+        // Party invitation cancelled (inviter withdrew — notify invitee)
+        messageBroker.subscribe(MessageTopics.PARTY_INVITATION_CANCELLED, this::handlePartyInvitationCancelled);
+
+        // Party invitation expired (nobody responded in time — notify both)
+        messageBroker.subscribe(MessageTopics.PARTY_INVITATION_EXPIRED, this::handlePartyInvitationExpired);
         
         // Party member joined
         messageBroker.subscribe(MessageTopics.PARTY_MEMBER_JOINED, this::handlePartyMemberJoined);
@@ -534,25 +570,88 @@ public class WebSocketEventSubscriber {
     }
 
     /**
+     * Handle party invitation declined event.
+     * Notify the INVITER so they can remove the pending-invite spinner on that friend's row.
+     */
+    private void handlePartyInvitationDeclined(Message message) {
+        try {
+            Map<String, Object> payload = message.getPayload();
+            Long partyId      = getLong(payload, "partyId");
+            Long inviterUserId = getLong(payload, "inviterUserId");
+            Long inviteeUserId = getLong(payload, "inviteeUserId");
+            Long invitationId  = getLong(payload, "invitationId");
+
+            Map<String, Object> eventData = Map.of(
+                "partyId",       partyId,
+                "inviterUserId", inviterUserId,
+                "inviteeUserId", inviteeUserId,
+                "invitationId",  invitationId
+            );
+
+            connectionManager.sendToUser(inviterUserId, "party_invitation_declined", eventData);
+
+            log.debug("Sent party_invitation_declined to inviter {} (declined by {})",
+                inviterUserId, inviteeUserId);
+        } catch (Exception e) {
+            log.error("Error handling party invitation declined event: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Handle party invitation cancelled event.
+     * Notify the INVITEE so their countdown popup is dismissed immediately.
+     */
+    private void handlePartyInvitationCancelled(Message message) {
+        try {
+            Map<String, Object> payload = message.getPayload();
+            Long partyId       = getLong(payload, "partyId");
+            Long inviterUserId  = getLong(payload, "inviterUserId");
+            Long inviteeUserId  = getLong(payload, "inviteeUserId");
+            Long invitationId   = getLong(payload, "invitationId");
+
+            Map<String, Object> eventData = Map.of(
+                "partyId",       partyId,
+                "inviterUserId", inviterUserId,
+                "inviteeUserId", inviteeUserId,
+                "invitationId",  invitationId
+            );
+
+            connectionManager.sendToUser(inviteeUserId, "party_invitation_cancelled", eventData);
+
+            log.debug("Sent party_invitation_cancelled to invitee {} (cancelled by {})",
+                inviteeUserId, inviterUserId);
+        } catch (Exception e) {
+            log.error("Error handling party invitation cancelled event: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
      * Handle party invitation expired event.
-     * Notify the invitee that their invitation is no longer valid.
+     * Notify the invitee that their invitation is no longer valid, AND notify the
+     * inviter so their pending-invite spinner is cleared.
      */
     private void handlePartyInvitationExpired(Message message) {
         try {
             Map<String, Object> payload = message.getPayload();
-            Long partyId = getLong(payload, "partyId");
+            Long partyId       = getLong(payload, "partyId");
+            Long inviterUserId = getLong(payload, "inviterUserId");
             Long inviteeUserId = getLong(payload, "inviteeUserId");
-            Long invitationId = getLong(payload, "invitationId");
+            Long invitationId  = getLong(payload, "invitationId");
 
             Map<String, Object> eventData = Map.of(
-                "partyId", partyId,
+                "partyId",       partyId,
+                "inviterUserId", inviterUserId,
                 "inviteeUserId", inviteeUserId,
-                "invitationId", invitationId
+                "invitationId",  invitationId
             );
 
+            // Notify invitee — dismiss any still-open countdown popup.
             connectionManager.sendToUser(inviteeUserId, "party_invitation_expired", eventData);
+            // Notify inviter — clear the pending-invite spinner on that friend's row.
+            connectionManager.sendToUser(inviterUserId, "party_invitation_expired", eventData);
 
-            log.debug("Sent party_invitation_expired to user {} for party {}", inviteeUserId, partyId);
+            log.debug("Sent party_invitation_expired to invitee {} and inviter {} for party {}",
+                inviteeUserId, inviterUserId, partyId);
         } catch (Exception e) {
             log.error("Error handling party invitation expired event: {}", e.getMessage(), e);
         }

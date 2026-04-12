@@ -338,11 +338,38 @@ public class MessageBrokerService implements MessagePublisher {
     }
     
     /**
-     * Publish party invitation expired event
+     * Publish party invitation declined event (invitee declined, notify inviter).
      */
-    public void publishPartyInvitationExpired(Long partyId, Long inviteeUserId, Long invitationId) {
+    public void publishPartyInvitationDeclined(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
         Map<String, Object> payload = Map.of(
                 "partyId", partyId,
+                "inviterUserId", inviterUserId,
+                "inviteeUserId", inviteeUserId,
+                "invitationId", invitationId
+        );
+        publish(MessageTopics.PARTY_INVITATION_DECLINED, "party.invitation.declined", payload);
+    }
+
+    /**
+     * Publish party invitation cancelled event (inviter withdrew it, notify invitee).
+     */
+    public void publishPartyInvitationCancelled(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
+        Map<String, Object> payload = Map.of(
+                "partyId", partyId,
+                "inviterUserId", inviterUserId,
+                "inviteeUserId", inviteeUserId,
+                "invitationId", invitationId
+        );
+        publish(MessageTopics.PARTY_INVITATION_CANCELLED, "party.invitation.cancelled", payload);
+    }
+
+    /**
+     * Publish party invitation expired event (invitee never responded — notify both sides).
+     */
+    public void publishPartyInvitationExpired(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
+        Map<String, Object> payload = Map.of(
+                "partyId", partyId,
+                "inviterUserId", inviterUserId,
                 "inviteeUserId", inviteeUserId,
                 "invitationId", invitationId
         );

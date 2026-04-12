@@ -61,13 +61,15 @@ public class MessageTopics {
     // ==================== Party System Topics ====================
     public static final String PARTY_CREATED = "party.created";
     public static final String PARTY_INVITATION_RECEIVED = "party.invitation.received";
+    public static final String PARTY_INVITATION_DECLINED  = "party.invitation.declined";
+    public static final String PARTY_INVITATION_CANCELLED = "party.invitation.cancelled";
+    public static final String PARTY_INVITATION_EXPIRED   = "party.invitation.expired";
     public static final String PARTY_MEMBER_JOINED = "party.member.joined";
     public static final String PARTY_MEMBER_LEFT = "party.member.left";
     public static final String PARTY_MEMBER_KICKED = "party.member.kicked";
     public static final String PARTY_DISBANDED = "party.disbanded";
     public static final String PARTY_HOST_CHANGED = "party.host.changed";
     public static final String PARTY_STATUS_CHANGED = "party.status.changed";
-    public static final String PARTY_INVITATION_EXPIRED = "party.invitation.expired";
     
     // ==================== Notification Topics ====================
     public static final String NOTIFICATION_USER = "notification.user";
