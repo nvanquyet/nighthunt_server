@@ -23,7 +23,7 @@ import java.util.List;
 @Slf4j
 public class DockerManagerService {
 
-    @Value("${ds.docker.image-ref:ghcr.io/yourname/nighthunt-ds:latest}")
+    @Value("${ds.docker.image-ref:ghcr.io/nvanquyet/nighthunt-ds:latest}")
     private String defaultImageRef;
 
     @Value("${ds.docker.backend-internal-url:http://backend:8080}")
