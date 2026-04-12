@@ -125,7 +125,6 @@ public class MatchmakingQueueService {
      * Runs every 5 seconds.
      */
     @Scheduled(fixedDelayString = "${matchmaking.tick.interval-ms:5000}")
-    @Transactional
     public void processTick() {
         expandWindows();
 

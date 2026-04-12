@@ -111,7 +111,7 @@ ds:
 
   docker:
     # Docker image full ref (cập nhật bởi CI/CD qua /api/admin/ds/update-image)
-    image-ref:           ${DS_IMAGE_REF:ghcr.io/yourname/nighthunt-ds:latest}
+    image-ref:           ${DS_IMAGE_REF:ghcr.io/nvanquyet/nighthunt-ds:latest}
     # URL backend mà DS dùng để gọi về (internal Docker network URL)
     backend-internal-url: ${DS_BACKEND_INTERNAL_URL:https://nighthunt-backend:8443}
     max-memory-mb:       ${DS_MAX_MEMORY_MB:512}
