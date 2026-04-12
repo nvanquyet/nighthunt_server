@@ -172,26 +172,29 @@ public class MatchmakingQueueService {
      * full lobby where all players' ELO windows overlap around a common midpoint.
      */
     private void tryFormMatches(List<MatchmakingEntry> candidates, GameModeDTO mode) {
-        int needed = mode.getTotalPlayers();
+        // Dev modes only need 1 player to form a "match" (DS boot test, no opponent)
+        int needed = mode.isDevMode() ? 1 : mode.getTotalPlayers();
         Set<Long> used = new HashSet<>();
 
         for (MatchmakingEntry anchor : candidates) {
             if (used.contains(anchor.getUserId())) continue;
 
-            // Collect compatible players
+            // Collect compatible players (dev mode: anchor alone is sufficient)
             List<MatchmakingEntry> group = new ArrayList<>();
             group.add(anchor);
 
-            for (MatchmakingEntry other : candidates) {
-                if (used.contains(other.getUserId())) continue;
-                if (other.getUserId().equals(anchor.getUserId())) continue;
-                if (isCompatible(anchor, other)) {
-                    group.add(other);
-                    if (group.size() == needed) break;
+            if (!mode.isDevMode()) {
+                for (MatchmakingEntry other : candidates) {
+                    if (used.contains(other.getUserId())) continue;
+                    if (other.getUserId().equals(anchor.getUserId())) continue;
+                    if (isCompatible(anchor, other)) {
+                        group.add(other);
+                        if (group.size() == needed) break;
+                    }
                 }
             }
 
-            if (group.size() == needed) {
+            if (group.size() >= needed) {
                 formMatch(group, mode);
                 group.forEach(e -> used.add(e.getUserId()));
             }
