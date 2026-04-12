@@ -400,10 +400,14 @@ public class RoomService {
         }
 
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, targetUserId);
-        
-        // Broadcast player left event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
+
+        // Notify kicked player personally so client can navigate back to Home
+        connectionManager.sendToUser(targetUserId, "you_were_kicked",
+                java.util.Map.of("roomId", roomId));
         connectionManager.updateUserRoom(targetUserId, null);
+
+        // Broadcast updated room state to remaining players
+        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
     }
 
     @Transactional
@@ -417,12 +421,17 @@ public class RoomService {
                     "Only room owner can disband room");
         }
 
+        // Broadcast room_disbanded BEFORE deleting players so all connected clients are notified
+        connectionManager.broadcastToRoom(roomId, "room_disbanded",
+                java.util.Map.of("roomId", roomId, "reason", "disbanded"));
+
         // Delete all players
         roomPlayerRepository.deleteByRoomId(roomId);
 
         // Update room status
         room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
         roomRepository.save(room);
+        log.info("Room {} disbanded by owner {}", roomId, ownerId);
     }
 
     @Transactional

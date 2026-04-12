@@ -217,9 +217,13 @@ public class MatchmakingQueueService {
     /**
      * Mark entries as MATCHED and notify players via WebSocket.
      * Resolves mapId: anchor's map wins; if null, leave null (DS allocator may randomize).
+     *
+     * Dev mode fast-path: when {@code mode.isDevMode()} the entire lobby/accept phase
+     * is skipped.  The DS container is started immediately, and the single player
+     * receives a {@code match_ready} event right away — no {@code match_found} or
+     * {@code /accept} call required.
      */
     private void formMatch(List<MatchmakingEntry> group, GameModeDTO mode) {
-        String lobbyToken = UUID.randomUUID().toString();
         // Prefer first non-null mapId in group (anchor is first)
         String resolvedMapId = group.stream()
                 .map(MatchmakingEntry::getMapId)
@@ -227,16 +231,33 @@ public class MatchmakingQueueService {
                 .findFirst()
                 .orElse(null);
 
+        String lobbyToken = UUID.randomUUID().toString();
+
+        // ── Dev mode: skip accept phase, start DS immediately ────────────────
+        if (mode.isDevMode()) {
+            for (MatchmakingEntry entry : group) {
+                entry.setStatus("MATCHED");
+                entry.setLobbyToken(lobbyToken);
+                entry.setAcceptStatus("ACCEPTED"); // pre-accept
+                entry.setMapId(resolvedMapId);
+                entryRepository.save(entry);
+            }
+            log.info("[MM][DEV] devMode=true — skipping accept phase, starting DS immediately. players={}",
+                    group.stream().map(MatchmakingEntry::getUserId).toList());
+            createMatchedRoom(group);
+            return;
+        }
+
+        // ── Normal ranked flow: send match_found, wait for all-accept ────────
         for (MatchmakingEntry entry : group) {
             entry.setStatus("MATCHED");
             entry.setLobbyToken(lobbyToken);
             entry.setAcceptStatus("PENDING");
-            entry.setMapId(resolvedMapId); // унифицируем для всей группы
+            entry.setMapId(resolvedMapId);
             entryRepository.save(entry);
             log.info("[MM] Matched user {} into group token={} map={}", entry.getUserId(), lobbyToken, resolvedMapId);
         }
 
-        // Build match_found payload
         List<Long> playerIds = group.stream().map(MatchmakingEntry::getUserId).toList();
         Map<String, Object> payload = new HashMap<>();
         payload.put("event",      "match_found");
@@ -244,11 +265,9 @@ public class MatchmakingQueueService {
         payload.put("gameMode",   mode.getModeKey());
         payload.put("playerIds",  playerIds);
 
-        // Notify each player
         for (MatchmakingEntry entry : group) {
             connectionManager.sendToUser(entry.getUserId(), "match_found", payload);
         }
-
         log.info("[MM] Formed {} match, lobbyToken={}, players={}", mode.getModeKey(), lobbyToken, playerIds);
     }
 

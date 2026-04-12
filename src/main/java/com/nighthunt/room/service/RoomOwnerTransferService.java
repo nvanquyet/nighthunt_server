@@ -1,6 +1,7 @@
 package com.nighthunt.room.service;
 
 import com.nighthunt.common.constants.GameConstants;
+import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Service to automatically transfer room ownership when owner disconnects
@@ -23,7 +25,9 @@ import java.util.List;
 public class RoomOwnerTransferService {
     private final RoomRepository roomRepository;
     private final RoomPlayerRepository roomPlayerRepository;
-    
+    private final ConnectionManager connectionManager;
+    private final RoomResponseAssembler roomResponseAssembler;
+
     // Timeout: 30 seconds - if owner hasn't been seen for 30s, consider disconnected
     private static final int OWNER_DISCONNECT_TIMEOUT_SECONDS = 30;
 
@@ -87,9 +91,13 @@ public class RoomOwnerTransferService {
                 .orElse(null);
         
         if (newOwner == null) {
-            // No other players in room - room will be cleaned up by RoomCleanupService
-            log.warn("Room {} has no other players. Ownership cannot be transferred. Room will be cleaned up.", 
+            // No other players in room — broadcast room_disbanded and mark CLOSED
+            log.warn("Room {} has no other players. Ownership cannot be transferred. Room will be cleaned up.",
                     room.getId());
+            connectionManager.broadcastToRoom(room.getId(), "room_disbanded",
+                    Map.of("roomId", room.getId(), "reason", "owner_disconnected"));
+            room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+            roomRepository.save(room);
             return;
         }
         
@@ -106,6 +114,10 @@ public class RoomOwnerTransferService {
         
         log.info("Room {} ownership transferred from user {} to user {}", 
                 room.getId(), oldOwnerId, newOwner.getUserId());
+
+        // Broadcast updated room state to all players so client sees the new owner
+        connectionManager.broadcastToRoom(room.getId(), "room_updated",
+                roomResponseAssembler.toResponseById(room.getId()));
     }
 }
 
