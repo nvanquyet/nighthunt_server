@@ -67,4 +67,32 @@ public class DedicatedServerController {
         boolean valid   = dsService.validateSessionToken(token, serverId);
         return ApiResponse.ok(valid);
     }
+
+    /**
+     * DS gọi khi game scene đã load xong và FishNet đang chấp nhận kết nối.
+     * Backend sẽ broadcast sự kiện "ds_ready" tới tất cả players trong match,
+     * cho phép client thực sự connect vào dedicated server.
+     */
+    @PostMapping("/game-ready")
+    public ApiResponse<String> gameReady(
+            @RequestBody Map<String, String> body,
+            @RequestHeader(value = "X-DS-Secret", required = false) String headerSecret) {
+
+        String serverId     = body.get("serverId");
+        String serverSecret = body.getOrDefault("serverSecret", headerSecret);
+
+        if (serverId == null || serverSecret == null) {
+            return ApiResponse.error("serverId and serverSecret are required", "BAD_REQUEST");
+        }
+
+        // Header and body secret must agree when both supplied
+        if (headerSecret != null && !headerSecret.equals(serverSecret)) {
+            return ApiResponse.error("Secret mismatch", "INVALID_SECRET");
+        }
+
+        boolean ok = dsService.notifyGameReady(serverId, serverSecret);
+        if (!ok) return ApiResponse.error("Invalid server credentials", "AUTH_FAILED");
+
+        return ApiResponse.ok("ds_ready broadcasted");
+    }
 }

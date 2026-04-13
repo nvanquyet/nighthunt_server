@@ -3,6 +3,10 @@ package com.nighthunt.dedicatedserver.service;
 import com.nighthunt.dedicatedserver.dto.*;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
+import com.nighthunt.game.websocket.port.ConnectionManager;
+import com.nighthunt.room.entity.RoomPlayer;
+import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -28,6 +35,9 @@ public class DedicatedServerService {
     private final DedicatedServerRepository dsRepo;
     private final DockerManagerService      dockerManager;
     private final StringRedisTemplate       redis;
+    private final ConnectionManager         connectionManager;
+    private final RoomRepository            roomRepository;
+    private final RoomPlayerRepository      roomPlayerRepository;
 
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
 
@@ -88,7 +98,80 @@ public class DedicatedServerService {
     /** Backward-compat overload for admin/manual allocation (uses defaultMaxPlayers as expected count). */
     @Transactional
     public ServerAllocateResponse allocateServer(String region, String mapId) {
-        return allocateServer(region, mapId, defaultMaxPlayers);
+        return allocateServerForMatch(region, mapId, defaultMaxPlayers, null);
+    }
+
+    /**
+     * Allocate a DS for a specific ranked match.
+     * Stores matchId so /ds/game-ready can broadcast ds_ready to the right players.
+     */
+    @Transactional
+    public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
+                                                         int expectedPlayers, String matchId) {
+        ServerAllocateResponse response = allocateServer(region, mapId, expectedPlayers);
+        // Persist matchId on the DS record so we can broadcast ds_ready later
+        if (matchId != null) {
+            dsRepo.findByServerId(response.getServerId()).ifPresent(ds -> {
+                ds.setMatchId(matchId);
+                dsRepo.save(ds);
+            });
+        }
+        return response;
+    }
+
+    /**
+     * Called by DS via POST /ds/game-ready when it has fully booted and is accepting players.
+     * Validates the DS secret, updates status to "ready", then broadcasts "ds_ready" to all
+     * players in the associated match via WebSocket.
+     *
+     * @return true if broadcast was sent, false if credentials were invalid
+     */
+    @Transactional
+    public boolean notifyGameReady(String serverId, String serverSecret) {
+        DedicatedServer server = dsRepo.findByServerId(serverId).orElse(null);
+        if (server == null) {
+            log.warn("[DSService] game-ready: unknown serverId={}", serverId);
+            return false;
+        }
+        if (!bcrypt.matches(serverSecret, server.getServerSecretHash())) {
+            log.warn("[DSService] game-ready: invalid secret for serverId={}", serverId);
+            return false;
+        }
+
+        server.setStatus("ready");
+        server.setLastHeartbeatAt(LocalDateTime.now());
+        dsRepo.save(server);
+
+        String matchId = server.getMatchId();
+        if (matchId == null) {
+            log.warn("[DSService] game-ready: serverId={} has no matchId — cannot broadcast ds_ready", serverId);
+            return true; // DS is marked ready but no players to notify
+        }
+
+        // Find players in the match
+        var roomOpt = roomRepository.findByMatchId(matchId);
+        if (roomOpt.isEmpty()) {
+            log.warn("[DSService] game-ready: room not found for matchId={}", matchId);
+            return true;
+        }
+
+        var room = roomOpt.get();
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("matchId",  matchId);
+        payload.put("dsIp",     server.getIp());
+        payload.put("dsPort",   server.getPort());
+        payload.put("mapId",    server.getMapId());
+        payload.put("serverId", serverId);
+
+        for (RoomPlayer rp : players) {
+            connectionManager.sendToUser(rp.getUserId(), "ds_ready", payload);
+        }
+
+        log.info("[DSService] game-ready: broadcasted ds_ready to {} players for matchId={} ds={}:{}",
+                players.size(), matchId, server.getIp(), server.getPort());
+        return true;
     }
 
     /**

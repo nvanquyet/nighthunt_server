@@ -62,6 +62,13 @@ public class DedicatedServer {
     private String mapId;
 
     /**
+     * matchId of the ranked match this DS was allocated for.
+     * Used by /ds/game-ready to broadcast ds_ready to the correct players.
+     */
+    @Column(name = "match_id", length = 36)
+    private String matchId;
+
+    /**
      * BCrypt hash của SERVER_SECRET.
      * DS phải gửi đúng secret → hash match → request được chấp nhận.
      */

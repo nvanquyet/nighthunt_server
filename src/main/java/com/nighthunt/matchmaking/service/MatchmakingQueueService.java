@@ -338,7 +338,7 @@ public class MatchmakingQueueService {
 
         try {
             RoomResponse room = roomService.createRankedRoom(userIds, modeKey, mapId);
-            ServerAllocateResponse ds = dsService.allocateServer("vn", mapId, group.size());
+            ServerAllocateResponse ds = dsService.allocateServerForMatch("vn", mapId, group.size(), room.getMatchId());
 
             Map<String, Object> payload = new HashMap<>();
             payload.put("lobbyToken",   lToken);
