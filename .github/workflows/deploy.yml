@@ -147,6 +147,9 @@ jobs:
               --env-file /opt/nighthunt/.env.production \
               up -d --no-deps --force-recreate backend
 
+            echo "=== Ensure backend is on correct network ==="
+            docker network connect nighthunt_nighthunt-network nighthunt-backend 2>/dev/null || true
+
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do
               sleep 5
