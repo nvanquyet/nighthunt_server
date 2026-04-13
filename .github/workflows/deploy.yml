@@ -101,6 +101,22 @@ jobs:
     environment: production
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Copy configs to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          source: "docker-compose.yml,docker/"
+          target: /opt/nighthunt
+          strip_components: 0
+
       - name: SSH Deploy
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -110,6 +126,7 @@ jobs:
           port: 22
           script: |
             set -e
+            mkdir -p /opt/nighthunt
             cd /opt/nighthunt
 
             echo "=== Login GHCR ==="
