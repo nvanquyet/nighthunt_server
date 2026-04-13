@@ -118,7 +118,7 @@ jobs:
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do
               sleep 5
-              STATUS=$(curl -sk https://localhost:8443/actuator/health | grep -o '"status":"[A-Z]*"' | head -1 || true)
+              STATUS=$(curl -s http://localhost:8080/api/actuator/health | grep -o '"status":"[A-Z]*"' | head -1 || true)
               if [ "$STATUS" = '"status":"UP"' ]; then
                 echo "Backend UP"
                 exit 0
