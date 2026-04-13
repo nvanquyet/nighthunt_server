@@ -132,6 +132,9 @@ jobs:
             echo "=== Login GHCR ==="
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+            echo "=== Ensure game-network exists ==="
+            docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
+
             echo "=== Pull latest image ==="
             docker compose --env-file .env.production pull backend
 

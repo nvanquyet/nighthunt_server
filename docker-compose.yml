@@ -220,5 +220,5 @@ networks:
     driver: bridge
   # Network riêng cho DS containers ↔ backend (tách biệt với DB/Redis)
   game-network:
-    driver: bridge
+    external: true
     name: nighthunt_game-network   # Tên cố định để DockerManagerService reference
