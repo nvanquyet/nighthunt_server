@@ -136,11 +136,16 @@ jobs:
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
             echo "=== Pull latest image ==="
-            set -a && . /opt/nighthunt/.env.production && set +a
-            docker compose --project-directory /opt/nighthunt pull backend
+            docker compose \
+              --project-directory /opt/nighthunt \
+              --env-file /opt/nighthunt/.env.production \
+              pull backend
 
             echo "=== Restart backend ==="
-            docker compose --project-directory /opt/nighthunt up -d --no-deps --force-recreate backend
+            docker compose \
+              --project-directory /opt/nighthunt \
+              --env-file /opt/nighthunt/.env.production \
+              up -d --no-deps --force-recreate backend
 
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do
@@ -153,5 +158,5 @@ jobs:
               echo "Waiting... ($i/6)"
             done
             echo "Health check failed"
-            docker compose --project-directory /opt/nighthunt logs backend --tail=50
+            docker compose --project-directory /opt/nighthunt --env-file /opt/nighthunt/.env.production logs backend --tail=50
             exit 1
