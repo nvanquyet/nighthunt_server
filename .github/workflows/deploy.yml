@@ -113,7 +113,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "docker-compose.yml,docker/"
+          source: "docker-compose.yml,docker/,dashboard/"
           target: /opt/nighthunt
           strip_components: 0
 
