@@ -78,6 +78,7 @@ services:
       - nighthunt-network
 
   backend:
+    image: ghcr.io/nvanquyet/nighthunt-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
