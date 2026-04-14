@@ -112,8 +112,10 @@ ds:
   docker:
     # Docker image full ref (cập nhật bởi CI/CD qua /api/admin/ds/update-image)
     image-ref:           ${DS_IMAGE_REF:ghcr.io/nvanquyet/nighthunt-ds:latest}
-    # URL backend mà DS dùng để gọi về (internal Docker network URL)
-    backend-internal-url: ${DS_BACKEND_INTERNAL_URL:https://nighthunt-backend:8443}
+    # URL backend mà DS dùng để gọi về.
+    # Docker internal (khuyến nghị): http://nighthunt-backend:8080 — ~0.1ms, không SSL
+    # Fallback public domain:        https://vawnwuyest.me         — ~50ms, qua nginx
+    backend-internal-url: ${DS_BACKEND_INTERNAL_URL:http://nighthunt-backend:8080}
     max-memory-mb:       ${DS_MAX_MEMORY_MB:512}
     # false = skip docker run (dùng khi test local, không có DS image)
     enabled:             ${DS_DOCKER_ENABLED:true}

@@ -1,0 +1,88 @@
+name: Build & Deploy Backend
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'infra/**'
+      - 'scripts/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY:   ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/nighthunt-backend
+
+jobs:
+  build-push:
+    name: "Build & Push Docker Image"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  deploy-vps:
+    name: "Deploy to VPS"
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment: NightHunt
+
+    steps:
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/nighthunt
+
+            # Đảm bảo nighthunt_game-network tồn tại
+            docker network create nighthunt_game-network 2>/dev/null || echo "Network already exists"
+
+            # Pull image mới nhất
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose --env-file .env.production pull backend
+
+            # Restart backend (zero-downtime: recreate chỉ backend)
+            docker compose --env-file .env.production up -d --no-deps backend
+
+            # Chờ backend healthy
+            echo "Waiting for backend to be healthy..."
+            for i in $(seq 1 12); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' nighthunt-backend 2>/dev/null || echo "unknown")
+              echo "  Attempt $i/12: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "✅ Backend is healthy!"
+                break
+              fi
+              sleep 5
+            done
+
+            docker ps | grep nighthunt
