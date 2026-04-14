@@ -8,6 +8,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/nighthunt-backend
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ── Job 1: Build & Test ──────────────────────────────────────────────────────
@@ -22,12 +23,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: false
+        uses: actions/checkout@v4.2.2
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4.7.0
         with:
           java-version: '17'
           distribution: temurin
@@ -40,7 +39,7 @@ jobs:
         run: ./gradlew test --no-daemon
 
       - name: Upload JAR artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: app-jar
           path: build/libs/NightHuntServer-*.jar
@@ -60,12 +59,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: false
+        uses: actions/checkout@v4.2.2
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -73,7 +70,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.7.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -81,10 +78,10 @@ jobs:
             type=sha,prefix=,format=short
 
       - name: Setup Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.10.0
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.15.0
         with:
           context: .
           push: true
@@ -102,9 +99,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: false
+        uses: actions/checkout@v4.2.2
 
       - name: Copy configs to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -113,7 +108,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "docker-compose.yml,docker/"
+          source: "docker-compose.yml,docker/,dashboard/"
           target: /opt/nighthunt
           strip_components: 0
 
@@ -136,10 +131,19 @@ jobs:
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
             echo "=== Pull latest image ==="
-            docker compose --env-file .env.production pull backend
+            docker compose \
+              --project-directory /opt/nighthunt \
+              --env-file /opt/nighthunt/.env.production \
+              pull backend
 
             echo "=== Restart backend ==="
-            docker compose --env-file .env.production up -d --no-deps --force-recreate backend
+            docker compose \
+              --project-directory /opt/nighthunt \
+              --env-file /opt/nighthunt/.env.production \
+              up -d --no-deps --force-recreate backend
+
+            echo "=== Ensure backend is on correct network ==="
+            docker network connect nighthunt_nighthunt-network nighthunt-backend 2>/dev/null || true
 
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do
@@ -152,5 +156,5 @@ jobs:
               echo "Waiting... ($i/6)"
             done
             echo "Health check failed"
-            docker compose logs backend --tail=50
+            docker compose --project-directory /opt/nighthunt --env-file /opt/nighthunt/.env.production logs backend --tail=50
             exit 1

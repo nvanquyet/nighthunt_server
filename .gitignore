@@ -88,3 +88,6 @@ src/main/resources/certs/
 *.bak
 *.swp
 *~
+
+# Unity client (read-only reference, tracked separately)
+client_unity_only_read/nighthunt_client/
