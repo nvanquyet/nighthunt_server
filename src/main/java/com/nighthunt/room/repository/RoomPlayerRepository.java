@@ -23,5 +23,17 @@ public interface RoomPlayerRepository extends JpaRepository<RoomPlayer, Long> {
     
     @Query("SELECT COUNT(rp) FROM RoomPlayer rp WHERE rp.roomId = :roomId AND rp.team = :team")
     int countByRoomIdAndTeam(@Param("roomId") Long roomId, @Param("team") Integer team);
+
+    /**
+     * Returns true if the user is currently inside an active room (WAITING or IN_GAME).
+     * Used to enforce mutual exclusion: a player may not join the ranked queue while in a custom lobby.
+     */
+    @Query("""
+            SELECT COUNT(rp) > 0 FROM RoomPlayer rp, Room r
+            WHERE rp.roomId = r.id
+              AND rp.userId  = :userId
+              AND r.status   IN ('WAITING', 'IN_GAME')
+            """)
+    boolean existsUserInActiveRoom(@Param("userId") Long userId);
 }
 

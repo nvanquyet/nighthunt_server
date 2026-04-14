@@ -32,6 +32,14 @@ public interface MatchmakingEntryRepository extends JpaRepository<MatchmakingEnt
     @Query("DELETE FROM MatchmakingEntry m WHERE m.userId = :userId")
     void deleteByUserId(@Param("userId") Long userId);
 
+    /**
+     * Returns true if the user is currently in the ranked matchmaking queue
+     * (status SEARCHING or MATCHED). Used to prevent joining a custom lobby
+     * while queued for ranked.
+     */
+    @Query("SELECT COUNT(m) > 0 FROM MatchmakingEntry m WHERE m.userId = :userId AND m.status IN ('SEARCHING', 'MATCHED')")
+    boolean existsActiveEntryForUser(@Param("userId") Long userId);
+
     /** Total number of entries currently in SEARCHING state. */
     @Query("SELECT COUNT(m) FROM MatchmakingEntry m WHERE m.status = 'SEARCHING'")
     long countSearching();

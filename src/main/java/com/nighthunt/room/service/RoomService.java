@@ -6,6 +6,7 @@ import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.gamemode.service.GameModeService;
+import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
 import com.nighthunt.relay.model.RelaySession;
@@ -51,10 +52,17 @@ public class RoomService {
     private final RelaySessionManager relaySessionManager;
     private final PartyRoomService partyRoomService;
     private final GameModeService gameModeService;
+    private final MatchmakingEntryRepository matchmakingEntryRepository;
     private final Random random = new Random();
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
+        // Mutual exclusion: user must not be in an active ranked matchmaking queue
+        if (matchmakingEntryRepository.existsActiveEntryForUser(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Cannot create a custom room while queued for ranked matchmaking. Please cancel the queue first.");
+        }
+
         // Validate game mode upfront so invalid modes are rejected at creation time
         gameModeService.validateModeOrThrow(request.getMode());
 
@@ -116,6 +124,12 @@ public class RoomService {
 
     @Transactional
     public RoomResponse joinRoomByCode(Long userId, String roomCode, String password) {
+        // Mutual exclusion: user must not be in an active ranked matchmaking queue
+        if (matchmakingEntryRepository.existsActiveEntryForUser(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                    "Cannot join a custom room while queued for ranked matchmaking. Please cancel the queue first.");
+        }
+
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
@@ -480,13 +494,12 @@ public class RoomService {
                     "Not all players are ready");
         }
 
-        // Check enough players for mode
+        // Allow starting with any number of ready players >= 1 (solo start is valid).
+        // requiredPlayerCount is the intended max, but the host can start early.
         int currentPlayerCount = players.size();
-        int requiredPlayerCount = gameModeService.getTotalPlayers(room.getMode());
-        if (currentPlayerCount != requiredPlayerCount) {
+        if (currentPlayerCount < 1) {
             throw new BusinessException(ErrorCodes.ROOM_NOT_ENOUGH_PLAYERS,
-                    String.format("Room requires %d players for %s mode, but has %d players",
-                            requiredPlayerCount, room.getMode(), currentPlayerCount));
+                    "Cannot start a room with no players.");
         }
 
         log.info("Game starting for room {} (code: {}, matchId: {}, mode: {}, players: {})",
@@ -496,14 +509,9 @@ public class RoomService {
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
 
-        // ── BE-27: Create relay session for Custom mode ──────────────────────
-        // If the room is a Custom (non-ranked) lobby, spin up a Mini-Relay session
-        // so clients get host/port info via WS game_starting event.
-        RelaySession relaySession = null;
-        boolean isCustomMode = room.getIsPublic() != null && !room.getIsPublic(); // Custom rooms are private
-        // Use a simple heuristic: rooms without dedicated-server assignment use relay.
-        // A proper "mode" field can be added to Room later; for now, any non-DS room gets relay.
-        relaySession = relaySessionManager.createSession(roomId, room.getMatchId());
+        // All custom lobby games use a mini-relay session — dedicated servers are only
+        // used for ranked matches (which go through MatchmakingQueueService, never here).
+        RelaySession relaySession = relaySessionManager.createSession(roomId, room.getMatchId());
 
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
 

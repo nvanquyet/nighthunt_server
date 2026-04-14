@@ -9,6 +9,7 @@ import com.nighthunt.party.entity.Party;
 import com.nighthunt.party.entity.PartyMember;
 import com.nighthunt.party.repository.PartyMemberRepository;
 import com.nighthunt.party.repository.PartyRepository;
+import com.nighthunt.room.repository.RoomPlayerRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,7 @@ public class PartyMatchmakingService {
     private final MatchmakingQueueService matchmakingQueueService;
     private final GameModeService gameModeService;
     private final MessageBrokerService messageBrokerService;
+    private final RoomPlayerRepository roomPlayerRepository;
 
     // ──────────────────────────────────────────────────────────────────────────
     // PARTY MATCHMAKING
@@ -93,13 +95,23 @@ public class PartyMatchmakingService {
                     playersPerTeam, request.getGameMode()));
         }
 
+        // Pre-flight: ensure NO party member is currently in an active custom lobby room.
+        // Checked here so all-or-nothing — no member gets queued before the error fires.
+        for (Long memberId : memberIds) {
+            if (roomPlayerRepository.existsUserInActiveRoom(memberId)) {
+                throw new BusinessException("PARTY_MEMBER_IN_ROOM",
+                        "Cannot queue party: player " + memberId
+                                + " is currently inside a custom lobby room. They must leave first.");
+            }
+        }
+
         // Update party status
         party.setPartyStatus("IN_QUEUE");
         partyRepository.save(party);
         
-        // Add all members to matchmaking queue
+        // Add all members to matchmaking queue (platform falls back to each user's stored value)
         for (Long memberId : memberIds) {
-            matchmakingQueueService.enqueue(memberId, request.getGameMode(), null);
+            matchmakingQueueService.enqueue(memberId, request.getGameMode(), null, null);
             log.info("Party member {} queued for matchmaking (party={}, mode={})", 
                 memberId, party.getId(), request.getGameMode());
         }

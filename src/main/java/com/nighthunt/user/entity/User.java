@@ -126,6 +126,22 @@ public class User {
     @Column(name = "current_room_id")
     private Long currentRoomId;
 
+    // ── Coins / Economy ───────────────────────────────────────────────────────
+
+    /** In-game currency earned from match rewards. */
+    @Column(nullable = false)
+    @Builder.Default
+    private long coins = 0;
+
+    // ── Platform / Device ─────────────────────────────────────────────────────
+
+    /**
+     * Device platform reported by the client at queue time.
+     * Values: "MOBILE" | "PC" | null (unknown / not yet reported).
+     */
+    @Column(name = "platform", length = 20)
+    private String platform;
+
     /**
      * Last activity timestamp when user went offline.
      * Used to display "Last seen X minutes ago" in friend list.

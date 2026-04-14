@@ -62,6 +62,8 @@ public class ProfileService {
                 .tier(user.getTier())
                 .totalWins(user.getTotalWins())
                 .totalLosses(user.getTotalLosses())
+                .coins(user.getCoins())
+                .platform(user.getPlatform())
                 .build();
     }
 }

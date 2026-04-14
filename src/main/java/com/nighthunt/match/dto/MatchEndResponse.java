@@ -27,5 +27,7 @@ public class MatchEndResponse {
         private int    eloAfter;
         private int    eloChange;
         private String tier;
+        private long   coinChange;   // coins awarded this match
+        private long   coinsTotal;   // updated coin balance
     }
 }

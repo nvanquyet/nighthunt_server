@@ -116,6 +116,19 @@ public class GameMode {
     @Builder.Default
     private boolean isDevMode = false;
 
+    /**
+     * Platform restriction for this mode's ranked matchmaking queue.
+     * <ul>
+     *   <li>ALL    — any platform may queue (default)</li>
+     *   <li>MOBILE — only MOBILE clients may queue</li>
+     *   <li>PC     — only PC clients may queue</li>
+     * </ul>
+     * When set to MOBILE or PC, only same-platform players will be matched together.
+     */
+    @Column(name = "platform_filter", nullable = false, length = 20)
+    @Builder.Default
+    private String platformFilter = "ALL";
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

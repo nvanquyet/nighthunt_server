@@ -70,6 +70,14 @@ public class MatchmakingEntry {
     @Builder.Default
     private String acceptStatus = "PENDING";
 
+    /**
+     * Device platform of the player at queue time, mirrored from {@code User.platform}.
+     * Values: "MOBILE" | "PC" | null (unknown).
+     * Used by {@code isCompatible()} to enforce same-platform matching when required.
+     */
+    @Column(name = "platform", length = 20)
+    private String platform;
+
     @PrePersist
     protected void onCreate() {
         if (queuedAt == null) queuedAt = LocalDateTime.now();

@@ -31,15 +31,16 @@ public class MatchmakingQueueController {
     /**
      * Enter the ranked matchmaking queue.
      *
-     * Body: {@code { "gameMode": "2v2" }}
+     * Body: {@code { "gameMode": "2v2", "mapId": "map_01", "platform": "MOBILE" }}
      */
     @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<ApiResponse<Void>> enqueue(@RequestBody Map<String, String> body) {
         Long userId   = SecurityUtils.getCurrentUserId();
         String mode   = body.getOrDefault("gameMode", "2v2");
-        String mapId  = body.get("mapId"); // nullable — null = any map
-        queueService.enqueue(userId, mode, mapId);
+        String mapId  = body.get("mapId");      // nullable — null = any map
+        String platform = body.get("platform"); // nullable — MOBILE | PC
+        queueService.enqueue(userId, mode, mapId, platform);
         return ResponseEntity.ok(ApiResponse.ok());
     }
 
@@ -54,29 +55,4 @@ public class MatchmakingQueueController {
         return ResponseEntity.ok(ApiResponse.ok());
     }
 
-    /**
-     * Accept the pending match offer.
-     * Body: {@code { "lobbyToken": "..." }}
-     */
-    @PreAuthorize("isAuthenticated()")
-    @PostMapping("/accept")
-    public ResponseEntity<ApiResponse<Void>> accept(@RequestBody Map<String, String> body) {
-        Long   userId     = SecurityUtils.getCurrentUserId();
-        String lobbyToken = body.get("lobbyToken");
-        queueService.accept(userId, lobbyToken);
-        return ResponseEntity.ok(ApiResponse.ok());
-    }
-
-    /**
-     * Decline the pending match offer. Re-queues the other players who already accepted.
-     * Body: {@code { "lobbyToken": "..." }}
-     */
-    @PreAuthorize("isAuthenticated()")
-    @PostMapping("/decline")
-    public ResponseEntity<ApiResponse<Void>> decline(@RequestBody Map<String, String> body) {
-        Long   userId     = SecurityUtils.getCurrentUserId();
-        String lobbyToken = body.get("lobbyToken");
-        queueService.decline(userId, lobbyToken);
-        return ResponseEntity.ok(ApiResponse.ok());
-    }
 }

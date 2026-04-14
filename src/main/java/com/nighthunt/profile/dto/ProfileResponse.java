@@ -22,4 +22,6 @@ public class ProfileResponse {
     private String tier;
     private int    totalWins;
     private int    totalLosses;
+    private long   coins;      // current coin balance
+    private String platform;   // MOBILE | PC | null
 }

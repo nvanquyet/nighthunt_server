@@ -70,17 +70,22 @@ public class EloService {
      * Apply ELO delta to a user and update their tier. Does not persist — caller
      * must call {@code userRepository.save(user)}.
      *
-     * @return the ELO change applied
+     * <p>W/L/D counters are incremented based on {@code actualScore} (the real match
+     * outcome), <em>not</em> on the sign of the ELO delta. This avoids incorrectly
+     * counting a draw as a win/loss when the player's ELO is far from the opponent's.</p>
+     *
+     * @param actualScore 1.0 = win, 0.5 = draw, 0.0 = loss
+     * @return the ELO change applied (after floor-at-0)
      */
-    public int applyDelta(User user, int delta) {
+    public int applyDelta(User user, int delta, double actualScore) {
         int before = user.getElo();
         int after  = Math.max(0, before + delta);   // floor at 0
         user.setElo(after);
         user.setTier(resolveTier(after));
 
-        if (delta > 0) user.setTotalWins(user.getTotalWins() + 1);
-        else if (delta < 0) user.setTotalLosses(user.getTotalLosses() + 1);
-        else user.setTotalDraws(user.getTotalDraws() + 1);
+        if (actualScore >= 1.0)      user.setTotalWins(user.getTotalWins() + 1);
+        else if (actualScore <= 0.0) user.setTotalLosses(user.getTotalLosses() + 1);
+        else                         user.setTotalDraws(user.getTotalDraws() + 1);
 
         log.info("[ELO] User {} ELO {} → {} (Δ{}) tier={}",
                 user.getId(), before, after, delta, user.getTier());

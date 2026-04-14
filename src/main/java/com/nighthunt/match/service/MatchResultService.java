@@ -15,6 +15,7 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +47,14 @@ public class MatchResultService {
     private final EloService                   eloService;
     private final RelaySessionManager          relaySessionManager;
     private final ConnectionManager            connectionManager;
+
+    // ── Coin rewards (configurable via application.properties) ────────────────
+    @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
+    @Value("${coins.reward.ranked.draw:25}")   private long coinsRankedDraw;
+    @Value("${coins.reward.ranked.loss:10}")   private long coinsRankedLoss;
+    @Value("${coins.reward.custom.win:20}")    private long coinsCustomWin;
+    @Value("${coins.reward.custom.draw:10}")   private long coinsCustomDraw;
+    @Value("${coins.reward.custom.loss:5}")    private long coinsCustomLoss;
 
     @Transactional
     public MatchEndResponse processMatchEnd(MatchEndRequest req, boolean isRanked) {
@@ -79,7 +88,7 @@ public class MatchResultService {
 
         List<MatchEndResponse.PlayerResultRow> resultRows = new ArrayList<>();
 
-        // 3. For each player: persist result + update ELO if ranked
+        // 3. For each player: persist result + update ELO/coins if ranked
         for (var entry : req.getPlayerResults()) {
             User user = userRepository.findById(entry.getUserId()).orElse(null);
             if (user == null) {
@@ -87,26 +96,31 @@ public class MatchResultService {
                 continue;
             }
 
+            int myTeam = entry.getTeamId();
+            double actualScore;
+            if (req.getWinnerTeamId() == -1)           actualScore = 0.5; // draw
+            else if (req.getWinnerTeamId() == myTeam)  actualScore = 1.0; // win
+            else                                       actualScore = 0.0; // loss
+
             int eloBefore = user.getElo();
             int eloChange = 0;
 
             if (isRanked) {
                 // Determine opponent average ELO (for 2-team matches)
-                int myTeam = entry.getTeamId();
                 double opponentAvg = teamAvgElo.entrySet().stream()
                         .filter(e -> !e.getKey().equals(myTeam))
                         .mapToDouble(Map.Entry::getValue)
                         .average().orElse(1000.0);
 
-                double actualScore;
-                if (req.getWinnerTeamId() == -1)           actualScore = 0.5; // draw
-                else if (req.getWinnerTeamId() == myTeam)  actualScore = 1.0; // win
-                else                                       actualScore = 0.0; // loss
-
                 int delta = eloService.calculateDelta(eloBefore, opponentAvg, actualScore);
-                eloChange = eloService.applyDelta(user, delta);
-                userRepository.save(user);
+                eloChange = eloService.applyDelta(user, delta, actualScore);
             }
+
+            // Coin reward
+            long coinReward = resolveCoinReward(actualScore, isRanked);
+            user.setCoins(user.getCoins() + coinReward);
+
+            userRepository.save(user);
 
             // Persist result row
             int placement;
@@ -140,6 +154,8 @@ public class MatchResultService {
                     .eloAfter(user.getElo())
                     .eloChange(eloChange)
                     .tier(user.getTier())
+                    .coinChange(coinReward)
+                    .coinsTotal(user.getCoins())
                     .build());
         }
 
@@ -170,5 +186,19 @@ public class MatchResultService {
                 req.getMatchId(), req.getWinnerTeamId(), req.getEndReason(), req.getPlayerResults().size());
 
         return response;
+    }
+
+    // ── Internal ─────────────────────────────────────────────────────────────
+
+    private long resolveCoinReward(double actualScore, boolean isRanked) {
+        if (isRanked) {
+            if (actualScore >= 1.0) return coinsRankedWin;
+            if (actualScore <= 0.0) return coinsRankedLoss;
+            return coinsRankedDraw;
+        } else {
+            if (actualScore >= 1.0) return coinsCustomWin;
+            if (actualScore <= 0.0) return coinsCustomLoss;
+            return coinsCustomDraw;
+        }
     }
 }
