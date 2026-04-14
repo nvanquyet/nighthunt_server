@@ -95,7 +95,7 @@ jobs:
     name: Deploy to VPS
     runs-on: ubuntu-latest
     needs: docker
-    environment: NightHunt
+    environment: production
 
     steps:
       - name: Checkout
