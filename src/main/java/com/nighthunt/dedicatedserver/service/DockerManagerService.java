@@ -77,6 +77,7 @@ public class DockerManagerService {
      *     -e BACKEND_URL=... \
      *     -e SERVER_SECRET=... \
      *     -e MAX_PLAYERS=... \
+     *     -e MATCH_ID=... \
      *     --memory=512m \
      *     --cpus=0.5 \
      *     --log-opt max-size=10m \
@@ -84,9 +85,10 @@ public class DockerManagerService {
      *     --rm \
      *     <image>
      *
+     * @param matchId matchId của ranked match (có thể null nếu không phải ranked)
      * @return Docker container ID (short)
      */
-    public String startContainer(String serverId, int port, String serverSecret, int maxPlayers, String mapId, int expectedPlayers) {
+    public String startContainer(String serverId, int port, String serverSecret, int maxPlayers, String mapId, int expectedPlayers, String matchId) {
         String containerName = "nighthunt-ds-" + serverId.substring(0, 8);
         String imageRef      = getCurrentImageRef();
 
@@ -108,7 +110,8 @@ public class DockerManagerService {
             "-e", "SERVER_SECRET="    + serverSecret,
             "-e", "MAX_PLAYERS="      + maxPlayers,
             "-e", "EXPECTED_PLAYERS=" + expectedPlayers,
-            "-e", "MAP_ID="           + (mapId != null ? mapId : ""),
+            "-e", "MAP_ID="           + (mapId   != null ? mapId   : ""),
+            "-e", "MATCH_ID="         + (matchId != null ? matchId : ""),
             "--memory",  maxMemoryMb + "m",
             "--cpus",    "0.5",
             "--log-opt", "max-size=10m",

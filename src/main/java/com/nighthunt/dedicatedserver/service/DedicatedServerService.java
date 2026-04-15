@@ -71,52 +71,52 @@ public class DedicatedServerService {
      */
     @Transactional
     public ServerAllocateResponse allocateServer(String region, String mapId, int expectedPlayers) {
-        // 1. Tìm server đang chờ player và cùng map
+        return doAllocate(region, mapId, expectedPlayers, null);
+    }
+
+    /** Backward-compat overload for admin/manual allocation (uses defaultMaxPlayers as expected count). */
+    @Transactional
+    public ServerAllocateResponse allocateServer(String region, String mapId) {
+        return doAllocate(region, mapId, defaultMaxPlayers, null);
+    }
+
+    /**
+     * Allocate a DS for a specific ranked match.
+     * matchId được truyền xuống spinUpNewServer và gán ngay khi tạo DS record,
+     * sau đó được pass vào container ENV (MATCH_ID) — DS biết matchId từ lúc boot.
+     */
+    @Transactional
+    public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
+                                                         int expectedPlayers, String matchId) {
+        return doAllocate(region, mapId, expectedPlayers, matchId);
+    }
+
+    /**
+     * Core allocation logic. Tìm server available hoặc spin up mới với matchId đúng từ đầu.
+     */
+    @Transactional
+    private ServerAllocateResponse doAllocate(String region, String mapId, int expectedPlayers, String matchId) {
         DedicatedServer server = dsRepo.findAvailable(region, mapId).orElse(null);
         String devSecret = null;
 
-        // 2. Không có → tạo mới
         if (server == null) {
-            SpawnResult result = spinUpNewServer(region, mapId, expectedPlayers);
+            SpawnResult result = spinUpNewServer(region, mapId, expectedPlayers, matchId);
             server    = result.server();
             devSecret = result.plainSecret(); // null trên production
+        } else if (matchId != null) {
+            server.setMatchId(matchId);
+            dsRepo.save(server);
         }
 
-        // 3. Tạo one-time session token (client gửi khi connect UDP)
         String token = generateSessionToken(server.getServerId());
-
         return ServerAllocateResponse.builder()
                 .serverId(server.getServerId())
                 .ip(server.getIp())
                 .port(server.getPort())
                 .status(server.getStatus())
                 .sessionToken(token)
-                .devSecret(devSecret)   // null trên production, có giá trị khi dev
+                .devSecret(devSecret)
                 .build();
-    }
-
-    /** Backward-compat overload for admin/manual allocation (uses defaultMaxPlayers as expected count). */
-    @Transactional
-    public ServerAllocateResponse allocateServer(String region, String mapId) {
-        return allocateServerForMatch(region, mapId, defaultMaxPlayers, null);
-    }
-
-    /**
-     * Allocate a DS for a specific ranked match.
-     * Stores matchId so /ds/game-ready can broadcast ds_ready to the right players.
-     */
-    @Transactional
-    public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
-                                                         int expectedPlayers, String matchId) {
-        ServerAllocateResponse response = allocateServer(region, mapId, expectedPlayers);
-        // Persist matchId on the DS record so we can broadcast ds_ready later
-        if (matchId != null) {
-            dsRepo.findByServerId(response.getServerId()).ifPresent(ds -> {
-                ds.setMatchId(matchId);
-                dsRepo.save(ds);
-            });
-        }
-        return response;
     }
 
     /**
@@ -314,13 +314,14 @@ public class DedicatedServerService {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    private SpawnResult spinUpNewServer(String region, String mapId, int expectedPlayers) {
+    private SpawnResult spinUpNewServer(String region, String mapId, int expectedPlayers, String matchId) {
         String serverId     = UUID.randomUUID().toString();
         String serverSecret = UUID.randomUUID().toString().replace("-", "");
         int    port         = findAvailablePort();
         String secretHash   = bcrypt.encode(serverSecret);
 
-        log.info("[DSService] Spinning up new DS: serverId={}, port={}, mapId={}, expectedPlayers={}", serverId, port, mapId, expectedPlayers);
+        log.info("[DSService] Spinning up new DS: serverId={}, port={}, mapId={}, matchId={}, expectedPlayers={}",
+                serverId, port, mapId, matchId, expectedPlayers);
 
         DedicatedServer server = dsRepo.save(DedicatedServer.builder()
                 .serverId(serverId)
@@ -329,6 +330,7 @@ public class DedicatedServerService {
                 .status("starting")
                 .region(region)
                 .mapId(mapId)
+                .matchId(matchId)           // Đặt ngay để DS biết matchId từ lúc boot
                 .maxPlayers(defaultMaxPlayers)
                 .imageTag(dockerManager.getCurrentImageRef())
                 .serverSecretHash(secretHash)
@@ -337,7 +339,7 @@ public class DedicatedServerService {
         String returnedSecret = null;
 
         try {
-            String containerId = dockerManager.startContainer(serverId, port, serverSecret, defaultMaxPlayers, mapId, expectedPlayers);
+            String containerId = dockerManager.startContainer(serverId, port, serverSecret, defaultMaxPlayers, mapId, expectedPlayers, matchId);
             server.setDockerContainerId(containerId);
             dsRepo.save(server);
 
@@ -392,6 +394,23 @@ public class DedicatedServerService {
 
         for (DedicatedServer server : deadServers) {
             log.warn("[DSService] Cleaning dead server (no heartbeat): {}", server.getServerId());
+            dockerManager.stopContainer(server.getDockerContainerId());
+            server.setStatus("stopped");
+            server.setStoppedAt(LocalDateTime.now());
+            dsRepo.save(server);
+        }
+    }
+
+    /** Mỗi 3 phút: thu hồi DS đã ready nhưng không có player nào trong > 5 phút (bị bỏ hoang). */
+    @Scheduled(fixedDelay = 180_000)
+    @Transactional
+    public void cleanupIdleServers() {
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(5);
+        List<DedicatedServer> idleServers = dsRepo.findIdleServers(cutoff);
+
+        for (DedicatedServer server : idleServers) {
+            log.info("[DSService] Reclaiming idle server (0 players, {}min+): {}",
+                    5, server.getServerId());
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());

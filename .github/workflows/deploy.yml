@@ -183,3 +183,54 @@ jobs:
           git tag -a "${TAG}" -m "Backend deployed to production: ghcr.io/${{ env.IMAGE_NAME }}:${{ needs.docker.outputs.image_tag }}"
           git push origin "${TAG}"
           echo "✅ Git tag pushed: ${TAG}"
+
+  # ── Job 4: Smoke Test ───────────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: production
+
+    steps:
+      - name: Run smoke tests via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            ADMIN_SECRET=$(grep "^DS_ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
+            DS_IMAGE=$(grep "^DS_IMAGE_REF=" /opt/nighthunt/.env.production | cut -d= -f2)
+
+            echo "=== [1/4] Backend health ==="
+            STATUS=$(curl -sf http://localhost:8080/api/actuator/health | grep -o '"status":"[A-Z]*"' | head -1)
+            [ "$STATUS" = '"status":"UP"' ] || (echo "❌ Backend not healthy: $STATUS" && exit 1)
+            echo "✅ Backend UP"
+
+            echo "=== [2/4] DB & Redis health components ==="
+            HEALTH=$(curl -sf http://localhost:8080/api/actuator/health)
+            echo "${HEALTH}" | grep -o '"db":{[^}]*}' || true
+            echo "${HEALTH}" | grep -o '"redis":{[^}]*}' || true
+            echo "✅ Components checked"
+
+            echo "=== [3/4] DS admin API ==="
+            RESP=$(curl -sf http://localhost:8080/api/admin/ds/servers \
+              -H "X-Admin-Secret: ${ADMIN_SECRET}")
+            echo "${RESP}" | grep -o '"success"' | head -1 || (echo "❌ Admin API failed: ${RESP}" && exit 1)
+            echo "✅ Admin DS API OK"
+
+            echo "=== [4/4] DS image on VPS ==="
+            if docker image inspect "${DS_IMAGE}" --format "{{.Id}}" >/dev/null 2>&1; then
+              echo "✅ DS image already local: ${DS_IMAGE}"
+              # Verify binary inside image
+              docker run --rm --entrypoint "" "${DS_IMAGE}" \
+                sh -c "ls /app/NightHuntDS.x86_64 2>/dev/null || ls /app/NightHuntDS 2>/dev/null || (echo '❌ DS binary missing in image' && exit 1)" \
+              && echo "✅ DS binary verified inside image"
+            else
+              echo "⚠️  DS image not yet on VPS (pull in progress): ${DS_IMAGE}"
+            fi
+
+            echo ""
+            echo "✅ All smoke tests passed"

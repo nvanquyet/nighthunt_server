@@ -45,4 +45,17 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
 
     /** Kiểm tra port đang bị dùng chưa */
     boolean existsByPortAndStatusNot(Integer port, String status);
+
+    /**
+     * Tìm servers ready/waiting không có player nào trong thời gian > cutoff.
+     * Dùng bởi cleanupIdleServers() để thu hồi DS bị bỏ hoang.
+     */
+    @Query("""
+        SELECT d FROM DedicatedServer d
+        WHERE d.status IN ('ready', 'waiting')
+          AND d.currentPlayers = 0
+          AND d.lastHeartbeatAt IS NOT NULL
+          AND d.lastHeartbeatAt < :cutoff
+    """)
+    List<DedicatedServer> findIdleServers(@Param("cutoff") LocalDateTime cutoff);
 }
