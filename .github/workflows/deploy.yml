@@ -148,6 +148,9 @@ jobs:
 
             echo "=== Ensure backend is on correct network ==="
             docker network connect nighthunt_nighthunt-network nighthunt-backend 2>/dev/null || true
+            # game-network: DS containers dùng mạng này để gọi về backend
+            docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
+            docker network connect nighthunt_game-network nighthunt-backend 2>/dev/null || true
 
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do

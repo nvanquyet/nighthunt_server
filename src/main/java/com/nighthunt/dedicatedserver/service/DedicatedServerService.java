@@ -231,17 +231,20 @@ public class DedicatedServerService {
     }
 
     /**
-     * CI/CD notify image mới (chạy pull trước để latency thấp khi next allocate)
+     * CI/CD notify image mới.
+     * Pull xong thành công mới switch imageRef để tránh spawn DS với tag chưa có local.
      */
     public void updateImage(String imageRef) {
-        dockerManager.setCurrentImageRef(imageRef);
         log.info("[DSService] Pulling new image in background: {}", imageRef);
         // Pull async để không block HTTP response (compatible với Java 17)
         new Thread(() -> {
             try {
                 dockerManager.pullImage(imageRef);
+                // Chỉ switch sau khi pull thành công
+                dockerManager.setCurrentImageRef(imageRef);
+                log.info("[DSService] Image switched → {}", imageRef);
             } catch (Exception e) {
-                log.error("[DSService] Image pull failed: {}", e.getMessage());
+                log.error("[DSService] Image pull failed, keeping old ref: {}", e.getMessage());
             }
         }, "ds-image-pull").start();
     }
