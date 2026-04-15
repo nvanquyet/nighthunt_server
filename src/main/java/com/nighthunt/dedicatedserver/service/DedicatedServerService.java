@@ -232,17 +232,28 @@ public class DedicatedServerService {
 
     /**
      * CI/CD notify image mới.
-     * Pull xong thành công mới switch imageRef để tránh spawn DS với tag chưa có local.
+     * - Nếu image đã có locally (e.g. patched image build trên VPS): switch ngay.
+     * - Nếu chưa có locally: pull trước từ registry, switch sau khi pull thành công.
+     *   Tránh spawn DS với tag chưa tồn tại nếu pull thất bại.
      */
     public void updateImage(String imageRef) {
-        log.info("[DSService] Pulling new image in background: {}", imageRef);
-        // Pull async để không block HTTP response (compatible với Java 17)
+        if (dockerManager.isImageLocal(imageRef)) {
+            // Image có sẵn locally → switch ngay, không cần pull
+            dockerManager.setCurrentImageRef(imageRef);
+            log.info("[DSService] Image switched (local) → {}", imageRef);
+            // Vẫn chạy pull ngầm để đồng bộ nếu có version mới hơn trên registry
+            new Thread(() -> {
+                try { dockerManager.pullImage(imageRef); }
+                catch (Exception e) { log.debug("[DSService] Background pull skipped (local-only image): {}", e.getMessage()); }
+            }, "ds-image-pull").start();
+            return;
+        }
+        log.info("[DSService] Pulling new image from registry: {}", imageRef);
         new Thread(() -> {
             try {
                 dockerManager.pullImage(imageRef);
-                // Chỉ switch sau khi pull thành công
                 dockerManager.setCurrentImageRef(imageRef);
-                log.info("[DSService] Image switched → {}", imageRef);
+                log.info("[DSService] Image switched (registry) → {}", imageRef);
             } catch (Exception e) {
                 log.error("[DSService] Image pull failed, keeping old ref: {}", e.getMessage());
             }

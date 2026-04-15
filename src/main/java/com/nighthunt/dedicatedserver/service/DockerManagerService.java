@@ -57,7 +57,10 @@ public class DockerManagerService {
     }
 
     public String getCurrentImageRef() {
-        return currentImageRef != null ? currentImageRef : defaultImageRef;
+        if (currentImageRef != null) return currentImageRef;
+        // Fallback: đọc trực tiếp từ env var runtime để tránh @Value resolution issues với `:` trong default
+        String envRef = System.getenv("DS_IMAGE_REF");
+        return (envRef != null && !envRef.isBlank()) ? envRef : defaultImageRef;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -179,6 +182,23 @@ public class DockerManagerService {
         log.info("[DockerManager] Pulling image: {}", imageRef);
         runDockerCommand(true, "docker", "pull", imageRef);   // throws on failure
         log.info("[DockerManager] Image pull done: {}", imageRef);
+    }
+
+    /**
+     * Kiểm tra xem image có sẵn trên local Docker daemon không.
+     * Dùng để updateImage() có thể switch ngay với local-only image (e.g. :patched)
+     * mà không cần pull từ registry trước.
+     */
+    public boolean isImageLocal(String imageRef) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("docker", "image", "inspect", "--format", "{{.Id}}", imageRef);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            process.getInputStream().readAllBytes(); // consume output
+            return process.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
