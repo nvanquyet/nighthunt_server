@@ -218,12 +218,11 @@ public class DedicatedServerService {
         server.setCurrentPlayers(req.getCurrentPlayers() != null ? req.getCurrentPlayers() : 0);
         server.setLastHeartbeatAt(LocalDateTime.now());
 
-        // Cập nhật status dựa vào số player
+        // Cập nhật status: chỉ chuyển sang in_game khi có player
+        // KHÔNG tự chuyển in_game → ready vì backend không biết game đã kết thúc hay chưa.
+        // DS sẽ gọi POST /api/match/end/ranked rồi tự Application.Quit() khi game end.
         if (req.getCurrentPlayers() != null && req.getCurrentPlayers() > 0) {
             server.setStatus("in_game");
-        } else if ("in_game".equals(server.getStatus())) {
-            // Game kết thúc, quay về ready
-            server.setStatus("ready");
         }
 
         dsRepo.save(server);
