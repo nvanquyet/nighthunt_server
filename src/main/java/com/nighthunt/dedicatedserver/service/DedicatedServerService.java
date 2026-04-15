@@ -266,6 +266,29 @@ public class DedicatedServerService {
                 .orElse(null);
     }
 
+    /**
+     * Validates DS identity via BCrypt secret check and returns the matchId stored on the DS entity.
+     * Used by {@code POST /match/end/ranked} to authenticate DS and resolve matchId when DS doesn't
+     * know its own matchId (matchId is assigned AFTER container start, not passed as env var).
+     *
+     * @param serverId    the DS serverId from the request body
+     * @param plainSecret the plain-text serverSecret from the request body or X-DS-Secret header
+     * @return the matchId stored on the DS entity (may be null if no match was ever allocated)
+     * @throws IllegalArgumentException if serverId is unknown or secret is wrong
+     */
+    public String validateDsAndGetMatchId(String serverId, String plainSecret) {
+        DedicatedServer server = dsRepo.findByServerId(serverId).orElse(null);
+        if (server == null) {
+            log.warn("[DSService] validateDsAndGetMatchId: unknown serverId={}", serverId);
+            throw new IllegalArgumentException("Unknown DS: " + serverId);
+        }
+        if (plainSecret == null || !bcrypt.matches(plainSecret, server.getServerSecretHash())) {
+            log.warn("[DSService] validateDsAndGetMatchId: invalid secret for serverId={}", serverId);
+            throw new SecurityException("Invalid DS secret for serverId=" + serverId);
+        }
+        return server.getMatchId();
+    }
+
     // ── Session Token ─────────────────────────────────────────────────────────
 
     /** Tạo token cho client, lưu vào Redis với TTL 5 phút */

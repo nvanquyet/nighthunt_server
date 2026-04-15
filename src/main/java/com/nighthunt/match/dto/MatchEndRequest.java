@@ -14,6 +14,19 @@ import java.util.List;
 @Data
 public class MatchEndRequest {
 
+    /**
+     * ID of the DS that is reporting the result.
+     * Used to authenticate the request and resolve {@link #matchId} if not provided.
+     * Required for {@code /ranked} endpoint; ignored for {@code /custom}.
+     */
+    private String serverId;
+
+    /**
+     * Plain-text server secret for DS authentication (validated via BCrypt against DB hash).
+     * Required for {@code /ranked} endpoint.
+     */
+    private String serverSecret;
+
     /** The match UUID that was issued at room-start time. */
     private String matchId;
 

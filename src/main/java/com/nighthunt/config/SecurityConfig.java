@@ -61,6 +61,8 @@ public class SecurityConfig {
                 .requestMatchers("/auth/**", "/actuator/**", "/dashboard.html", "/dashboard/**", "/ws/**").permitAll()
                 // DS containers dùng X-DS-Secret header thay vì JWT
                 .requestMatchers("/ds/**").permitAll()
+                // DS gọi /match/end/ranked bằng X-DS-Secret, không có JWT
+                .requestMatchers("/match/end/ranked").permitAll()
                 // Admin dashboard API (validates X-Admin-Secret internally)
                 .requestMatchers("/admin/**").permitAll()
                 // Public game config endpoints — client fetches these at startup (may be before auth)
