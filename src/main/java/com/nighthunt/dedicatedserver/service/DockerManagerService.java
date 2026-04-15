@@ -177,7 +177,7 @@ public class DockerManagerService {
             loginGhcr();
         }
         log.info("[DockerManager] Pulling image: {}", imageRef);
-        runDockerCommand("docker", "pull", imageRef);
+        runDockerCommand(true, "docker", "pull", imageRef);   // throws on failure
         log.info("[DockerManager] Image pull done: {}", imageRef);
     }
 
@@ -211,6 +211,14 @@ public class DockerManagerService {
     // ──────────────────────────────────────────────────────────────────────────
 
     private void runDockerCommand(String... cmd) {
+        runDockerCommand(false, cmd);
+    }
+
+    /**
+     * @param throwOnError nếu true, ném RuntimeException khi exit code != 0.
+     *                     Dùng cho pullImage để pullImage caller biết pull thất bại.
+     */
+    private void runDockerCommand(boolean throwOnError, String... cmd) {
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
@@ -220,10 +228,16 @@ public class DockerManagerService {
 
             if (exitCode != 0) {
                 log.warn("[DockerManager] Command failed (exit {}):\n{}", exitCode, output);
+                if (throwOnError) {
+                    throw new RuntimeException("Docker command failed (exit " + exitCode + "): " + output);
+                }
             }
         } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("[DockerManager] Command error: {}", e.getMessage());
+            if (throwOnError) {
+                throw new RuntimeException("Docker command error: " + e.getMessage(), e);
+            }
         }
     }
 }
