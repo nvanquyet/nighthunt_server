@@ -116,6 +116,13 @@ public class DockerManagerService {
             "--cpus",    "0.5",
             "--log-opt", "max-size=10m",
             "--log-opt", "max-file=3",
+            // Disable IPv6 inside DS container so LiteNetLib (FishNet transport) only binds
+            // IPv4. Without this, LiteNetLib tries to bind both 0.0.0.0:port (IPv4) AND
+            // [::]:port (IPv6). On Linux, if the IPv4 wildcard socket uses dual-stack, the
+            // second bind fails with "Address already in use". FishNet then marks the server
+            // as "not started", kills the HeartbeatLoop, and LoadGlobalScenes silently fails
+            // → no heartbeat, no game-ready → ds_ready never broadcast to clients.
+            "--sysctl",  "net.ipv6.conf.all.disable_ipv6=1",
             "--rm",                         // Tự xóa container khi stop
             "--network", "nighthunt_game-network",   // Cùng Docker network với backend
             imageRef
