@@ -116,13 +116,18 @@ public class DockerManagerService {
             "--cpus",    "0.5",
             "--log-opt", "max-size=10m",
             "--log-opt", "max-file=3",
-            // Disable IPv6 inside DS container so LiteNetLib (FishNet transport) only binds
-            // IPv4. Without this, LiteNetLib tries to bind both 0.0.0.0:port (IPv4) AND
-            // [::]:port (IPv6). On Linux, if the IPv4 wildcard socket uses dual-stack, the
-            // second bind fails with "Address already in use". FishNet then marks the server
-            // as "not started", kills the HeartbeatLoop, and LoadGlobalScenes silently fails
-            // → no heartbeat, no game-ready → ds_ready never broadcast to clients.
-            "--sysctl",  "net.ipv6.conf.all.disable_ipv6=1",
+            // Force IPv6-only sockets to NOT handle IPv4 (IPV6_V6ONLY=1 globally).
+            // Without this, LiteNetLib creates an IPv6 dual-stack socket at [::]:port
+            // (IPV6_V6ONLY=0 is Linux default), which also claims port for IPv4. When
+            // LiteNetLib then tries to bind a separate IPv4 socket at 0.0.0.0:port, it
+            // fails with EADDRINUSE. FishNet briefly reports Started=true then sets it
+            // to false → HeartbeatLoop exits → LoadGlobalScenes silently ignored →
+            // no game-ready → ds_ready never broadcast to clients.
+            // net.ipv6.conf.all.disable_ipv6=1 does NOT fix this — it disables IPv6
+            // routing but the kernel still allows binding [::]:port on dual-stack sockets.
+            // net.ipv6.bindv6only=1 is the correct fix: IPv6 sockets only handle IPv6,
+            // so [::]:port and 0.0.0.0:port can coexist on the same port number.
+            "--sysctl",  "net.ipv6.bindv6only=1",
             "--rm",                         // Tự xóa container khi stop
             "--network", "nighthunt_game-network",   // Cùng Docker network với backend
             imageRef
