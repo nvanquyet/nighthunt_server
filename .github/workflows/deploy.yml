@@ -234,3 +234,24 @@ jobs:
 
             echo ""
             echo "✅ All smoke tests passed"
+
+      - name: Job Summary
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          ICON=$([ "$STATUS" = "success" ] && echo "✅" || echo "❌")
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          {
+            echo "## ${ICON} Backend Deploy — ${STATUS^^}"
+            echo ""
+            echo "| Key | Value |"
+            echo "|-----|-------|"
+            echo "| Commit | [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}) |"
+            echo "| Image | \`ghcr.io/${{ env.IMAGE_NAME }}:latest\` |"
+            echo "| Deployed at | ${DATE} |"
+            echo "| Environment | production |"
+            echo ""
+            if [ "$STATUS" = "success" ]; then
+              echo "Backend is live at: https://vawnwuyest.me/api/actuator/health"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

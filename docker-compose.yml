@@ -1,11 +1,11 @@
 # ══════════════════════════════════════════════════════════════
 # docker-compose.yml — NightHunt Backend Stack
 #
-# LOCAL DEV:   docker-compose --env-file .env.local up -d
-#              (hoặc dùng: ./dev-start.ps1 — auto setup hoàn toàn)
-#
-# PRODUCTION:  docker-compose --env-file .env.production up -d
+# PRODUCTION (standard):  docker-compose --env-file .env.production up -d
 #              (CI/CD pipeline tự chạy — không cần config thủ công)
+#
+# LOCAL DEV (optional):   docker-compose --env-file .env.local up -d
+#              (hoặc dùng: ./dev-start.ps1 — auto setup hoàn toàn)
 # ══════════════════════════════════════════════════════════════
 
 services:
@@ -13,7 +13,7 @@ services:
     image: mysql:8.0
     container_name: nighthunt-mysql
     env_file:
-      - ${ENV_FILE:-.env.local}
+      - ${ENV_FILE:-.env.production}
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
@@ -38,7 +38,7 @@ services:
     image: redis:7-alpine
     container_name: nighthunt-redis
     env_file:
-      - ${ENV_FILE:-.env.local}
+      - ${ENV_FILE:-.env.production}
     # Neu REDIS_PASSWORD trong thi chay khong password
     # Neu co password thi them --requirepass
     command: >
@@ -61,7 +61,7 @@ services:
     image: phpmyadmin/phpmyadmin:latest
     container_name: nighthunt-phpmyadmin
     env_file:
-      - ${ENV_FILE:-.env.local}
+      - ${ENV_FILE:-.env.production}
     environment:
       PMA_HOST: mysql
       PMA_PORT: 3306
@@ -84,7 +84,7 @@ services:
       dockerfile: Dockerfile
     container_name: nighthunt-backend
     env_file:
-      - ${ENV_FILE:-.env.local}
+      - ${ENV_FILE:-.env.production}
     environment:
       # Database Configuration
       DB_URL: ${DB_URL}
@@ -191,7 +191,7 @@ services:
       dockerfile: Dockerfile
     container_name: nighthunt-dashboard
     env_file:
-      - ${ENV_FILE:-.env.local}
+      - ${ENV_FILE:-.env.production}
     environment:
       BACKEND_URL: ${DASHBOARD_BACKEND_URL}
       PORT: ${DASHBOARD_PORT}
