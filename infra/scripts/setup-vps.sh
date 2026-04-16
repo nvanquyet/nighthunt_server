@@ -105,8 +105,10 @@ VPS_PUBLIC_IP=${VPS_IP}
 DS_DOCKER_ENABLED=true
 DS_IMAGE_REF=ghcr.io/nvanquyet/nighthunt-ds:latest
 DS_ADMIN_SECRET=CHANGE_ME_DS_ADMIN_SECRET
-# Internal docker network URL — DS containers → backend via game-network
-DS_BACKEND_INTERNAL_URL=http://nighthunt-backend:8080
+# DS → Backend URL
+# IMPORTANT: Java reads ds.docker.backend-internal-url = env DS_DOCKER_BACKEND_INTERNAL_URL
+# Unity has "Disallow Downloads Over HTTP" ON — must use HTTPS.
+DS_DOCKER_BACKEND_INTERNAL_URL=https://\${VPS_IP}
 DS_PORT_START=7777
 DS_PORT_END=7900
 DS_MAX_PLAYERS=16
