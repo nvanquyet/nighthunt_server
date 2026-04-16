@@ -86,20 +86,21 @@ public class AdminDsController {
 
         var allocation = dsService.allocateServer(region, mapId);
 
-        if (allocation.getDevSecret() == null) {
-            return ApiResponse.error(
-                "devSecret is null — set ds.docker.enabled=false in application.properties for local dev",
-                "CONFIG_ERROR"
-            );
+        // devSecret is only populated in local dev mode (ds.docker.enabled=false).
+        // In production the container self-registers — devSecret is null but allocation still succeeded.
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("serverId",  allocation.getServerId());
+        result.put("port",      allocation.getPort());
+        result.put("status",    allocation.getStatus());
+        result.put("mapId",     mapId);
+        if (allocation.getDevSecret() != null) {
+            result.put("devSecret", allocation.getDevSecret());
+            result.put("hint", "Paste serverId+devSecret into ServerBootstrap Inspector, then press Play in Unity Editor");
+        } else {
+            result.put("devSecret", null);
+            result.put("hint", "Production mode: container is starting and will self-register via /ds/register");
         }
-
-        return ApiResponse.ok(Map.of(
-            "serverId",  allocation.getServerId(),
-            "devSecret", allocation.getDevSecret(),
-            "port",      allocation.getPort(),
-            "mapId",     mapId,
-            "hint",      "Paste serverId+devSecret into ServerBootstrap Inspector, then press Play in Unity Editor"
-        ));
+        return ApiResponse.ok(result);
     }
 
     /**
