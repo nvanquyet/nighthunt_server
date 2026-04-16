@@ -37,6 +37,16 @@ public class ProfileController {
     }
 
     /**
+     * GET /api/profile/{userId}
+     * Returns a public profile card for any player — coins and platform are hidden.
+     * Used by friend list, party panel, and lobby player cards.
+     */
+    @GetMapping("/{userId}")
+    public ApiResponse<ProfileResponse> getPublicProfile(@PathVariable Long userId) {
+        return ApiResponse.ok(profileService.getPublicProfile(userId));
+    }
+
+    /**
      * PUT /api/profile/character
      * Persists the player's chosen character model.
      *

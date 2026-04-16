@@ -34,4 +34,16 @@ public interface ConnectionManager {
      * (client crashed / closed without logout).
      */
     boolean isUserConnected(Long userId);
+
+    /**
+     * Returns the remote IP address (host string only, no port) of the user's
+     * current WebSocket connection, or {@code null} if not connected.
+     *
+     * <p>Used by Custom-game relay to determine the host player's reachable IP
+     * so non-host players can connect directly (direct P2P mode).</p>
+     *
+     * <p>Behind a reverse proxy: Spring resolves the real IP from
+     * {@code X-Forwarded-For} when {@code forward-headers-strategy=native} is set.</p>
+     */
+    String getClientIp(Long userId);
 }

@@ -30,5 +30,4 @@ public class GameModeDTO {
     private boolean isActive;
     @JsonProperty("isDevMode")
     private boolean isDevMode;            // true = dev/test mode, excluded from client-facing API
-    private String  platformFilter;       // ALL | MOBILE | PC — matchmaking platform restriction
 }

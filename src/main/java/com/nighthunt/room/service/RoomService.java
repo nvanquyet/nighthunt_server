@@ -6,7 +6,6 @@ import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.gamemode.service.GameModeService;
-import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
 import com.nighthunt.relay.model.RelaySession;
@@ -52,17 +51,10 @@ public class RoomService {
     private final RelaySessionManager relaySessionManager;
     private final PartyRoomService partyRoomService;
     private final GameModeService gameModeService;
-    private final MatchmakingEntryRepository matchmakingEntryRepository;
     private final Random random = new Random();
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
-        // Mutual exclusion: user must not be in an active ranked matchmaking queue
-        if (matchmakingEntryRepository.existsActiveEntryForUser(userId)) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                    "Cannot create a custom room while queued for ranked matchmaking. Please cancel the queue first.");
-        }
-
         // Validate game mode upfront so invalid modes are rejected at creation time
         gameModeService.validateModeOrThrow(request.getMode());
 
@@ -124,12 +116,6 @@ public class RoomService {
 
     @Transactional
     public RoomResponse joinRoomByCode(Long userId, String roomCode, String password) {
-        // Mutual exclusion: user must not be in an active ranked matchmaking queue
-        if (matchmakingEntryRepository.existsActiveEntryForUser(userId)) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                    "Cannot join a custom room while queued for ranked matchmaking. Please cancel the queue first.");
-        }
-
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
@@ -464,10 +450,17 @@ public class RoomService {
         // Delete all players
         roomPlayerRepository.deleteByRoomId(roomId);
 
+        // Close relay session if one was allocated (Custom_Relay mode)
+        // This releases the UDP port on the relay server immediately.
+        relaySessionManager.getByRoomId(roomId).ifPresent(session -> {
+            log.info("[Room] Disbanding room {} — closing relay session={}", roomId, session.getSessionToken());
+            relaySessionManager.finishSession(session.getSessionToken());
+        });
+
         // Update room status
         room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
         roomRepository.save(room);
-        log.info("Room {} disbanded by owner {}", roomId, ownerId);
+        log.info("[Room] Room {} disbanded by owner {}", roomId, ownerId);
     }
 
     @Transactional
@@ -509,9 +502,14 @@ public class RoomService {
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
 
-        // All custom lobby games use a mini-relay session — dedicated servers are only
-        // used for ranked matches (which go through MatchmakingQueueService, never here).
-        RelaySession relaySession = relaySessionManager.createSession(roomId, room.getMatchId());
+        // ── BE-27: Create relay session for Custom mode ──────────────────────
+        // If the room is a Custom (non-ranked) lobby, spin up a Mini-Relay session
+        // so clients get host/port info via WS game_starting event.
+        RelaySession relaySession = null;
+        // Detect the host player's IP from their active WebSocket connection.
+        // Used as relayHost in direct P2P mode (when relay.host is not configured).
+        String hostPlayerIp = connectionManager.getClientIp(ownerId);
+        relaySession = relaySessionManager.createSession(roomId, room.getMatchId(), hostPlayerIp);
 
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
 

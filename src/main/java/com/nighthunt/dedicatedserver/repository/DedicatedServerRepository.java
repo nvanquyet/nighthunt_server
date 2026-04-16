@@ -45,4 +45,12 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
 
     /** Kiểm tra port đang bị dùng chưa */
     boolean existsByPortAndStatusNot(Integer port, String status);
+
+    /** Tìm DS đang phục vụ một match cụ thể (để reclaim khi match kết thúc). */
+    @Query("""
+        SELECT d FROM DedicatedServer d
+        WHERE d.matchId = :matchId
+          AND d.status IN ('ready', 'in_game', 'starting')
+    """)
+    Optional<DedicatedServer> findActiveByMatchId(@Param("matchId") String matchId);
 }

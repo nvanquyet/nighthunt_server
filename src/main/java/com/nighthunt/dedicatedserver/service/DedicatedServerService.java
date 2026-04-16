@@ -108,12 +108,14 @@ public class DedicatedServerService {
     @Transactional
     public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
                                                          int expectedPlayers, String matchId) {
+        log.info("[DS-Alloc] allocateServerForMatch \u25ba region={} mapId={} expectedPlayers={} matchId={}",
+                region, mapId, expectedPlayers, matchId);
         ServerAllocateResponse response = allocateServer(region, mapId, expectedPlayers);
-        // Persist matchId on the DS record so we can broadcast ds_ready later
         if (matchId != null) {
             dsRepo.findByServerId(response.getServerId()).ifPresent(ds -> {
                 ds.setMatchId(matchId);
                 dsRepo.save(ds);
+                log.info("[DS-Alloc] serverId={} bound to matchId={}", ds.getServerId(), matchId);
             });
         }
         return response;
@@ -128,13 +130,14 @@ public class DedicatedServerService {
      */
     @Transactional
     public boolean notifyGameReady(String serverId, String serverSecret) {
+        log.info("[DS-Svc] game-ready ▶ serverId={}", serverId);
         DedicatedServer server = dsRepo.findByServerId(serverId).orElse(null);
         if (server == null) {
-            log.warn("[DSService] game-ready: unknown serverId={}", serverId);
+            log.warn("[DS-Svc] game-ready: unknown serverId={}", serverId);
             return false;
         }
         if (!bcrypt.matches(serverSecret, server.getServerSecretHash())) {
-            log.warn("[DSService] game-ready: invalid secret for serverId={}", serverId);
+            log.warn("[DS-Svc] game-ready: invalid secret for serverId={}", serverId);
             return false;
         }
 
@@ -144,19 +147,23 @@ public class DedicatedServerService {
 
         String matchId = server.getMatchId();
         if (matchId == null) {
-            log.warn("[DSService] game-ready: serverId={} has no matchId — cannot broadcast ds_ready", serverId);
+            log.warn("[DS-Svc] game-ready: serverId={} has no matchId — cannot broadcast ds_ready", serverId);
             return true; // DS is marked ready but no players to notify
         }
 
         // Find players in the match
         var roomOpt = roomRepository.findByMatchId(matchId);
         if (roomOpt.isEmpty()) {
-            log.warn("[DSService] game-ready: room not found for matchId={}", matchId);
+            log.warn("[DS-Svc] game-ready: room not found for matchId={}", matchId);
             return true;
         }
 
         var room = roomOpt.get();
         List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+
+        List<Long> playerIds = players.stream().map(RoomPlayer::getUserId).toList();
+        log.info("[DS-Svc] game-ready: sending ds_ready to {} players={} dsIp={}:{} matchId={} mapId={}",
+                players.size(), playerIds, server.getIp(), server.getPort(), matchId, server.getMapId());
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("matchId",  matchId);
@@ -165,12 +172,15 @@ public class DedicatedServerService {
         payload.put("mapId",    server.getMapId());
         payload.put("serverId", serverId);
 
+        int sent = 0;
         for (RoomPlayer rp : players) {
             connectionManager.sendToUser(rp.getUserId(), "ds_ready", payload);
+            log.debug("[DS-Svc] ds_ready sent to userId={}", rp.getUserId());
+            sent++;
         }
 
-        log.info("[DSService] game-ready: broadcasted ds_ready to {} players for matchId={} ds={}:{}",
-                players.size(), matchId, server.getIp(), server.getPort());
+        log.info("[DS-Svc] game-ready: ds_ready broadcast complete \u2014 sent={}/{} matchId={} ds={}:{}",
+                sent, players.size(), matchId, server.getIp(), server.getPort());
         return true;
     }
 
@@ -184,13 +194,13 @@ public class DedicatedServerService {
                 .orElse(null);
 
         if (server == null) {
-            log.warn("[DSService] Register: unknown serverId={}", req.getServerId());
+            log.warn("[DS-Svc] Register: unknown serverId={}", req.getServerId());
             return false;
         }
 
         // Verify secret
         if (!bcrypt.matches(req.getServerSecret(), server.getServerSecretHash())) {
-            log.warn("[DSService] Register: invalid secret for serverId={}", req.getServerId());
+            log.warn("[DS-Svc] Register: invalid secret for serverId={}", req.getServerId());
             return false;
         }
 
@@ -199,7 +209,7 @@ public class DedicatedServerService {
         server.setLastHeartbeatAt(LocalDateTime.now());
         dsRepo.save(server);
 
-        log.info("[DSService] Server {} registered → READY on port {}", req.getServerId(), server.getPort());
+        log.info("[DS-Svc] Server {} registered → READY on port {}", req.getServerId(), server.getPort());
         return true;
     }
 
@@ -235,13 +245,13 @@ public class DedicatedServerService {
      */
     public void updateImage(String imageRef) {
         dockerManager.setCurrentImageRef(imageRef);
-        log.info("[DSService] Pulling new image in background: {}", imageRef);
+        log.info("[DS-Svc] Pulling new image in background: {}", imageRef);
         // Pull async để không block HTTP response (compatible với Java 17)
         new Thread(() -> {
             try {
                 dockerManager.pullImage(imageRef);
             } catch (Exception e) {
-                log.error("[DSService] Image pull failed: {}", e.getMessage());
+                log.error("[DS-Svc] Image pull failed: {}", e.getMessage());
             }
         }, "ds-image-pull").start();
     }
@@ -284,7 +294,8 @@ public class DedicatedServerService {
         int    port         = findAvailablePort();
         String secretHash   = bcrypt.encode(serverSecret);
 
-        log.info("[DSService] Spinning up new DS: serverId={}, port={}, mapId={}, expectedPlayers={}", serverId, port, mapId, expectedPlayers);
+        log.info("[DS-Alloc] spinUpNewServer ▶ serverId={} ip={}:{} mapId={} expectedPlayers={} region={}",
+                serverId, vpsPublicIp, port, mapId, expectedPlayers, region);
 
         DedicatedServer server = dsRepo.save(DedicatedServer.builder()
                 .serverId(serverId)
@@ -298,6 +309,7 @@ public class DedicatedServerService {
                 .serverSecretHash(secretHash)
                 .build());
 
+        log.info("[DS-Alloc] DS entity saved (status=starting) — starting Docker container...");
         String returnedSecret = null;
 
         try {
@@ -307,10 +319,12 @@ public class DedicatedServerService {
 
             if ("local-dev-no-container".equals(containerId)) {
                 returnedSecret = serverSecret;
+                log.info("[DS-Alloc] DEV MODE — no Docker container; devSecret returned for manual /ds/register call.");
+            } else {
+                log.info("[DS-Alloc] Docker container started: containerId={}", containerId);
             }
-            log.info("[DSService] Container record saved: {}", containerId);
         } catch (Exception e) {
-            log.error("[DSService] Failed to start container: {}", e.getMessage());
+            log.error("[DS-Alloc] FAILED to start Docker container: {}", e.getMessage(), e);
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
@@ -331,6 +345,38 @@ public class DedicatedServerService {
 
     // ── Scheduled Cleanup ─────────────────────────────────────────────────────
 
+    /**
+     * Reclaim (stop + mark stopped) the DS container that was serving {@code matchId}.
+     *
+     * <p>Called by {@code MatchResultService} immediately after the match-end payload is
+     * persisted and the {@code match_ended} WS event is broadcast.  This ensures the
+     * container is released as soon as the game ends rather than waiting for the
+     * heartbeat watchdog (which runs every 60–120 s).</p>
+     *
+     * <p>Safe to call even if no DS is associated with the match (relay / custom games).</p>
+     */
+    @Transactional
+    public void reclaimServerForMatch(String matchId) {
+        if (matchId == null || matchId.isBlank()) return;
+
+        dsRepo.findActiveByMatchId(matchId).ifPresentOrElse(server -> {
+            log.info("[DS-Reclaim] Stopping DS container for matchId={} serverId={} containerId={}",
+                    matchId, server.getServerId(), server.getDockerContainerId());
+
+            // Stop Docker container (--rm flag auto-removes it afterwards)
+            dockerManager.stopContainer(server.getDockerContainerId());
+
+            server.setStatus("stopped");
+            server.setStoppedAt(LocalDateTime.now());
+            dsRepo.save(server);
+
+            log.info("[DS-Reclaim] DS container stopped and DB marked STOPPED — serverId={} matchId={}",
+                    server.getServerId(), matchId);
+        }, () ->
+            log.debug("[DS-Reclaim] No active DS found for matchId={} (relay/custom mode or already stopped)", matchId)
+        );
+    }
+
     /** Mỗi 2 phút: cleanup servers bị treo khi starting > 3 phút */
     @Scheduled(fixedDelay = 120_000)
     @Transactional
@@ -339,7 +385,7 @@ public class DedicatedServerService {
         var staleServers = dsRepo.findStaleStarting(cutoff);
 
         for (DedicatedServer server : staleServers) {
-            log.warn("[DSService] Cleaning stale starting server: {}", server.getServerId());
+            log.warn("[DS-Svc] Cleaning stale starting server: {}", server.getServerId());
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
@@ -355,7 +401,7 @@ public class DedicatedServerService {
         var deadServers = dsRepo.findDeadServers(cutoff);
 
         for (DedicatedServer server : deadServers) {
-            log.warn("[DSService] Cleaning dead server (no heartbeat): {}", server.getServerId());
+            log.warn("[DS-Svc] Cleaning dead server (no heartbeat): {}", server.getServerId());
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());

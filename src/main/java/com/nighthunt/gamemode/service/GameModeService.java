@@ -211,7 +211,6 @@ public class GameModeService {
         if (req.displayOrder     != null) gm.setDisplayOrder(req.displayOrder);
         if (req.displayName      != null) gm.setDisplayName(req.displayName);
         if (req.description      != null) gm.setDescription(req.description);
-        if (req.platformFilter    != null) gm.setPlatformFilter(req.platformFilter);
 
         log.info("[AdminConfig] patchMode {} → {}", modeKey, req);
         return toGameModeDTO(gameModeRepository.save(gm));
@@ -226,7 +225,6 @@ public class GameModeService {
         public Integer displayOrder;
         public String  displayName;
         public String  description;
-        public String  platformFilter;
 
         @Override public String toString() {
             return "PatchGameModeRequest{status=" + modeStatus
@@ -256,7 +254,6 @@ public class GameModeService {
                 .displayOrder(gameMode.getDisplayOrder())
                 .isActive(gameMode.isActive())
                 .isDevMode(gameMode.isDevMode())
-                .platformFilter(gameMode.getPlatformFilter())
                 .build();
     }
 }

@@ -106,6 +106,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         );
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                // Inject userId into MDC for structured log output
+                MdcLoggingFilter.setUserId(userId);
             }
 
             filterChain.doFilter(request, response);

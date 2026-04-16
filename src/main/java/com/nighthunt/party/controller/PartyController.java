@@ -180,6 +180,28 @@ public class PartyController {
     }
 
     /**
+     * POST /api/party/transfer-leader
+     * Transfer party leadership to another member (host only).
+     *
+     * Request body: { "newLeaderId": 123 }
+     * Response: Updated PartyDTO
+     */
+    @PostMapping("/transfer-leader")
+    public ApiResponse<PartyDTO> transferLeader(@RequestBody TransferLeaderRequest request) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        return ApiResponse.ok(partyService.transferLeader(userId, request.getNewLeaderId()));
+    }
+
+    /**
+     * Request DTO for transfer-leader.
+     */
+    @lombok.Data
+    public static class TransferLeaderRequest {
+        private Long newLeaderId;
+    }
+
+    /**
      * POST /api/party/disband
      * Disband the party (host only).
      * 
