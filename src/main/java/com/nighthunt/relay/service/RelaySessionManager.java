@@ -39,7 +39,7 @@ import java.util.concurrent.ConcurrentMap;
 public class RelaySessionManager {
 
     /** How many hours before an inactive relay session auto-expires. */
-    @Value("${relay.session.ttl-hours:2}")
+    @Value("${RELAY_SESSION_TTL_HOURS:2}")
     private int ttlHours;
 
     /**
@@ -47,15 +47,15 @@ public class RelaySessionManager {
      * Example: {@code http://nighthunt-relay:7776}
      * If blank, falls back to single-port direct-IP mode (LAN / port-forward only).
      */
-    @Value("${relay.server.url:}")
+    @Value("${RELAY_SERVER_URL:}")
     private String relayServerUrl;
 
     /** Public IP / hostname of the relay server (sent to clients as relayHost). */
-    @Value("${relay.host:}")
+    @Value("${RELAY_HOST:}")
     private String configuredRelayHost;
 
     /** Fallback port used in single-port direct-IP mode (no relay server). */
-    @Value("${relay.port:7777}")
+    @Value("${RELAY_PORT:7777}")
     private int defaultRelayPort;
 
     /** sessionToken → RelaySession */

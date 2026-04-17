@@ -23,13 +23,13 @@ import java.util.List;
 @Slf4j
 public class DockerManagerService {
 
-    @Value("${ds.docker.image-ref:ghcr.io/nvanquyet/nighthunt-ds:latest}")
+    @Value("${DS_IMAGE_REF:ghcr.io/nvanquyet/nighthunt-ds:latest}")
     private String defaultImageRef;
 
-    @Value("${ds.docker.backend-internal-url:http://backend:8080}")
+    @Value("${DS_BACKEND_INTERNAL_URL:http://nighthunt-backend:8080}")
     private String backendInternalUrl;
 
-    @Value("${ds.docker.max-memory-mb:512}")
+    @Value("${DS_MAX_MEMORY_MB:512}")
     private int maxMemoryMb;
 
     /**
@@ -37,13 +37,13 @@ public class DockerManagerService {
      * DS flow vẫn tạo DB record bình thường.
      * Developer tự gọi POST /api/ds/register để simulate DS boot.
      */
-    @Value("${ds.docker.enabled:true}")
+    @Value("${DS_DOCKER_ENABLED:true}")
     private boolean dockerEnabled;
 
-    @Value("${ds.docker.ghcr-token:}")
+    @Value("${GHCR_TOKEN:}")
     private String ghcrToken;
 
-    @Value("${ds.docker.ghcr-owner:}")
+    @Value("${GHCR_OWNER:}")
     private String ghcrOwner;
 
     // Đây là imageRef hiện tại - được cập nhật khi CI/CD push image mới

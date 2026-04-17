@@ -43,16 +43,16 @@ public class DedicatedServerService {
 
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
 
-    @Value("${ds.vps.public-ip:127.0.0.1}")
+    @Value("${VPS_PUBLIC_IP:127.0.0.1}")
     private String vpsPublicIp;
 
-    @Value("${ds.port.start:7777}")
+    @Value("${DS_PORT_START:7777}")
     private int portStart;
 
-    @Value("${ds.port.end:7900}")
+    @Value("${DS_PORT_END:7900}")
     private int portEnd;
 
-    @Value("${ds.max-players:16}")
+    @Value("${DS_MAX_PLAYERS:16}")
     private int defaultMaxPlayers;
 
     // Redis key prefix cho session tokens
