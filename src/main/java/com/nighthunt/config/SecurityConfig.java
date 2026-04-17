@@ -65,6 +65,8 @@ public class SecurityConfig {
                 .requestMatchers("/match/end/ranked").permitAll()
                 // Admin dashboard API (validates X-Admin-Secret internally)
                 .requestMatchers("/admin/**").permitAll()
+                // Relay health probe — no auth needed (smoke test + monitoring)
+                .requestMatchers("/relay/health").permitAll()
                 // Public game config endpoints — client fetches these at startup (may be before auth)
                 .requestMatchers("/maps/**", "/game-modes/**").permitAll()
                 // Matchmaking cần JWT (user phải login trước)
