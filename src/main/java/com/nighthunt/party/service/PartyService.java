@@ -66,7 +66,7 @@ public class PartyService {
         
         // Validate: User is not already in a party
         if (partyMemberRepository.existsByUserId(hostUserId)) {
-            throw new BusinessException("PARTY_ALREADY_IN_PARTY", "You are already in a party");
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY, "You are already in a party");
         }
 
         // Create party
@@ -112,29 +112,35 @@ public class PartyService {
         
         // Validate: Inviter is in a party
         PartyMember inviterMember = partyMemberRepository.findByUserId(inviterUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(inviterMember.getPartyId());
         
+        // Validate: Party must be IDLE (not in queue or in room)
+        if (!"IDLE".equals(party.getPartyStatus())) {
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, 
+                    "Cannot invite while party is " + party.getPartyStatus());
+        }
+
         // Validate: Party is not full
         long memberCount = partyMemberRepository.countByPartyId(party.getId());
         if (memberCount >= party.getMaxMembers()) {
-            throw new BusinessException("PARTY_FULL", "Party is full");
+            throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
         // Validate: Invitee is not already in a party
         if (partyMemberRepository.existsByUserId(inviteeUserId)) {
-            throw new BusinessException("PARTY_USER_ALREADY_IN_PARTY", "User is already in a party");
+            throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in a party");
         }
 
         // Validate: No pending invitation exists
         if (partyInvitationRepository.hasPendingInvitation(party.getId(), inviteeUserId)) {
-            throw new BusinessException("PARTY_INVITATION_EXISTS", "Invitation already sent to this user");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_EXISTS, "Invitation already sent to this user");
         }
 
         // Validate: Invitee has not blocked inviter
         if (blockedUserRepository.existsByBlockerUserIdAndBlockedUserId(inviteeUserId, inviterUserId)) {
-            throw new BusinessException("PARTY_INVITATION_BLOCKED", "Cannot invite this user");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_BLOCKED, "Cannot invite this user");
         }
 
         // Create invitation
@@ -171,12 +177,12 @@ public class PartyService {
         
         // Validate: User is the invitee
         if (!invitation.getInviteeUserId().equals(inviteeUserId)) {
-            throw new BusinessException("PARTY_INVITATION_NOT_FOR_YOU", "This invitation is not for you");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_FOR_YOU, "This invitation is not for you");
         }
 
         // Validate: Invitation is pending
         if (!"PENDING".equals(invitation.getInvitationStatus())) {
-            throw new BusinessException("PARTY_INVITATION_NOT_PENDING", "Invitation is not pending");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_PENDING, "Invitation is not pending");
         }
 
         // Validate: Invitation has not expired
@@ -186,25 +192,25 @@ public class PartyService {
             // Notify both sides so they can clean up UI.
             messageBrokerService.publishPartyInvitationExpired(
                 invitation.getPartyId(), invitation.getInviterUserId(), invitation.getInviteeUserId(), invitation.getId());
-            throw new BusinessException("PARTY_INVITATION_EXPIRED", "Invitation has expired");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_EXPIRED, "Invitation has expired");
         }
 
         Party party = findParty(invitation.getPartyId());
         
         // Validate: Party still exists and is not disbanded
         if ("DISBANDED".equals(party.getPartyStatus())) {
-            throw new BusinessException("PARTY_DISBANDED", "Party has been disbanded");
+            throw new BusinessException(ErrorCodes.PARTY_DISBANDED, "Party has been disbanded");
         }
 
         // Validate: User is not already in a party
         if (partyMemberRepository.existsByUserId(inviteeUserId)) {
-            throw new BusinessException("PARTY_ALREADY_IN_PARTY", "You are already in a party");
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY, "You are already in a party");
         }
 
         // Validate: Party is not full
         long memberCount = partyMemberRepository.countByPartyId(party.getId());
         if (memberCount >= party.getMaxMembers()) {
-            throw new BusinessException("PARTY_FULL", "Party is full");
+            throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
         // Add user to party
@@ -247,12 +253,12 @@ public class PartyService {
 
         // Validate: User is the inviter
         if (!invitation.getInviterUserId().equals(inviterUserId)) {
-            throw new BusinessException("PARTY_INVITATION_NOT_YOURS", "You did not send this invitation");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_YOURS, "You did not send this invitation");
         }
 
         // Validate: Invitation is pending
         if (!"PENDING".equals(invitation.getInvitationStatus())) {
-            throw new BusinessException("PARTY_INVITATION_NOT_PENDING", "Invitation is not pending");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_PENDING, "Invitation is not pending");
         }
 
         invitation.setInvitationStatus("CANCELLED");
@@ -274,12 +280,12 @@ public class PartyService {
         
         // Validate: User is the invitee
         if (!invitation.getInviteeUserId().equals(inviteeUserId)) {
-            throw new BusinessException("PARTY_INVITATION_NOT_FOR_YOU", "This invitation is not for you");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_FOR_YOU, "This invitation is not for you");
         }
 
         // Validate: Invitation is pending
         if (!"PENDING".equals(invitation.getInvitationStatus())) {
-            throw new BusinessException("PARTY_INVITATION_NOT_PENDING", "Invitation is not pending");
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_PENDING, "Invitation is not pending");
         }
 
         // Update invitation status
@@ -318,7 +324,7 @@ public class PartyService {
     @Transactional(readOnly = true)
     public PartyDTO getCurrentParty(Long userId) {
         PartyMember member = partyMemberRepository.findByUserId(userId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(member.getPartyId());
         return toPartyDTO(party);
@@ -330,7 +336,7 @@ public class PartyService {
     @Transactional
     public void leaveParty(Long userId) {
         PartyMember member = partyMemberRepository.findByUserId(userId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(member.getPartyId());
         
@@ -349,23 +355,23 @@ public class PartyService {
     @Transactional
     public void kickMember(Long hostUserId, Long kickedUserId) {
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(hostMember.getPartyId());
         
         // Validate: User is the host
         if (!party.getHostUserId().equals(hostUserId)) {
-            throw new BusinessException("PARTY_NOT_HOST", "Only host can kick members");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can kick members");
         }
 
         // Validate: Cannot kick self
         if (hostUserId.equals(kickedUserId)) {
-            throw new BusinessException("PARTY_CANNOT_KICK_SELF", "Cannot kick yourself (use leave instead)");
+            throw new BusinessException(ErrorCodes.PARTY_CANNOT_KICK_SELF, "Cannot kick yourself (use leave instead)");
         }
 
         // Validate: Kicked user is in the party
         if (!partyMemberRepository.existsByPartyIdAndUserId(party.getId(), kickedUserId)) {
-            throw new BusinessException("PARTY_USER_NOT_IN_PARTY", "User is not in this party");
+            throw new BusinessException(ErrorCodes.PARTY_USER_NOT_IN_PARTY, "User is not in this party");
         }
 
         // Remove member
@@ -384,23 +390,23 @@ public class PartyService {
     @Transactional
     public PartyDTO transferLeader(Long hostUserId, Long newHostUserId) {
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
 
         Party party = findParty(hostMember.getPartyId());
 
         // Validate: caller is current host
         if (!party.getHostUserId().equals(hostUserId)) {
-            throw new BusinessException("PARTY_NOT_HOST", "Only the host can transfer leadership");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only the host can transfer leadership");
         }
 
         // Validate: cannot transfer to self
         if (hostUserId.equals(newHostUserId)) {
-            throw new BusinessException("PARTY_TRANSFER_SAME_USER", "Cannot transfer leadership to yourself");
+            throw new BusinessException(ErrorCodes.PARTY_TRANSFER_SAME_USER, "Cannot transfer leadership to yourself");
         }
 
         // Validate: target is in the party
         if (!partyMemberRepository.existsByPartyIdAndUserId(party.getId(), newHostUserId)) {
-            throw new BusinessException("PARTY_USER_NOT_IN_PARTY", "Target user is not in this party");
+            throw new BusinessException(ErrorCodes.PARTY_USER_NOT_IN_PARTY, "Target user is not in this party");
         }
 
         Long oldHostUserId = party.getHostUserId();
@@ -419,13 +425,13 @@ public class PartyService {
     @Transactional
     public void disbandParty(Long hostUserId) {
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(hostMember.getPartyId());
         
         // Validate: User is the host
         if (!party.getHostUserId().equals(hostUserId)) {
-            throw new BusinessException("PARTY_NOT_HOST", "Only host can disband party");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can disband party");
         }
 
         // Disband party
@@ -544,9 +550,10 @@ public class PartyService {
     private PartyMemberDTO toPartyMemberDTO(PartyMember member) {
         User user = findUser(member.getUserId());
         
-        PartyMember hostMember = partyMemberRepository.findByPartyIdAndUserId(member.getPartyId(), member.getUserId())
-                .orElse(null);
-        boolean isHost = hostMember != null && hostMember.getJoinOrder() == 0;
+        // Determine isHost by checking party.hostUserId, not joinOrder
+        // (joinOrder == 0 is the original host, but leadership can transfer)
+        Party party = partyRepository.findById(member.getPartyId()).orElse(null);
+        boolean isHost = party != null && member.getUserId().equals(party.getHostUserId());
         
         return PartyMemberDTO.builder()
                 .userId(user.getId())
@@ -585,11 +592,11 @@ public class PartyService {
 
     private Party findParty(Long partyId) {
         return partyRepository.findById(partyId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_FOUND", "Party not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_FOUND, "Party not found"));
     }
 
     private PartyInvitation findInvitation(Long invitationId) {
         return partyInvitationRepository.findById(invitationId)
-                .orElseThrow(() -> new BusinessException("PARTY_INVITATION_NOT_FOUND", "Invitation not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_FOUND, "Invitation not found"));
     }
 }

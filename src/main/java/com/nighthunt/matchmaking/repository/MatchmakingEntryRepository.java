@@ -39,4 +39,12 @@ public interface MatchmakingEntryRepository extends JpaRepository<MatchmakingEnt
     /** Count of SEARCHING entries grouped by gameMode — returns [gameMode, count] pairs. */
     @Query("SELECT m.gameMode, COUNT(m) FROM MatchmakingEntry m WHERE m.status = 'SEARCHING' GROUP BY m.gameMode")
     List<Object[]> countSearchingByMode();
+
+    /** SEARCHING entries queued before the given threshold (for ELO-range expansion). */
+    @Query("""
+            SELECT m FROM MatchmakingEntry m
+            WHERE m.status   = 'SEARCHING'
+              AND m.queuedAt < :threshold
+            """)
+    List<MatchmakingEntry> findSearchingQueuedBefore(@Param("threshold") java.time.LocalDateTime threshold);
 }

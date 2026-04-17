@@ -1,6 +1,7 @@
 package com.nighthunt.party.service;
 
 import com.nighthunt.common.exception.BusinessException;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.matchmaking.service.MatchmakingQueueService;
 import com.nighthunt.messaging.service.MessageBrokerService;
@@ -53,23 +54,23 @@ public class PartyMatchmakingService {
     public void queueParty(Long hostUserId, PartyMatchmakingRequest request) {
         // Find host's party
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(hostMember.getPartyId());
         
         // Validate: User is the host
         if (!party.getHostUserId().equals(hostUserId)) {
-            throw new BusinessException("PARTY_NOT_HOST", "Only host can start matchmaking");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can start matchmaking");
         }
 
         // Validate: Party is not already in queue
         if ("IN_QUEUE".equals(party.getPartyStatus())) {
-            throw new BusinessException("PARTY_ALREADY_IN_QUEUE", "Party is already in matchmaking queue");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, "Party is already in matchmaking queue");
         }
 
         // Validate: Game mode is available
         if (!gameModeService.isGameModeAvailable(request.getGameMode())) {
-            throw new BusinessException("GAME_MODE_NOT_AVAILABLE", "Game mode is not available: " + request.getGameMode());
+            throw new BusinessException(ErrorCodes.DS_GAME_MODE_UNAVAILABLE, "Game mode is not available: " + request.getGameMode());
         }
 
         // Get game mode info
@@ -81,14 +82,14 @@ public class PartyMatchmakingService {
 
         // Validate party size
         if (partySize > playersPerTeam) {
-            throw new BusinessException("PARTY_TOO_LARGE", 
+            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH, 
                 String.format("Party size (%d) exceeds team size (%d) for %s", 
                     partySize, playersPerTeam, request.getGameMode()));
         }
 
         // If fill option disabled, party must be full team
         if (!request.isAllowFill() && partySize < playersPerTeam) {
-            throw new BusinessException("PARTY_NOT_FULL_TEAM", 
+            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH, 
                 String.format("Party must have %d players for %s (no fill)", 
                     playersPerTeam, request.getGameMode()));
         }
@@ -117,13 +118,13 @@ public class PartyMatchmakingService {
     @Transactional
     public void cancelQueue(Long userId) {
         PartyMember member = partyMemberRepository.findByUserId(userId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(member.getPartyId());
         
         // Only allow if party is in queue
         if (!"IN_QUEUE".equals(party.getPartyStatus())) {
-            throw new BusinessException("PARTY_NOT_IN_QUEUE", "Party is not in matchmaking queue");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, "Party is not in matchmaking queue");
         }
 
         // Dequeue all members
@@ -172,6 +173,6 @@ public class PartyMatchmakingService {
 
     private Party findParty(Long partyId) {
         return partyRepository.findById(partyId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_FOUND", "Party not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_FOUND, "Party not found"));
     }
 }

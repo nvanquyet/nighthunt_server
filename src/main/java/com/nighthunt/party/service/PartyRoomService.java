@@ -1,6 +1,7 @@
 package com.nighthunt.party.service;
 
 import com.nighthunt.common.exception.BusinessException;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.party.entity.Party;
@@ -9,6 +10,7 @@ import com.nighthunt.party.repository.PartyMemberRepository;
 import com.nighthunt.party.repository.PartyRepository;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.room.service.RoomService;
+import com.nighthunt.room.repository.RoomPlayerRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -32,6 +34,7 @@ public class PartyRoomService {
     private final PartyRepository partyRepository;
     private final PartyMemberRepository partyMemberRepository;
     private final RoomService roomService;
+    private final RoomPlayerRepository roomPlayerRepository;
     private final PlayerStatusService playerStatusService;
     private final MessageBrokerService messageBrokerService;
 
@@ -39,11 +42,13 @@ public class PartyRoomService {
             PartyRepository partyRepository,
             PartyMemberRepository partyMemberRepository,
             @Lazy RoomService roomService,
+            RoomPlayerRepository roomPlayerRepository,
             PlayerStatusService playerStatusService,
             MessageBrokerService messageBrokerService) {
         this.partyRepository = partyRepository;
         this.partyMemberRepository = partyMemberRepository;
         this.roomService = roomService;
+        this.roomPlayerRepository = roomPlayerRepository;
         this.playerStatusService = playerStatusService;
         this.messageBrokerService = messageBrokerService;
     }
@@ -61,18 +66,18 @@ public class PartyRoomService {
     public RoomResponse joinRoomWithParty(Long hostUserId, String roomCode, String password) {
         // Find host's party
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
         Party party = findParty(hostMember.getPartyId());
         
         // Validate: User is the host
         if (!party.getHostUserId().equals(hostUserId)) {
-            throw new BusinessException("PARTY_NOT_HOST", "Only host can join room with party");
+            throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can join room with party");
         }
 
         // Validate: Party is idle (not in queue or already in room)
         if (!"IDLE".equals(party.getPartyStatus())) {
-            throw new BusinessException("PARTY_NOT_IDLE", 
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, 
                 "Party must be idle to join room (current status: " + party.getPartyStatus() + ")");
         }
 
@@ -143,7 +148,8 @@ public class PartyRoomService {
     }
 
     /**
-     * Clear party room status when leaving custom lobby.
+     * Clear party room status when a member leaves the custom lobby.
+     * Only resets party status to IDLE when NO party members remain in the room.
      */
     @Transactional
     public void clearPartyRoomStatus(Long userId) {
@@ -153,19 +159,28 @@ public class PartyRoomService {
         Party party = partyRepository.findById(member.getPartyId()).orElse(null);
         if (party == null) return;
         
-        // Check if any other members are still in the room
-        List<Long> memberIds = partyMemberRepository.findUserIdsByPartyId(party.getId());
-        // For simplicity, just clear party room status
-        
-        party.setCurrentRoomId(null);
-        party.setPartyStatus("IDLE");
-        partyRepository.save(party);
-        
-        // Clear user's current room
+        // Clear this user's current room
         playerStatusService.updateCurrentRoom(userId, null);
         
-        // Publish party status change event
-        messageBrokerService.publishPartyStatusChanged(party.getId(), "IN_ROOM", "IDLE");
+        // Only reset party status if NO other party members are still in the room
+        Long currentRoomId = party.getCurrentRoomId();
+        if (currentRoomId != null) {
+            List<Long> memberIds = partyMemberRepository.findUserIdsByPartyId(party.getId());
+            boolean anyMemberStillInRoom = memberIds.stream()
+                    .filter(id -> !id.equals(userId))
+                    .anyMatch(id -> roomPlayerRepository.findByRoomIdAndUserId(currentRoomId, id).isPresent());
+            
+            if (!anyMemberStillInRoom) {
+                String oldStatus = party.getPartyStatus();
+                party.setCurrentRoomId(null);
+                party.setPartyStatus("IDLE");
+                partyRepository.save(party);
+                messageBrokerService.publishPartyStatusChanged(party.getId(), oldStatus, "IDLE");
+                log.info("Party {} reset to IDLE — no members remain in room {}", party.getId(), currentRoomId);
+            } else {
+                log.debug("Party {} still has members in room {} — keeping IN_ROOM status", party.getId(), currentRoomId);
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -174,6 +189,6 @@ public class PartyRoomService {
 
     private Party findParty(Long partyId) {
         return partyRepository.findById(partyId)
-                .orElseThrow(() -> new BusinessException("PARTY_NOT_FOUND", "Party not found"));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_FOUND, "Party not found"));
     }
 }

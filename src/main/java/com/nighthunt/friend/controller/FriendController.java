@@ -1,6 +1,7 @@
 package com.nighthunt.friend.controller;
 
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.friend.dto.AddFriendRequest;
 import com.nighthunt.friend.dto.FriendDTO;
 import com.nighthunt.friend.dto.FriendRequestDTO;
@@ -39,7 +40,7 @@ public class FriendController {
     @GetMapping
     public ApiResponse<List<FriendDTO>> getFriends() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.getFriends(userId));
     }
@@ -58,7 +59,7 @@ public class FriendController {
     @PostMapping("/requests")
     public ApiResponse<FriendRequestDTO> sendFriendRequest(@Valid @RequestBody AddFriendRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.sendFriendRequest(userId, request));
     }
@@ -72,7 +73,7 @@ public class FriendController {
     @GetMapping("/requests/incoming")
     public ApiResponse<List<FriendRequestDTO>> getIncomingRequests() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.getIncomingRequests(userId));
     }
@@ -86,7 +87,7 @@ public class FriendController {
     @GetMapping("/requests/outgoing")
     public ApiResponse<List<FriendRequestDTO>> getOutgoingRequests() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.getOutgoingRequests(userId));
     }
@@ -101,7 +102,7 @@ public class FriendController {
     @PostMapping("/requests/{requestId}/accept")
     public ApiResponse<FriendDTO> acceptFriendRequest(@PathVariable Long requestId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.acceptFriendRequest(userId, requestId));
     }
@@ -116,7 +117,7 @@ public class FriendController {
     @PostMapping("/requests/{requestId}/decline")
     public ApiResponse<Void> declineFriendRequest(@PathVariable Long requestId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         friendService.declineFriendRequest(userId, requestId);
         return ApiResponse.okMessage("Friend request declined");
@@ -132,7 +133,7 @@ public class FriendController {
     @DeleteMapping("/requests/{requestId}")
     public ApiResponse<Void> cancelFriendRequest(@PathVariable Long requestId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         friendService.cancelFriendRequest(userId, requestId);
         return ApiResponse.okMessage("Friend request cancelled");
@@ -152,7 +153,7 @@ public class FriendController {
     @DeleteMapping("/{friendUserId}")
     public ApiResponse<Void> removeFriend(@PathVariable Long friendUserId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         friendService.removeFriend(userId, friendUserId);
         return ApiResponse.okMessage("Friend removed");
@@ -175,7 +176,7 @@ public class FriendController {
     @PostMapping("/block/{blockedUserId}")
     public ApiResponse<Void> blockUser(@PathVariable Long blockedUserId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         friendService.blockUser(userId, blockedUserId);
         return ApiResponse.okMessage("User blocked");
@@ -191,7 +192,7 @@ public class FriendController {
     @DeleteMapping("/block/{blockedUserId}")
     public ApiResponse<Void> unblockUser(@PathVariable Long blockedUserId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         friendService.unblockUser(userId, blockedUserId);
         return ApiResponse.okMessage("User unblocked");
@@ -206,7 +207,7 @@ public class FriendController {
     @GetMapping("/blocked")
     public ApiResponse<List<Long>> getBlockedUsers() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(friendService.getBlockedUsers(userId));
     }

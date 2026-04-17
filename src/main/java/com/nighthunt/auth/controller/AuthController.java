@@ -3,6 +3,7 @@ package com.nighthunt.auth.controller;
 import com.nighthunt.auth.dto.*;
 import com.nighthunt.auth.service.AuthService;
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.security.util.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -47,7 +48,7 @@ public class AuthController {
     public ApiResponse<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         authService.changePassword(userId, request);
         return ApiResponse.ok();
@@ -60,7 +61,7 @@ public class AuthController {
     public ApiResponse<Void> logout() {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         authService.logout(userId);
         return ApiResponse.ok();
@@ -74,7 +75,7 @@ public class AuthController {
     public ApiResponse<Void> checkSession() {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         // If we get here, session is valid (JWT filter already validated)
         return ApiResponse.ok();

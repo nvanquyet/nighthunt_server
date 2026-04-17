@@ -28,7 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Random;
+import java.security.SecureRandom;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -51,12 +51,18 @@ public class RoomService {
     private final RelaySessionManager relaySessionManager;
     private final PartyRoomService partyRoomService;
     private final GameModeService gameModeService;
-    private final Random random = new Random();
+    private final SecureRandom random = new SecureRandom();
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
         // Validate game mode upfront so invalid modes are rejected at creation time
         gameModeService.validateModeOrThrow(request.getMode());
+
+        // Prevent creating a room if already in one
+        if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
+                    "You are already in an active room. Leave it first.");
+        }
 
         // Generate match ID and join token
         String matchId = UUID.randomUUID().toString();
@@ -116,13 +122,22 @@ public class RoomService {
 
     @Transactional
     public RoomResponse joinRoomByCode(Long userId, String roomCode, String password) {
+        // Prevent joining if already in another room
+        if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
+                    "You are already in an active room. Leave it first.");
+        }
+
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
 
         // Check password if room has one
         if (room.getPassword() != null && !room.getPassword().isEmpty()) {
-            if (password == null || password.isEmpty() || !room.getPassword().equals(password)) {
+            if (password == null || password.isEmpty()
+                    || !java.security.MessageDigest.isEqual(
+                        room.getPassword().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        password.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
                 throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
                         "Room password is required or incorrect");
             }
@@ -182,6 +197,12 @@ public class RoomService {
 
     @Transactional
     public RoomResponse quickPlay(Long userId, QuickPlayRequest request) {
+        // Prevent quick play if already in a room
+        if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
+                    "You are already in an active room. Leave it first.");
+        }
+
         // Find available public rooms
         List<Room> availableRooms = roomRepository.findAvailablePublicRooms(GameConstants.ROOM_STATUS_WAITING);
         
@@ -378,23 +399,23 @@ public class RoomService {
             log.warn("Failed to clear party room status for user {}: {}", userId, e.getMessage());
         }
         
-        // Broadcast player left event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
         connectionManager.updateUserRoom(userId, null);
 
-        // Handle owner transfer or room disband
+        // Handle owner transfer or room disband BEFORE broadcasting
         if (room.getOwnerId().equals(userId)) {
             List<RoomPlayer> remainingPlayers = roomPlayerRepository.findByRoomId(roomId);
             if (remainingPlayers.isEmpty()) {
-                // Disband room
                 disbandRoom(roomId, userId);
+                return;
             } else {
-                // Transfer ownership
                 RoomPlayer newOwner = remainingPlayers.get(0);
                 room.setOwnerId(newOwner.getUserId());
                 roomRepository.save(room);
             }
         }
+
+        // Broadcast AFTER ownership is resolved so clients get the correct owner
+        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
     }
 
     @Transactional
@@ -498,7 +519,8 @@ public class RoomService {
         log.info("Game starting for room {} (code: {}, matchId: {}, mode: {}, players: {})",
                 roomId, room.getRoomCode(), room.getMatchId(), room.getMode(), currentPlayerCount);
 
-        // Update room status
+        // Capture old status before updating
+        String oldStatus = room.getStatus();
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
 
@@ -529,7 +551,7 @@ public class RoomService {
         connectionManager.broadcastToRoom(roomId, "room_status_changed", response);
 
         // Publish event via Message Broker
-        messageBroker.publishRoomStatusChanged(roomId, room.getStatus(), GameConstants.ROOM_STATUS_IN_GAME);
+        messageBroker.publishRoomStatusChanged(roomId, oldStatus, GameConstants.ROOM_STATUS_IN_GAME);
         
         return response;
     }
@@ -628,7 +650,7 @@ public class RoomService {
         // Check if there's already a pending request
         swapRequestRepository.findPendingRequest(roomId, userId, targetUserId)
                 .ifPresent(existing -> {
-                    throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                    throw new BusinessException(ErrorCodes.ROOM_SWAP_REQUEST_PENDING,
                             "Swap request already pending");
                 });
 
@@ -672,25 +694,25 @@ public class RoomService {
                         "Room not found"));
 
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                         "Swap request not found"));
 
         // Verify user is the target
         if (!swapRequest.getTargetId().equals(userId)) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_OWNER,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                     "You are not the target of this swap request");
         }
 
         if (!"PENDING".equals(swapRequest.getStatus())) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
                     "Swap request is no longer pending");
         }
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
-            swapRequest.setStatus("REJECTED");
+            swapRequest.setStatus("EXPIRED");
             swapRequestRepository.save(swapRequest);
-            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                    "Swap request is no longer pending");
+            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "EXPIRED"));
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
+                    "Swap request has expired");
         }
 
         // Get both players
@@ -793,25 +815,25 @@ public class RoomService {
     @Transactional
     public void rejectSwapRequest(Long userId, Long roomId, Long requestId) {
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                         "Swap request not found"));
 
         // Verify user is the target
         if (!swapRequest.getTargetId().equals(userId)) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_OWNER,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                     "You are not the target of this swap request");
         }
 
         if (!"PENDING".equals(swapRequest.getStatus())) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
                     "Swap request is no longer pending");
         }
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
-            swapRequest.setStatus("REJECTED");
+            swapRequest.setStatus("EXPIRED");
             swapRequestRepository.save(swapRequest);
-            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                    "Swap request is no longer pending");
+            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "EXPIRED"));
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
+                    "Swap request has expired");
         }
 
         swapRequest.setStatus("REJECTED");
@@ -827,25 +849,25 @@ public class RoomService {
     @Transactional
     public void cancelSwapRequest(Long userId, Long roomId, Long requestId) {
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_REQUESTER,
                         "Swap request not found"));
 
         // Verify user is the requester
         if (!swapRequest.getRequesterId().equals(userId)) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_OWNER,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_NOT_REQUESTER,
                     "You are not the requester of this swap request");
         }
 
         if (!"PENDING".equals(swapRequest.getStatus())) {
-            throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+            throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
                     "Swap request is no longer pending");
         }
 
-        swapRequest.setStatus("REJECTED"); // Use REJECTED status for cancelled requests
+        swapRequest.setStatus("CANCELLED");
         swapRequestRepository.save(swapRequest);
         
         // Broadcast swap cancelled event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
+        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "CANCELLED"));
     }
 
     public List<SwapRequestDTO> getPendingSwapRequests(Long userId, Long roomId) {

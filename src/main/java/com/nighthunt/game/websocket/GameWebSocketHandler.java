@@ -2,11 +2,13 @@ package com.nighthunt.game.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nighthunt.friend.service.PlayerStatusService;
+import com.nighthunt.matchmaking.service.MatchmakingQueueService;
 import com.nighthunt.game.websocket.dto.*;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.security.port.TokenProvider;
 import com.nighthunt.session.port.SessionStore;
@@ -14,6 +16,7 @@ import com.nighthunt.user.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -44,12 +47,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GameWebSocketHandler extends TextWebSocketHandler implements ConnectionManager {
 
     private final RoomPlayerRepository roomPlayerRepository;
+    private final RoomRepository roomRepository;
     private final RoomResponseAssembler roomResponseAssembler;
     private final ObjectMapper objectMapper;
     private final TokenProvider tokenProvider;
     private final SessionStore sessionStore;
     private final UserRepository userRepository;
     private final PlayerStatusService playerStatusService;
+    private final MatchmakingQueueService matchmakingQueueService;
+    private final TransactionTemplate transactionTemplate;
 
     // userId -> session
     private final Map<Long, WebSocketSession> userSessions = new ConcurrentHashMap<>();
@@ -65,19 +71,25 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
 
     public GameWebSocketHandler(
             RoomPlayerRepository roomPlayerRepository,
+            RoomRepository roomRepository,
             RoomResponseAssembler roomResponseAssembler,
             ObjectMapper objectMapper,
             TokenProvider tokenProvider,
             SessionStore sessionStore,
             UserRepository userRepository,
-            PlayerStatusService playerStatusService) {
+            PlayerStatusService playerStatusService,
+            MatchmakingQueueService matchmakingQueueService,
+            TransactionTemplate transactionTemplate) {
         this.roomPlayerRepository = roomPlayerRepository;
+        this.roomRepository = roomRepository;
         this.roomResponseAssembler = roomResponseAssembler;
         this.objectMapper = objectMapper;
         this.tokenProvider = tokenProvider;
         this.sessionStore = sessionStore;
         this.userRepository = userRepository;
         this.playerStatusService = playerStatusService;
+        this.matchmakingQueueService = matchmakingQueueService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     // ==================== WebSocket Lifecycle ====================
@@ -176,19 +188,24 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         SessionMetadata metadata = sessionMetadata.remove(session);
         if (metadata != null) {
             Long userId = metadata.getUserId();
-            // Only remove maps if THIS session is still the active one.
-            // A new session may have already replaced it in afterConnectionEstablished,
-            // in which case we must NOT evict the new session's entries.
             boolean wasActive = userSessions.remove(userId, session);
             if (wasActive) {
                 userRooms.remove(userId);
                 lastActivityAt.remove(userId);
-                // Set player status to OFFLINE and broadcast to friends
                 try {
                     playerStatusService.setOffline(userId);
                 } catch (Exception e) {
                     log.error("Error setting player offline status for userId={}: {}", userId, e.getMessage());
                 }
+                // Remove from matchmaking queue on disconnect
+                try {
+                    matchmakingQueueService.dequeue(userId);
+                } catch (Exception e) {
+                    log.debug("Matchmaking dequeue on disconnect for userId={}: {}", userId, e.getMessage());
+                }
+                // Remove player from WAITING rooms on disconnect to free the slot.
+                // IN_GAME rooms are left intact so the player can reconnect mid-match.
+                cleanupWaitingRoomPlayer(userId);
             }
             log.info("WebSocket disconnected: userId={}, status={}, wasActive={}", userId, status, wasActive);
         }
@@ -204,11 +221,15 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
             if (wasActive) {
                 userRooms.remove(userId);
                 lastActivityAt.remove(userId);
-                // Set player status to OFFLINE and broadcast to friends
                 try {
                     playerStatusService.setOffline(userId);
                 } catch (Exception e) {
                     log.error("Error setting player offline status for userId={}: {}", userId, e.getMessage());
+                }
+                try {
+                    matchmakingQueueService.dequeue(userId);
+                } catch (Exception e) {
+                    log.debug("Matchmaking dequeue on transport error for userId={}: {}", userId, e.getMessage());
                 }
             }
         }
@@ -388,6 +409,39 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     }
 
     // ==================== Private Helpers ====================
+
+    /**
+     * Remove a disconnected player from any WAITING room so the slot is freed.
+     * IN_GAME rooms are untouched (player may reconnect mid-match).
+     */
+    private void cleanupWaitingRoomPlayer(Long userId) {
+        try {
+            roomPlayerRepository.findByUserId(userId).stream()
+                    .findFirst()
+                    .ifPresent(rp -> {
+                        roomRepository.findById(rp.getRoomId()).ifPresent(room -> {
+                            if ("WAITING".equals(room.getStatus())) {
+                                transactionTemplate.executeWithoutResult(status -> {
+                                    roomPlayerRepository.deleteByRoomIdAndUserId(room.getId(), userId);
+                                });
+                                log.info("Removed disconnected player userId={} from WAITING room {}", userId, room.getId());
+                                // Broadcast updated room state to remaining players
+                                try {
+                                    RoomResponse response = roomResponseAssembler.toResponseById(room.getId());
+                                    if (response != null) {
+                                        broadcastToRoom(room.getId(), "player_left", response);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to broadcast player_left for userId={} room={}: {}",
+                                            userId, room.getId(), e.getMessage());
+                                }
+                            }
+                        });
+                    });
+        } catch (Exception e) {
+            log.warn("Error cleaning up room for disconnected userId={}: {}", userId, e.getMessage());
+        }
+    }
 
     private Long findCurrentRoomId(Long userId) {
         return roomPlayerRepository.findByUserId(userId).stream()

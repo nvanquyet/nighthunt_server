@@ -153,21 +153,30 @@ public class MatchmakingQueueService {
     // ── Internal ─────────────────────────────────────────────────────────────
 
     /**
-     * Expand search windows for all entries that have been waiting longer than
-     * {@code expandIntervalSeconds}.
+     * Expand search windows for entries that are behind their expected expansion
+     * schedule.  An entry's expected half-range after N intervals is
+     * {@code initialEloRange + N * expandStep}, where
+     * {@code N = floor(waitSeconds / expandIntervalSeconds)}.
+     * This ensures each entry expands at most once per interval regardless of
+     * how often the tick runs.
      */
     private void expandWindows() {
         LocalDateTime threshold = LocalDateTime.now().minus(expandIntervalSeconds, ChronoUnit.SECONDS);
-        List<MatchmakingEntry> stale = entryRepository.findAll().stream()
-                .filter(e -> "SEARCHING".equals(e.getStatus()))
-                .filter(e -> e.getQueuedAt().isBefore(threshold))
-                .collect(Collectors.toList());
+        List<MatchmakingEntry> stale = entryRepository.findSearchingQueuedBefore(threshold);
+        LocalDateTime now = LocalDateTime.now();
 
         for (MatchmakingEntry e : stale) {
-            int currentRange = (e.getSearchMaxElo() - e.getSearchMinElo()) / 2;
-            if (currentRange < maxEloRange) {
-                e.setSearchMinElo(Math.max(0, e.getSearchMinElo() - expandStep));
-                e.setSearchMaxElo(e.getSearchMaxElo() + expandStep);
+            int currentHalfRange = (e.getSearchMaxElo() - e.getSearchMinElo()) / 2;
+            if (currentHalfRange >= maxEloRange) continue;
+
+            long waitSeconds = ChronoUnit.SECONDS.between(e.getQueuedAt(), now);
+            int expectedExpansions = (int) (waitSeconds / expandIntervalSeconds);
+            int expectedHalfRange = initialEloRange + expectedExpansions * expandStep;
+            expectedHalfRange = Math.min(expectedHalfRange, maxEloRange);
+
+            if (currentHalfRange < expectedHalfRange) {
+                e.setSearchMinElo(Math.max(0, e.getElo() - expectedHalfRange));
+                e.setSearchMaxElo(e.getElo() + expectedHalfRange);
                 entryRepository.save(e);
                 log.debug("[MM] Expanded window for user {} to [{}, {}]",
                         e.getUserId(), e.getSearchMinElo(), e.getSearchMaxElo());

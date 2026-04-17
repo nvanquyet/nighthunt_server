@@ -47,6 +47,7 @@ public class ErrorCodes {
     public static final String MATCH_NOT_FOUND = "MATCH_001";
     public static final String MATCH_SERVER_UNAVAILABLE = "MATCH_002";
     public static final String MATCH_JOIN_FAILED = "MATCH_003";
+    public static final String MATCH_ALREADY_FINISHED = "MATCH_004";
 
     // Session errors
     public static final String SESSION_NOT_FOUND = "SESSION_001";
@@ -69,6 +70,45 @@ public class ErrorCodes {
     public static final String BLOCK_SELF = "FRIEND_011";
     public static final String BLOCK_ALREADY_EXISTS = "FRIEND_012";
     public static final String BLOCK_NOT_FOUND = "FRIEND_013";
+
+    // Party errors
+    public static final String PARTY_NOT_FOUND = "PARTY_001";
+    public static final String PARTY_ALREADY_IN_PARTY = "PARTY_002";
+    public static final String PARTY_FULL = "PARTY_003";
+    public static final String PARTY_NOT_HOST = "PARTY_004";
+    public static final String PARTY_NOT_IN_PARTY = "PARTY_005";
+    public static final String PARTY_USER_ALREADY_IN_PARTY = "PARTY_006";
+    public static final String PARTY_INVITATION_EXISTS = "PARTY_007";
+    public static final String PARTY_INVITATION_BLOCKED = "PARTY_008";
+    public static final String PARTY_INVITATION_NOT_FOR_YOU = "PARTY_009";
+    public static final String PARTY_INVITATION_NOT_PENDING = "PARTY_010";
+    public static final String PARTY_INVITATION_EXPIRED = "PARTY_011";
+    public static final String PARTY_DISBANDED = "PARTY_012";
+    public static final String PARTY_INVITATION_NOT_FOUND = "PARTY_013";
+    public static final String PARTY_INVITATION_NOT_YOURS = "PARTY_014";
+    public static final String PARTY_CANNOT_KICK_SELF = "PARTY_015";
+    public static final String PARTY_USER_NOT_IN_PARTY = "PARTY_016";
+    public static final String PARTY_TRANSFER_SAME_USER = "PARTY_017";
+    public static final String PARTY_NOT_IDLE = "PARTY_018";
+
+    // Auth - general
+    public static final String AUTH_REQUIRED = "AUTH_015";
+
+    // DS errors
+    public static final String DS_BAD_REQUEST = "DS_001";
+    public static final String DS_INVALID_SECRET = "DS_002";
+    public static final String DS_GAME_MODE_UNAVAILABLE = "DS_003";
+
+    // Room - additional
+    public static final String ROOM_ALREADY_IN_ROOM = "ROOM_014";
+    public static final String ROOM_SWAP_REQUEST_PENDING = "ROOM_015";
+    public static final String ROOM_SWAP_NOT_TARGET = "ROOM_016";
+    public static final String ROOM_SWAP_NOT_REQUESTER = "ROOM_017";
+    public static final String ROOM_SWAP_EXPIRED = "ROOM_018";
+    public static final String ROOM_SWAP_CANCELLED = "ROOM_019";
+
+    // Party - additional
+    public static final String PARTY_SIZE_MISMATCH = "PARTY_019";
 
     private ErrorCodes() {
     }

@@ -19,8 +19,8 @@ public class RedisSessionStore implements SessionStore {
     public void saveSession(String userId, String sessionId, int timeoutSeconds) {
         String key = GameConstants.REDIS_KEY_SESSION_PREFIX + userId;
         redisTemplate.opsForValue().set(key, sessionId, timeoutSeconds, TimeUnit.SECONDS);
-        log.info("Session saved to Redis - userId: {}, sessionId: {}, timeout: {}s, key: {}", 
-                userId, sessionId, timeoutSeconds, key);
+        log.debug("Session saved to Redis - userId: {}, timeout: {}s, key: {}",
+                userId, timeoutSeconds, key);
     }
 
     @Override

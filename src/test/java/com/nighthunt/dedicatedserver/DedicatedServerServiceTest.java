@@ -1,5 +1,6 @@
 package com.nighthunt.dedicatedserver;
 
+import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.dedicatedserver.dto.ServerAllocateResponse;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
@@ -91,6 +92,8 @@ class DedicatedServerServiceTest {
             when(dockerManager.getCurrentImageRef()).thenReturn("ghcr.io/nvanquyet/nighthunt-ds:latest");
             // findByPort not called in this path — just ensure port loop doesn't block
             when(dsRepo.existsByPortAndStatusNot(anyInt(), anyString())).thenReturn(false);
+            when(redis.opsForValue()).thenReturn(valueOps);
+            when(valueOps.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class))).thenReturn(true);
             DedicatedServer saved = idleServer("srv-new", 7777);
             when(dsRepo.save(any(DedicatedServer.class))).thenReturn(saved);
             when(dockerManager.startContainer(anyString(), anyInt(), anyString(), anyInt(), nullable(String.class), anyInt(), nullable(String.class)))
@@ -172,23 +175,23 @@ class DedicatedServerServiceTest {
     class ValidateDsTests {
 
         @Test
-        @DisplayName("Throws IllegalArgumentException for unknown serverId")
+        @DisplayName("Throws BusinessException for unknown serverId")
         void validate_unknownServerId() {
             when(dsRepo.findByServerId("bad-id")).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.validateDsAndGetMatchId("bad-id", "secret"))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("bad-id");
         }
 
         @Test
-        @DisplayName("Throws SecurityException for wrong secret")
+        @DisplayName("Throws BusinessException for wrong secret")
         void validate_wrongSecret() {
             DedicatedServer server = readyServer("srv-005", bcrypt.encode("real-secret"));
             when(dsRepo.findByServerId("srv-005")).thenReturn(Optional.of(server));
 
             assertThatThrownBy(() -> service.validateDsAndGetMatchId("srv-005", "wrong"))
-                    .isInstanceOf(SecurityException.class)
+                    .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("srv-005");
         }
 

@@ -1,5 +1,7 @@
 package com.nighthunt.friend.service;
 
+import com.nighthunt.common.exception.BusinessException;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.friend.repository.FriendRepository;
 import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.user.entity.User;
@@ -202,7 +204,7 @@ public class PlayerStatusService {
 
     private User findUser(Long userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+                .orElseThrow(() -> new BusinessException(ErrorCodes.USER_NOT_FOUND, "User not found: " + userId));
     }
 
     /**

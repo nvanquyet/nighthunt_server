@@ -1,6 +1,7 @@
 package com.nighthunt.party.controller;
 
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.party.dto.InviteToPartyRequest;
 import com.nighthunt.party.dto.PartyDTO;
 import com.nighthunt.party.dto.PartyInvitationDTO;
@@ -45,7 +46,7 @@ public class PartyController {
     @PostMapping("/create")
     public ApiResponse<PartyDTO> createParty() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyService.createParty(userId));
     }
@@ -64,7 +65,7 @@ public class PartyController {
     @PostMapping("/invite")
     public ApiResponse<PartyInvitationDTO> inviteToParty(@Valid @RequestBody InviteToPartyRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyService.inviteToParty(userId, request.getInviteeUserId()));
     }
@@ -78,7 +79,7 @@ public class PartyController {
     @GetMapping("/invitations")
     public ApiResponse<List<PartyInvitationDTO>> getPendingInvitations() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyService.getPendingInvitations(userId));
     }
@@ -93,7 +94,7 @@ public class PartyController {
     @PostMapping("/invitations/{invitationId}/accept")
     public ApiResponse<PartyDTO> acceptInvitation(@PathVariable Long invitationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyService.acceptInvitation(userId, invitationId));
     }
@@ -108,7 +109,7 @@ public class PartyController {
     @PostMapping("/invitations/{invitationId}/decline")
     public ApiResponse<Void> declineInvitation(@PathVariable Long invitationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyService.declineInvitation(userId, invitationId);
         return ApiResponse.okMessage("Invitation declined");
@@ -124,7 +125,7 @@ public class PartyController {
     @DeleteMapping("/invitations/{invitationId}/cancel")
     public ApiResponse<Void> cancelInvitation(@PathVariable Long invitationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
 
         partyService.cancelInvitation(userId, invitationId);
         return ApiResponse.okMessage("Invitation cancelled");
@@ -143,7 +144,7 @@ public class PartyController {
     @GetMapping("/current")
     public ApiResponse<PartyDTO> getCurrentParty() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyService.getCurrentParty(userId));
     }
@@ -157,7 +158,7 @@ public class PartyController {
     @PostMapping("/leave")
     public ApiResponse<Void> leaveParty() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyService.leaveParty(userId);
         return ApiResponse.okMessage("Left party");
@@ -173,7 +174,7 @@ public class PartyController {
     @PostMapping("/kick/{kickedUserId}")
     public ApiResponse<Void> kickMember(@PathVariable Long kickedUserId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyService.kickMember(userId, kickedUserId);
         return ApiResponse.okMessage("Member kicked");
@@ -189,7 +190,7 @@ public class PartyController {
     @PostMapping("/transfer-leader")
     public ApiResponse<PartyDTO> transferLeader(@RequestBody TransferLeaderRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         return ApiResponse.ok(partyService.transferLeader(userId, request.getNewLeaderId()));
     }
 
@@ -210,7 +211,7 @@ public class PartyController {
     @PostMapping("/disband")
     public ApiResponse<Void> disbandParty() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyService.disbandParty(userId);
         return ApiResponse.okMessage("Party disbanded");
@@ -231,7 +232,7 @@ public class PartyController {
     @PostMapping("/queue")
     public ApiResponse<Void> queueParty(@Valid @RequestBody PartyMatchmakingRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyMatchmakingService.queueParty(userId, request);
         return ApiResponse.okMessage("Party queued for matchmaking");
@@ -247,7 +248,7 @@ public class PartyController {
     @PostMapping("/cancel-queue")
     public ApiResponse<Void> cancelQueue() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         partyMatchmakingService.cancelQueue(userId);
         return ApiResponse.okMessage("Party queue cancelled");
@@ -268,7 +269,7 @@ public class PartyController {
     @PostMapping("/join-room")
     public ApiResponse<RoomResponse> joinRoomWithParty(@RequestBody JoinRoomRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
         return ApiResponse.ok(partyRoomService.joinRoomWithParty(
             userId, 

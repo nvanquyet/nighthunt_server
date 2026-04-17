@@ -1,6 +1,7 @@
 package com.nighthunt.room.controller;
 
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.room.dto.*;
 import com.nighthunt.room.service.ReconnectService;
 import com.nighthunt.room.service.RoomService;
@@ -22,7 +23,7 @@ public class RoomController {
     public ApiResponse<RoomResponse> createRoom(@Valid @RequestBody CreateRoomRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.createRoom(userId, request);
         return ApiResponse.ok(response);
@@ -32,7 +33,7 @@ public class RoomController {
     public ApiResponse<RoomResponse> joinByCode(@Valid @RequestBody JoinRoomRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.joinRoomByCode(userId, request.getRoomCode(), request.getPassword());
         return ApiResponse.ok(response);
@@ -42,7 +43,7 @@ public class RoomController {
     public ApiResponse<RoomResponse> quickPlay(@Valid @RequestBody QuickPlayRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.quickPlay(userId, request);
         return ApiResponse.ok(response);
@@ -53,7 +54,7 @@ public class RoomController {
                                               @Valid @RequestBody ReadyRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.setReady(userId, roomId, request);
         return ApiResponse.ok(response);
@@ -64,7 +65,7 @@ public class RoomController {
                                                @Valid @RequestBody ChangeTeamRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.changeTeam(userId, roomId, request);
         return ApiResponse.ok(response);
@@ -105,7 +106,7 @@ public class RoomController {
     public ApiResponse<RoomResponse> startGame(@PathVariable Long roomId) {
         Long ownerId = SecurityUtils.getCurrentUserId();
         if (ownerId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.startGame(roomId, ownerId);
         return ApiResponse.ok(response);
@@ -132,7 +133,7 @@ public class RoomController {
                                                    @Valid @RequestBody SwapRequestRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         SwapRequestDTO response = roomService.requestSwap(userId, roomId, request.getTargetUserId(),
                 request.getTargetTeam(), request.getTargetSlot());
@@ -144,7 +145,7 @@ public class RoomController {
                                                 @PathVariable Long requestId) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.acceptSwapRequest(userId, roomId, requestId);
         return ApiResponse.ok(response);
@@ -187,7 +188,7 @@ public class RoomController {
                                                        @Valid @RequestBody UpdateRoomSettingsRequest request) {
         Long ownerId = SecurityUtils.getCurrentUserId();
         if (ownerId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.updateRoomSettings(ownerId, roomId, request);
         return ApiResponse.ok(response);
@@ -198,7 +199,7 @@ public class RoomController {
                                                     @Valid @RequestBody TransferOwnerRequest request) {
         Long ownerId = SecurityUtils.getCurrentUserId();
         if (ownerId == null) {
-            return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         }
         RoomResponse response = roomService.transferOwner(ownerId, roomId, request.getTargetUserId());
         return ApiResponse.ok(response);

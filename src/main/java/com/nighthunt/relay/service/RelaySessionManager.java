@@ -3,10 +3,12 @@ package com.nighthunt.relay.service;
 import com.nighthunt.relay.model.RelaySession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
@@ -62,7 +64,14 @@ public class RelaySessionManager {
     /** roomId → sessionToken */
     private final ConcurrentMap<Long, String> roomIndex = new ConcurrentHashMap<>();
 
-    private final RestTemplate rest = new RestTemplate();
+    private final RestTemplate rest;
+
+    {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(10_000);
+        rest = new RestTemplate(factory);
+    }
 
     // ── API ──────────────────────────────────────────────────────────────────
 
@@ -95,13 +104,15 @@ public class RelaySessionManager {
             // Call the relay server's HTTP API to allocate a unique UDP port.
             int allocatedPort = allocatePortFromRelayServer(token);
             if (allocatedPort <= 0) {
-                log.error("[Relay] Failed to allocate port from relay server — session not created");
-                // Return a dummy session so callers don't NPE; game_starting won't fire
-                return buildSession(token, roomId, matchId, now, "0.0.0.0", defaultRelayPort);
+                log.error("[Relay] Failed to allocate port from relay server — falling back to default port");
+                resolvedHost = configuredRelayHost.isBlank() ? extractHost(relayServerUrl) : configuredRelayHost;
+                resolvedPort = defaultRelayPort;
+                log.warn("[Relay] Relay fallback: host={}:{} — single concurrent game only", resolvedHost, resolvedPort);
+            } else {
+                resolvedHost = configuredRelayHost.isBlank() ? extractHost(relayServerUrl) : configuredRelayHost;
+                resolvedPort = allocatedPort;
+                log.info("[Relay] Mode A (relay server): host={}:{} session={}", resolvedHost, resolvedPort, token);
             }
-            resolvedHost = configuredRelayHost.isBlank() ? extractHost(relayServerUrl) : configuredRelayHost;
-            resolvedPort = allocatedPort;
-            log.info("[Relay] Mode A (relay server): host={}:{} session={}", resolvedHost, resolvedPort, token);
         } else if (!configuredRelayHost.isBlank()) {
             // ── Mode B: Static relay host IP (VPS, but no relay server process) ──
             // All sessions share the same port — only works for 1 concurrent game.

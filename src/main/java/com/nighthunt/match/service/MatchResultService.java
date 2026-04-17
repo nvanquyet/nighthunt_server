@@ -66,7 +66,7 @@ public class MatchResultService {
                         "Match not found: " + req.getMatchId()));
 
         if ("FINISHED".equals(match.getStatus())) {
-            throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
+            throw new BusinessException(ErrorCodes.MATCH_ALREADY_FINISHED,
                     "Match already finished: " + req.getMatchId());
         }
 

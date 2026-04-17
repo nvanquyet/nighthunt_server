@@ -1,6 +1,7 @@
 package com.nighthunt.profile.controller;
 
 import com.nighthunt.common.ApiResponse;
+import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.profile.dto.ProfileResponse;
 import com.nighthunt.profile.dto.UpdateCharacterRequest;
 import com.nighthunt.profile.service.ProfileService;
@@ -32,7 +33,7 @@ public class ProfileController {
     @GetMapping
     public ApiResponse<ProfileResponse> getProfile() {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         return ApiResponse.ok(profileService.getProfile(userId));
     }
 
@@ -57,7 +58,7 @@ public class ProfileController {
     public ApiResponse<ProfileResponse> updateCharacter(
             @Valid @RequestBody UpdateCharacterRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (userId == null) return ApiResponse.error("User not authenticated", "AUTH_REQUIRED");
+        if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         return ApiResponse.ok(profileService.updateCharacter(userId, request));
     }
 }
