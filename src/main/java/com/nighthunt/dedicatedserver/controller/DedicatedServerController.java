@@ -8,7 +8,9 @@ import com.nighthunt.dedicatedserver.service.DedicatedServerService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
@@ -34,11 +36,11 @@ public class DedicatedServerController {
 
         // Header secret phải match body secret (double check)
         if (headerSecret != null && !headerSecret.equals(req.getServerSecret())) {
-            return ApiResponse.error("Secret mismatch", "INVALID_SECRET");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Secret mismatch");
         }
 
         boolean ok = dsService.registerServer(req);
-        if (!ok) return ApiResponse.error("Invalid server credentials", "AUTH_FAILED");
+        if (!ok) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid server credentials");
 
         return ApiResponse.ok("registered");
     }
@@ -50,11 +52,11 @@ public class DedicatedServerController {
             @RequestHeader(value = "X-DS-Secret", required = false) String headerSecret) {
 
         if (headerSecret != null && !headerSecret.equals(req.getServerSecret())) {
-            return ApiResponse.error("Secret mismatch", "INVALID_SECRET");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Secret mismatch");
         }
 
         boolean ok = dsService.heartbeat(req);
-        if (!ok) return ApiResponse.error("Invalid credentials", "AUTH_FAILED");
+        if (!ok) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
 
         return ApiResponse.ok("ok");
     }
@@ -91,7 +93,7 @@ public class DedicatedServerController {
         }
 
         boolean ok = dsService.notifyGameReady(serverId, serverSecret);
-        if (!ok) return ApiResponse.error("Invalid server credentials", "AUTH_FAILED");
+        if (!ok) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid server credentials");
 
         return ApiResponse.ok("ds_ready broadcasted");
     }

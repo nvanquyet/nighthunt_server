@@ -82,9 +82,11 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"identifier\":\"${{ steps.register.outputs.username }}\",\"password\":\"Test@1234\"}")
           echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: login" && exit 1)
           ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           REFRESH=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['refreshToken'])")
           SESSION=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessionId',''))")
+          [ -n "$ACCESS" ] || (echo "FAIL: empty accessToken" && exit 1)
           echo "access=$ACCESS" >> "$GITHUB_OUTPUT"
           echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
           echo "session=$SESSION" >> "$GITHUB_OUTPUT"
@@ -104,7 +106,9 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"refreshToken\":\"${{ steps.login.outputs.refresh }}\"}")
           echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: refresh-token" && exit 1)
           NEW_ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          [ -n "$NEW_ACCESS" ] || (echo "FAIL: empty new accessToken" && exit 1)
           echo "access=$NEW_ACCESS" >> "$GITHUB_OUTPUT"
 
       - name: Logout
@@ -228,13 +232,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: smoke-health
     steps:
-      - name: POST /api/ds/register (invalid secret → 401/403)
+      - name: POST /api/ds/register (invalid secret → 401)
         run: |
           STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API_BASE/ds/register" \
             -H "X-DS-Secret: invalid_secret" \
             -H "Content-Type: application/json" \
-            -d '{"serverId":"smoke-test","gamePort":7770,"maxPlayers":4,"expectedPlayers":4,"mapId":"map_01"}')
+            -d '{"serverId":"smoke-test","gamePort":7770,"maxPlayers":4,"expectedPlayers":4,"mapId":"map_01"}' \
+            || echo "$?")
           echo "HTTP $STATUS"
+          # Controller now throws ResponseStatusException(401) for invalid secret
           [[ "$STATUS" = "401" || "$STATUS" = "403" ]] \
             || (echo "FAIL: expected 401/403, got $STATUS" && exit 1)
 
