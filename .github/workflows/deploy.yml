@@ -157,6 +157,15 @@ jobs:
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
             docker network connect nighthunt_game-network nighthunt-backend 2>/dev/null || true
 
+            echo "=== Clean stale DS records with wrong IP ==="
+            VPS_IP=$(grep VPS_PUBLIC_IP /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
+            DB_USER=$(grep ^DB_USERNAME /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
+            DB_PASS=$(grep ^DB_PASSWORD /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
+            DB_NAME=$(grep ^MYSQL_DATABASE /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
+            docker exec nighthunt-mysql mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e \
+              "UPDATE dedicated_server SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
+              2>/dev/null && echo "Stale DS records cleaned." || echo "WARN: DB cleanup failed (non-fatal)"
+
             echo "=== Health check (30s timeout) ==="
             for i in $(seq 1 6); do
               sleep 5
