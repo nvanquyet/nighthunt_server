@@ -1,7 +1,11 @@
 # NightHunt — Hướng dẫn Setup & Test Production
 
-> **Cập nhật lần cuối:** tất cả flow đã được implement đầy đủ.  
-> Các gap đã fix trong session này: **TransferLeader** (backend endpoint + client call), **Public Profile** (`GET /api/profile/{userId}`), **PlayerProfilePanel** (UI), **Structured Logging** (`logback-spring.xml` + `MdcLoggingFilter`).
+> **Cập nhật:** Session này thêm/sửa:
+> - **`IBackendClient` using directive** fix trong `PlayerProfilePanel.cs`
+> - **`ProfileManager` field** thêm vào `GameManager` — tự động re-fetch ELO/coins khi về Home sau match
+> - **`docker rm -f`** thay `docker stop` trong `DockerManagerService` — container bị reclaim không còn tồn đọng trên VPS
+> - **`smoke-test.yml`** GitHub Actions workflow — 6 flow smoke tests tự động sau mỗi deploy
+> - **`PlayerProfilePanel`** + **`btn_TransferLeader`** đã được inject trực tiếp vào `01_Home.unity` qua YAML edit
 
 ---
 
@@ -131,6 +135,8 @@ Vào: `GitHub Repo → Settings → Secrets and variables → Actions → New re
 | `VPS_DEPLOY_PATH` | `/home/ubuntu/nighthunt` | Thư mục deploy |
 | `ENV_PRODUCTION_B64` | base64 encoded `.env.production` | Xem bên dưới |
 | `DS_ADMIN_SECRET` | Giá trị `DS_ADMIN_SECRET` trong `.env.production` | Cho smoke tests |
+| `ADMIN_SECRET` | Giá trị `X-Admin-Secret` | Dashboard smoke test |
+| `PRODUCTION_API_URL` | `https://vawnwuyest.me/api` | Base URL cho smoke-test.yml |
 | `SMOKE_TEST_USER` | Username tài khoản test | Pre-create trong DB |
 | `SMOKE_TEST_PASS` | Password tài khoản test | |
 | `UNITY_LICENSE` | Unity license XML | Xem phần Unity CI |
@@ -166,63 +172,273 @@ CERTBOT_EMAIL=<your-email>
 
 ## 4. Unity Setup — Scene & Component Checklist
 
-### 4.1 Scene Requirements
+### 4.1 Kiến trúc Scene thực tế (theo BuildScript.cs)
 
-| Scene | Build Index | Ghi chú |
-|-------|-------------|---------|
-| `Bootstrap` | 0 | Persistent managers, không unload |
-| `Login` | 1 | Auth, profile load |
-| `Home` | 2 | Lobby, matchmaking |
-| `GameplayDS` | 3 | Ranked game (DS mode) |
-| `GameplayCustom` | 4 | Custom game (relay mode) |
+Dự án có **3 file scene thực**, chia làm **2 build target** riêng biệt:
 
-> Vào Unity: **File → Build Settings** → đảm bảo thứ tự scene đúng
-
-### 4.2 Bootstrap Scene Components (CRITICAL)
-
-GameObject `[SystemsManager]` phải có:
-- [x] `GameManager` — MonoBehaviour singleton, DontDestroyOnLoad
-- [x] `BackendConfig` — `ServerUrl = https://vawnwuyest.me`, `WebSocketUrl = wss://vawnwuyest.me/ws`
-- [x] `LoadingManager` — handles auto-login flow
-- [x] `GameWebSocketService` — WS connection manager
-- [x] `NetworkGameManager` — FishNet NetworkManager reference
-
-### 4.3 Home Scene Components
-
-- [x] `MatchFlowCoordinator` — kết nối WS events tới scene transitions
-- [x] `FriendPanelView` — friend list UI
-- [x] `RoomService` reference — trỏ vào GameManager.RoomService
-- [x] `PartyPanelView` — party UI
-- [x] `PlayerProfilePanel` ← **MỚI** — modal xem profile người chơi khác
-  - Đặt là DIRECT CHILD của Home panel root (cùng level với FriendPanelView)
-  - Assign các field trong Inspector:
-    ```
-    Root              → GameObject con chứa toàn bộ panel (start inactive)
-    Backdrop          → Button fullscreen (closes on click)
-    Txt_Username      → TMP_Text
-    Txt_ELO           → TMP_Text
-    Txt_Tier          → TMP_Text
-    Txt_WinLoss       → TMP_Text
-    Txt_WinRate       → TMP_Text
-    Btn_Close         → Button
-    LoadingIndicator  → Spinner GameObject (optional)
-    ```
-  - Panel sẽ được gọi tự động từ: `FriendPanelView.OnViewProfile()`, `SharedPartyContextMenu.OnViewProfile()`, `CustomLobbyView.OnCM_ViewProfile()`
-
-### 4.4 Gameplay Scene Components (DS Mode)
-
-- [x] `NetworkManager` (FishNet) — Tugboat transport
-- [x] `NetworkGameManager` — tham chiếu tới NetworkManager
-- [x] `MatchFlowCoordinator` — listens for `ds_ready` WS event
-
-### 4.5 BackendConfig Production Settings
 ```
-Inspector → BackendConfig:
+Assets/_Night_Hunt/Scenes/
+  00_DS_Boot.unity   ← DS-only (Dedicated Server boot)
+  01_Home.unity      ← Client-only (Login + Home + tất cả UI)
+  02_Map_01.unity    ← SHARED (cả DS lẫn Client đều dùng)
+```
+
+**Build DS (Linux Headless — `BuildScript.BuildDedicatedServer`):**
+| Index trong build | File scene | Vai trò |
+|---|---|---|
+| 0 | `00_DS_Boot.unity` | Boot DS: khởi động FishNet server, đăng ký với backend |
+| 1 | `02_Map_01.unity` | Gameplay (DS tải khi backend gọi `game-ready`) |
+
+**Build Client (Win64 / Android — `BuildScript.BuildClient`):**
+| Index trong build | File scene | Vai trò |
+|---|---|---|
+| 0 | `01_Home.unity` | Login → Home → Lobby (toàn bộ UI non-gameplay) |
+| 1 | `02_Map_01.unity` | Gameplay (tải khi nhận WS `match_ready`) |
+
+> **KHÔNG có** Bootstrap scene riêng, Login scene riêng, hay GameplayDS/GameplayCustom scene riêng.
+> Khi thêm map mới (ví dụ `02_Map_02.unity`) → thêm vào cả `DsScenes` và `ClientScenes` trong `BuildScript.cs`.
+
+**Custom vs Ranked dùng chung map scene:**
+Cùng một `02_Map_01.unity` phục vụ cả 2 chế độ. Sự khác biệt nằm ở runtime:
+- `RoomState.CurrentGameMode == GameMode.Custom_Relay` → relay-based, không tính ELO
+- `RoomState.CurrentGameMode == GameMode.Ranked_DS` → DS-based, tính ELO + rank points
+- `MatchFlowCoordinator` detect mode từ WS event `game_starting` và set `RoomState` trước khi load scene
+
+---
+
+### 4.2 Scene `00_DS_Boot.unity` — Dedicated Server Boot
+
+> Chỉ có trong **DS build**. Client không thấy scene này.
+
+**GameObject: `NetworkManager`**
+| Component | Ghi chú |
+|---|---|
+| `FishNet.NetworkManager` | `_startOnHeadless = true`, `_dontDestroyOnLoad = true` |
+| `TimeManager` | `_tickRate = 45` |
+| `ServerManager` | Quản lý FishNet server connections |
+| `ClientManager` | Cần cho host-mode (không dùng trên pure DS) |
+| `SceneManager` (FishNet) | Load map scene khi DS sẵn sàng |
+| `ObserverManager` | Visibility condition management |
+| `StatisticsManager` | Optional, `_runInRelease = false` |
+| `Tugboat` transport | `_port = 7777` (override bởi CLI arg `--port`) |
+| `SpawnablePrefabs` | Trỏ tới `DefaultPrefabObjects.asset` |
+
+**GameObject: `ServerBootstrap`**
+| Field Inspector | Giá trị |
+|---|---|
+| `networkManager` | Trỏ tới GameObject `NetworkManager` ở trên |
+| `fallbackPort` | `7777` (dùng khi chạy trong Editor, override bởi `--port` CLI) |
+| `fallbackBackendUrl` | `https://localhost:8443` (Editor dev) |
+| `fallbackServerId` | `localhost-dev-test` |
+| `fallbackServerSecret` | Lấy từ `/api/admin/ds/allocate` response |
+| `fallbackMapId` | `map_01` |
+| `fallbackMaxPlayers` | `16` |
+
+> `ServerBootstrap` flow: parse CLI args → set Tugboat port → StartServer → POST `/api/ds/register` → heartbeat loop → nhận game-ready → load `02_Map_01`
+
+**GameObject: `ServerUISuppressor`**
+- Tự động suppress/destroy bất kỳ Canvas nào có tag `ServerCanvas` khi DS load map scene
+- Đảm bảo DS không render UI gây lãng phí RAM/GPU
+
+---
+
+### 4.3 Scene `01_Home.unity` — Client Entry Point (Login + Home + Lobby)
+
+> Chỉ có trong **Client build**. Scene index 0 — load đầu tiên khi app chạy.
+> Không có scene Login riêng — toàn bộ Login UI là một Panel bên trong scene này.
+
+#### DontDestroyOnLoad objects (tồn tại suốt vòng đời app)
+
+**GameObject: `PersistentUICanvas`** — Canvas lớp trên cùng, không bị xóa khi chuyển scene
+| Component / Child | Ghi chú |
+|---|---|
+| `PersistentUICanvas` (script) | Singleton, DontDestroyOnLoad |
+| `LoadingManager` | Boot flow: internet check → auto-login → navigate |
+| `MatchLoadingOverlay` | Overlay khi chờ DS boot / relay connect |
+| `MatchFoundOverlay` | "Match Found!" popup (countdown accept) |
+| `PingDisplay` | Hiển thị ping góc màn hình |
+| `ToastService` | Toast notification |
+
+**Inspector fields của `LoadingManager`:**
+```
+loadingPanel      → GameObject chứa spinner + progress bar (bắt đầu active)
+progressBar       → UI.Slider (0→1)
+loadingText       → TMP_Text
+retryButton       → UI.Button (ẩn khi online, hiện khi offline)
+_backendConfig    → BackendConfig ScriptableObject
+_healthPath       → /api/actuator/health
+minLoadingTime    → 1.2
+internetTimeout   → 5
+```
+
+**GameObject: `GameManager`** — DontDestroyOnLoad, holds tất cả services
+| SerializeField | Kiểu | Ghi chú |
+|---|---|---|
+| `backendClient` | `BackendHttpClient` | HTTP service |
+| `backendConfig` | `BackendConfig` | ScriptableObject |
+| `profileManager` | `ProfileManager` | ELO, coins, profile data |
+| `roomService` | `RoomService` | Room CRUD API |
+| `matchmakingService` | `MatchmakingService` | Matchmaking queue API |
+| `friendService` | `FriendService` | Friend list API |
+| `partyService` | `PartyService` | Party API |
+| `gameWebSocketService` | `GameWebSocketService` | WS connection |
+| `networkGameManager` | `NetworkGameManager` | FishNet client |
+| `matchFlowCoordinator` | `MatchFlowCoordinator` | WS → scene flow |
+
+> Tất cả service đều có `ResolveOrAdd<T>()` — nếu field null sẽ tự tìm hoặc tạo. Nhưng nên assign rõ trong Inspector.
+
+**GameObject: `NetworkGameManager`** — DontDestroyOnLoad
+| Field | Ghi chú |
+|---|---|
+| `networkManager` | FishNet NetworkManager trong map scene |
+| Tugboat client | Kết nối tới DS IP:Port khi nhận `ds_ready` |
+
+**GameObject: `MatchFlowCoordinator`** — DontDestroyOnLoad
+- Subscribe `GameWebSocketService` events: `OnMatchReady`, `OnDsReady`, `OnMatchCancelled`, `OnMatchEnded`
+- `match_ready` → resolve map scene từ `MapConfig` → `MatchLoadingOverlay.Show()` → `SceneLoader.LoadGame(mapSceneId)`
+- `ds_ready` → `NetworkGameManager.NotifyDsReady()` → FishNet connect
+
+#### Scene-local objects (trong 01_Home, bị xóa khi load gameplay scene)
+
+**UI Hierarchy trong `01_Home.unity`:**
+```
+[Canvas] — Main UI
+  ├── Main Panels
+  │   ├── LoginPanel            — LoginPanelView: username/pass fields, Login + Register buttons
+  │   ├── HomePanel             — HomePanelView: Ranked, Custom, thống kê, avatar/coins
+  │   ├── LobbyPanel            — CustomLobbyView: room slots, Start button (host only)
+  │   ├── FriendPanel           — FriendPanelView: friend list, search, online status
+  │   ├── PartyPanel            — PartyPanelView: party members, invite, leave
+  │   ├── PlayerProfilePanel    — PlayerProfilePanel: modal xem profile người chơi khác ← MỚI
+  │   └── SettingsPanel         — SettingsPanelView (optional)
+  ├── SharedPartyContextMenu    — Dropdown: View Profile / Kick / Leave / Transfer Leader
+  ├── GameModalWindow           — Confirm dialogs
+  └── ...
+```
+
+**`PlayerProfilePanel` Inspector fields** (gán trong Unity Editor):
+```
+root              → GameObject bao bọc toàn panel (inactive khi ẩn)
+backdrop          → Button fullscreen — click đóng panel
+txt_Username      → TMP_Text
+txt_ELO           → TMP_Text
+txt_Tier          → TMP_Text
+txt_WinLoss       → TMP_Text (format "W / L")
+txt_WinRate       → TMP_Text (format "XX%")
+btn_Close         → Button
+loadingIndicator  → Spinner GO (optional, ẩn khi data loaded)
+```
+> Gọi bằng: `PlayerProfilePanel.Instance?.Show(userId)`
+> Tự động gọi từ: `FriendPanelView`, `SharedPartyContextMenu`, `CustomLobbyView`
+
+**`SharedPartyContextMenu` Inspector fields:**
+```
+btn_ViewProfile       → Button (prefab)
+btn_Kick              → Button (prefab)
+btn_Leave             → Button (prefab)
+btn_TransferLeader    → Button (prefab) ← MỚI (fileID 390211862 trong scene YAML)
+```
+
+---
+
+### 4.4 Scene `02_Map_01.unity` — Shared Gameplay Scene
+
+> Dùng cho cả **Client và DS**. Chứa toàn bộ gameplay logic + environment.
+> Phân biệt DS vs Client tại runtime qua `InstanceFinder.IsServerStarted` (FishNet).
+
+**Shared GameObjects (cả DS lẫn Client):**
+| GameObject | Component | Ghi chú |
+|---|---|---|
+| `NetworkManager` | FishNet.NetworkManager | Trong client build: cấu hình Tugboat client. Trong DS: `_startOnHeadless=true` |
+| `ServerGameManager` | `ServerGameManager` | Active chỉ khi IsServer. Quản lý spawn, phase transitions |
+| `MatchEndManager` | `MatchEndManager` | POST `/api/match/end/ranked` hoặc `/custom` khi game kết thúc |
+| Environment | Mesh renderers, colliders | Map geometry |
+| `SpawnPoints_TeamA/B` | `Transform[]` | Điểm spawn team |
+
+**Client-only GameObjects** (có thể disable trên DS bằng `#if !UNITY_SERVER` hoặc `IsServerBuild` check):
+| GameObject | Component | Ghi chú |
+|---|---|---|
+| `PlayerCamera` | `CinemachineCamera` | Follow player |
+| `HUD` | `HUDController` | HP, ammo, kill feed |
+| `ResultsView` | `ResultsView` | Bảng kết quả sau match |
+| `InputManager` | `PlayerInputManager` | Unity Input System |
+
+**Flow trong `02_Map_01` (Ranked_DS):**
+```
+DS side:
+  ServerBootstrap nhận game-ready → load map scene
+  ServerGameManager.Start() → WaitForAllPlayers() → StartMatch()
+  MatchEndManager detect thắng thua → POST /api/match/end/ranked → send WS match_ended
+
+Client side:
+  MatchFlowCoordinator nhận match_ready → SceneLoader.LoadGame(GameMap_01)
+  NetworkGameManager.NotifyDsReady() → FishNet.StartClient(dsIp, dsPort)
+  Match running...
+  MatchFlowCoordinator nhận match_ended → ResultsView.Show()
+  ResultsView countdown → NavigatePostMatch() → ProfileManager.FetchProfile() → SceneLoader.LoadHome()
+```
+
+**Flow trong `02_Map_01` (Custom_Relay):**
+```
+Host client:
+  FishNet.StartHost() (via NetworkGameManager)
+  Relay server forward packets từ other clients
+
+All clients:
+  FishNet.StartClient(relayIp, relayPort)
+  Game running... (không có DS)
+  MatchEndManager detect thắng thua → POST /api/match/end/custom → no ELO change
+  WS match_ended → ResultsView → SceneLoader.LoadHome()
+```
+
+---
+
+### 4.5 Build Settings (File → Build Settings)
+
+**DS Build (Unity Editor → Build Settings):**
+```
+Platform: Dedicated Server (hoặc StandaloneLinux64 + Server subtarget)
+Scenes:
+  [0] Assets/_Night_Hunt/Scenes/00_DS_Boot.unity
+  [1] Assets/_Night_Hunt/Scenes/02_Map_01.unity
+  (thêm map mới ở đây theo thứ tự)
+```
+
+**Client Build (Unity Editor → Build Settings):**
+```
+Platform: PC/Mac/Android
+Scenes:
+  [0] Assets/_Night_Hunt/Scenes/01_Home.unity
+  [1] Assets/_Night_Hunt/Scenes/02_Map_01.unity
+  (thêm map mới ở đây theo thứ tự)
+```
+
+> **Quan trọng:** Scene indices trong Build Settings phải khớp với thứ tự trong `BuildScript.DsScenes[]` và `BuildScript.ClientScenes[]`. `SceneLoader` và `SceneConfig` dùng tên scene (không dùng index) nên tên file phải đúng.
+
+---
+
+### 4.6 Thêm map mới (ví dụ `02_Map_02.unity`)
+
+1. Tạo scene file `02_Map_02.unity`, copy hierarchy từ `02_Map_01`
+2. Trong `SceneConfig.cs` — enum `SceneId` đã có `GameMap_02 = 101` ✓
+3. Trong `SceneConfig.asset` (Inspector) — thêm entry: `id = GameMap_02`, `sceneName = "02_Map_02"`
+4. Trong `MapConfig.asset` (Inspector) — thêm `MapEntry`: `mapId = "map_02"`, `sceneId = GameMap_02`, điền display name
+5. Trong `BuildScript.cs` — uncomment dòng `"Assets/_Night_Hunt/Scenes/02_Map_02.unity"` trong cả `DsScenes` và `ClientScenes`
+6. **File → Build Settings** → thêm `02_Map_02.unity` vào danh sách cho cả DS build và Client build
+
+---
+
+### 4.7 BackendConfig (ScriptableObject)
+
+```
+Assets/_Night_Hunt/Data/Configs/CoreSystem Config/Resources/BackendConfig.asset
+
+Inspector:
   Dev Server URL:  https://localhost:8443
   Prod Server URL: https://vawnwuyest.me
   Dev WS URL:      wss://localhost:8443/ws
   Prod WS URL:     wss://vawnwuyest.me/ws
-  Use Production:  ✓ (check khi build production)
+  Use Production:  ✓ (bật khi build production, tắt khi dev local)
 ```
 
 ---
@@ -601,8 +817,14 @@ curl -X POST http://localhost:7776/session/close \
 
 ### FLOW 6: Loading / Connection Progress
 
+**Kiến trúc loading (không có Bootstrap scene riêng):**
+- `01_Home.unity` load (scene 0 trong Client build)
+- `PersistentUICanvas` Awake → `LoadingManager` bắt đầu boot flow
+- `GameManager` Awake → init tất cả services
+- `LoadingManager.StartBootFlow()` chạy async
+
 **Unity-side test (Play mode):**
-1. Enter Play mode → LoadingManager chạy
+1. Enter Play mode với `01_Home` là scene active → LoadingManager chạy tự động
 2. Log expected:
 ```
 [LoadingManager] Checking internet connectivity...
@@ -611,15 +833,28 @@ curl -X POST http://localhost:7776/session/close \
 [LoadingManager] Auto-login SUCCESS → userId=X
 [GameWebSocket] Connecting to wss://vawnwuyest.me/ws...
 [GameWebSocket] Connected!
-[LoadingManager] Init complete → navigate to Home
+[LoadingManager] Init complete → UINavigator.GoHome()
 ```
 
-3. Khi match bắt đầu (`ds_ready` hoặc `game_starting` received):
+3. Khi match bắt đầu (WS `match_ready` received từ `01_Home`):
 ```
-[MatchFlowCoordinator] game_starting received: mode=Ranked_DS
-[NGM] ConnectToDS: ip=20.2.235.140 port=9000
+[MFC] match_ready ▶ matchId=... mode=Ranked_DS mapId=map_01
+[MFC] match_ready — scene: mapId='map_01' → sceneId=GameMap_01 isRelay=false
+[MatchLoadingOverlay] Show: stage=WaitingForDS
+[SceneLoader] LoadGame → GameMap_01 (02_Map_01)
+→ Unity loads 02_Map_01.unity (scene 1 trong Client build)
+[MFC] ds_ready ▶ dsIp=20.2.235.140 dsPort=9000
+[NGM] NotifyDsReady → FishNet.StartClient(ip=20.2.235.140 port=9000)
 [NGM] FishNet Client connected → server
-[LoadingManager] ShowLoadingOverlay: "Đang kết nối tới server..."
+[MatchLoadingOverlay] Hide
+```
+
+4. Khi Custom_Relay match bắt đầu:
+```
+[MFC] match_ready ▶ mode=Custom_Relay isRelay=true
+[MFC] relay mode — MarkDsReady immediately (no DS boot)
+[SceneLoader] LoadGame → GameMap_01 (02_Map_01)
+[NGM] NotifyRelayReady → FishNet.StartClient(relayIp, relayPort)
 ```
 
 ---
@@ -699,6 +934,11 @@ curl -X POST "$BASE_URL/api/admin/ds/update-image" \
 ### FLOW 9: Container/Relay Reclaim
 
 **Test auto-reclaim sau match end** (đã test trong FLOW 7)
+
+> **Lưu ý (session fix):** `DockerManagerService.stopContainer()` đã được đổi sang
+> `docker rm -f <containerId>` — vừa stop vừa remove trong 1 lệnh. Containers start
+> với `--rm` tự xóa khi exit bình thường, nhưng crashed/stuck containers sẽ được
+> force-remove bởi scheduled cleanup.
 
 **Test scheduled cleanup:**
 ```bash
@@ -899,16 +1139,39 @@ docker exec nighthunt-ds-XXXXXXXX netstat -unlp | grep 9000
 - [ ] `UNITY_LICENSE` (nếu muốn DS CI)
 - [ ] Deploy workflow chạy thành công ít nhất 1 lần
 - [ ] Smoke test workflow pass sau deploy
+- [ ] GitHub Secret `PRODUCTION_API_URL` = `https://vawnwuyest.me/api` đã add (dùng bởi smoke-test.yml)
+- [ ] GitHub Secret `ADMIN_SECRET` đã add (dùng cho dashboard smoke test)
 
 ### Unity Client
-- [ ] `BackendConfig.UseProd = true` trong production build
-- [ ] `BackendConfig.ServerUrl = https://vawnwuyest.me`
-- [ ] `BackendConfig.WebSocketUrl = wss://vawnwuyest.me/ws`
-- [ ] Scene build order đúng (Bootstrap=0, Login=1, Home=2)
-- [ ] `NetworkGameManager` có reference tới FishNet NetworkManager
-- [ ] `MatchFlowCoordinator` reference đúng trong Gameplay scenes
-- [ ] `PlayerProfilePanel` đặt trong Home scene root, tất cả Inspector fields assigned
-- [ ] `PartyMemberItemView` có `transferLeaderButton` assigned trong prefab
+
+**Build Settings — DS Build (Dedicated Server target):**
+- [ ] Scene 0: `Assets/_Night_Hunt/Scenes/00_DS_Boot.unity`
+- [ ] Scene 1: `Assets/_Night_Hunt/Scenes/02_Map_01.unity`
+- [ ] Map scenes mới: thêm vào `BuildScript.DsScenes[]` VÀ Build Settings
+
+**Build Settings — Client Build (Win64/Android):**
+- [ ] Scene 0: `Assets/_Night_Hunt/Scenes/01_Home.unity`
+- [ ] Scene 1: `Assets/_Night_Hunt/Scenes/02_Map_01.unity`
+- [ ] Map scenes mới: thêm vào `BuildScript.ClientScenes[]` VÀ Build Settings
+
+**BackendConfig (ScriptableObject):**
+- [ ] `UseProd = true` trong production build
+- [ ] `ProdServerUrl = https://vawnwuyest.me`
+- [ ] `ProdWebSocketUrl = wss://vawnwuyest.me/ws`
+
+**00_DS_Boot.unity — Inspector:**
+- [ ] `NetworkManager` GameObject: Tugboat `_port = 7777`, `_startOnHeadless = true`
+- [ ] `ServerBootstrap.networkManager` trỏ tới FishNet NetworkManager component
+
+**01_Home.unity — Inspector:**
+- [ ] `GameManager`: tất cả service fields assigned (hoặc auto-resolved, verify không có null warning)
+- [ ] `PersistentUICanvas`: `LoadingManager`, `MatchLoadingOverlay`, `MatchFoundOverlay`, `ToastService` assigned
+- [ ] `LoadingManager._backendConfig` trỏ tới `BackendConfig.asset`
+- [ ] `NetworkGameManager.networkManager` trỏ đúng FishNet NetworkManager
+- [ ] `PlayerProfilePanel` trong `Main Panels`: các field `root`, `backdrop`, `txt_*`, `btn_Close` assigned
+  - MonoBehaviour đã inject vào scene YAML (fileID 157468060) — assign fields trong Editor
+- [ ] `SharedPartyContextMenu.btn_TransferLeader` assigned (fileID 390211862 trong scene YAML)
+- [ ] `PartyMemberItemView` prefab có `transferLeaderButton` field assigned
 
 ### VPS Network
 - [ ] Port 443 open → `curl https://vawnwuyest.me/api/actuator/health`
