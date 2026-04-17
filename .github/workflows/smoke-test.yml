@@ -80,18 +80,20 @@ jobs:
         run: |
           BODY=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"${{ steps.register.outputs.username }}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"${{ steps.register.outputs.username }}\",\"password\":\"Test@1234\"}")
           echo "$BODY"
           ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           REFRESH=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['refreshToken'])")
+          SESSION=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessionId',''))")
           echo "access=$ACCESS" >> "$GITHUB_OUTPUT"
           echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
+          echo "session=$SESSION" >> "$GITHUB_OUTPUT"
 
       - name: Auto-login (check-session)
         run: |
           BODY=$(curl -sf -X POST "$API_BASE/auth/auto-login" \
             -H "Content-Type: application/json" \
-            -d "{\"refreshToken\":\"${{ steps.login.outputs.refresh }}\"}")
+            -d "{\"accessToken\":\"${{ steps.login.outputs.access }}\",\"sessionId\":\"${{ steps.login.outputs.session }}\"}")
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' || (echo "FAIL: auto-login" && exit 1)
 
@@ -128,7 +130,7 @@ jobs:
             -d "{\"username\":\"smokeA_${SUFFIX}\",\"email\":\"smokeA_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeA_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"smokeA_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           USER_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
           # User B
@@ -137,7 +139,7 @@ jobs:
             -d "{\"username\":\"smokeB_${SUFFIX}\",\"email\":\"smokeB_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeB_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"smokeB_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           USER_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
           echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
@@ -162,8 +164,10 @@ jobs:
       - name: Friend flow – send / accept / list / remove
         run: |
           # Send request A→B
-          curl -sf -X POST "$API_BASE/friends/request/${{ steps.setup.outputs.userB }}" \
-            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" | grep -q '"success":true' \
+          curl -sf -X POST "$API_BASE/friends/requests" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"userId\":${{ steps.setup.outputs.userB }}}" | grep -q '"success":true' \
             || (echo "FAIL: send friend request" && exit 1)
           # B gets incoming requests
           BODY=$(curl -sf "$API_BASE/friends/requests/incoming" \
@@ -171,7 +175,7 @@ jobs:
           echo "$BODY" | grep -q '"success":true' || (echo "FAIL: incoming requests" && exit 1)
           # B accepts
           REQ_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])")
-          curl -sf -X POST "$API_BASE/friends/accept/$REQ_ID" \
+          curl -sf -X POST "$API_BASE/friends/requests/${REQ_ID}/accept" \
             -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" | grep -q '"success":true' \
             || (echo "FAIL: accept request" && exit 1)
           # A gets friends list
@@ -198,7 +202,7 @@ jobs:
             -d "{\"username\":\"smokeQ_${SUFFIX}\",\"email\":\"smokeQ_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeQ_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"smokeQ_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
@@ -207,7 +211,7 @@ jobs:
           BODY=$(curl -sf -X POST "$API_BASE/matchmaking/queue" \
             -H "Authorization: Bearer ${{ steps.login.outputs.token }}" \
             -H "Content-Type: application/json" \
-            -d '{"gameModeId":"ranked_2v2"}')
+            -d '{"gameMode":"2v2"}')
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' || (echo "FAIL: enqueue" && exit 1)
 
@@ -250,7 +254,7 @@ jobs:
             -d "{\"username\":\"cgA_${SUFFIX}\",\"email\":\"cgA_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"cgA_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"cgA_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           # Register + login Player (B)
           curl -sf -X POST "$API_BASE/auth/register" \
@@ -258,7 +262,7 @@ jobs:
             -d "{\"username\":\"cgB_${SUFFIX}\",\"email\":\"cgB_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"cgB_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            -d "{\"identifier\":\"cgB_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
           echo "tokenB=$TOKEN_B" >> "$GITHUB_OUTPUT"
@@ -352,7 +356,7 @@ jobs:
         run: |
           BODY=$(curl -sf -X POST "$API_BASE/admin/ds/update-image" \
             -H "Content-Type: application/json" \
-            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}" \
+            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}" \
             -d '{"imageRef":"ghcr.io/nvanquyet/nighthunt-ds:smoke-test","version":"smoke-test"}')
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' \
@@ -374,7 +378,7 @@ jobs:
       - name: GET /api/admin/ds/servers (list active DS containers)
         run: |
           BODY=$(curl -sf "$API_BASE/admin/ds/servers" \
-            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
+            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}")
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' \
             || (echo "FAIL: ds servers list" && exit 1)
@@ -389,7 +393,7 @@ jobs:
       - name: GET /api/dashboard/stats (requires admin secret)
         run: |
           BODY=$(curl -sf "$API_BASE/dashboard/stats" \
-            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
+            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}")
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' \
             || (echo "WARN: dashboard stats may require active data — checking HTTP status" && true)
