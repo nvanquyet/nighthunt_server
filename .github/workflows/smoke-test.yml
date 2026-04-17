@@ -69,7 +69,7 @@ jobs:
           EMAIL="smoke_${SUFFIX}@test.com"
           BODY=$(curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"$USERNAME\",\"email\":\"$EMAIL\",\"password\":\"Test@1234\"}")
+            -d "{\"username\":\"$USERNAME\",\"email\":\"$EMAIL\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}")
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' || (echo "FAIL: register" && exit 1)
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
@@ -125,7 +125,7 @@ jobs:
           # User A
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeA_${SUFFIX}\",\"email\":\"smokeA_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+            -d "{\"username\":\"smokeA_${SUFFIX}\",\"email\":\"smokeA_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"smokeA_${SUFFIX}\",\"password\":\"Test@1234\"}")
@@ -134,7 +134,7 @@ jobs:
           # User B
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeB_${SUFFIX}\",\"email\":\"smokeB_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+            -d "{\"username\":\"smokeB_${SUFFIX}\",\"email\":\"smokeB_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"smokeB_${SUFFIX}\",\"password\":\"Test@1234\"}")
@@ -195,7 +195,7 @@ jobs:
           SUFFIX=$(date +%s)
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"smokeQ_${SUFFIX}\",\"email\":\"smokeQ_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+            -d "{\"username\":\"smokeQ_${SUFFIX}\",\"email\":\"smokeQ_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"smokeQ_${SUFFIX}\",\"password\":\"Test@1234\"}")
@@ -247,7 +247,7 @@ jobs:
           # Register + login Host (A)
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"cgA_${SUFFIX}\",\"email\":\"cgA_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+            -d "{\"username\":\"cgA_${SUFFIX}\",\"email\":\"cgA_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"cgA_${SUFFIX}\",\"password\":\"Test@1234\"}")
@@ -255,7 +255,7 @@ jobs:
           # Register + login Player (B)
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"cgB_${SUFFIX}\",\"email\":\"cgB_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+            -d "{\"username\":\"cgB_${SUFFIX}\",\"email\":\"cgB_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}" > /dev/null
           BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"cgB_${SUFFIX}\",\"password\":\"Test@1234\"}")
