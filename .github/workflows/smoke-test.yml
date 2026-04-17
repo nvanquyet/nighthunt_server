@@ -680,50 +680,74 @@ jobs:
             echo "⚠️  Stage 1 WARN — startGame returned $S (DS docker may be disabled in env — acceptable)"
           fi
 
-      - name: "[Stage 2] DS boots + registers with backend (POST /ds/register)"
+      - name: "[Stage 2] Allocate test DS record via admin/ds/test-alloc (no Docker)"
         id: stage2
         continue-on-error: true
         run: |
-          MATCH_ID="${{ steps.stage1.outputs.matchId }}"
-          if [ -z "$MATCH_ID" ] || [ "$MATCH_ID" = "None" ] || [ "$MATCH_ID" = "" ]; then
-            echo "⚠️  Stage 2 SKIP — no matchId (DS not launched, non-fatal in CI)"
+          if [ -z "${{ secrets.ADMIN_SECRET }}" ]; then
+            echo "⚠️  Stage 2 SKIP — ADMIN_SECRET not configured in GitHub Secrets"
             exit 0
           fi
-          SERVER_ID="smoke-ds-$(date +%s)"
-          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/register" \
-            -H "Content-Type: application/json" \
-            -H "X-DS-Secret: ${{ secrets.ADMIN_SECRET }}" \
-            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.ADMIN_SECRET }}\",\"gamePort\":9001,\"maxPlayers\":4,\"expectedPlayers\":4,\"mapId\":\"map_test\",\"matchId\":\"${MATCH_ID}\"}")
+          # test-alloc creates a real DS DB record with a known secret, WITHOUT starting Docker.
+          # This lets us test the /ds/register + /ds/game-ready + /ds/heartbeat API contract.
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/admin/ds/test-alloc" \
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
           S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
-          echo "Stage 2 — DS register → HTTP $S | $BODY"
-          echo "serverId=${SERVER_ID}" >> "$GITHUB_OUTPUT"
-          if [ "$S" = "200" ]; then
-            echo "✅ Stage 2 PASS — DS registered (env loaded, network OK)"
+          echo "Stage 2 — test-alloc → HTTP $S | $BODY"
+          if [ "$S" = "200" ] && echo "$BODY" | grep -q '"success":true'; then
+            SERVER_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['serverId'])")
+            DEV_SECRET=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['devSecret'])")
+            echo "testServerId=${SERVER_ID}" >> "$GITHUB_OUTPUT"
+            echo "testSecret=${DEV_SECRET}" >> "$GITHUB_OUTPUT"
+            echo "✅ Stage 2 PASS — test DS record created: serverId=${SERVER_ID}"
           else
-            echo "⚠️  Stage 2 WARN — DS register returned $S (ADMIN_SECRET mismatch or no match)"
+            echo "⚠️  Stage 2 WARN — test-alloc returned $S (check ADMIN_SECRET matches VPS)"
           fi
 
-      - name: "[Stage 3] DS loads objects/rewards + sends game-ready (POST /ds/game-ready)"
+      - name: "[Stage 2b] DS registers with backend (POST /ds/register)"
+        id: stage2b
+        continue-on-error: true
+        run: |
+          SERVER_ID="${{ steps.stage2.outputs.testServerId }}"
+          DEV_SECRET="${{ steps.stage2.outputs.testSecret }}"
+          if [ -z "$SERVER_ID" ] || [ -z "$DEV_SECRET" ]; then
+            echo "⚠️  Stage 2b SKIP — no test DS record from Stage 2"
+            exit 0
+          fi
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/register" \
+            -H "Content-Type: application/json" \
+            -H "X-DS-Secret: ${DEV_SECRET}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${DEV_SECRET}\",\"gamePort\":9001,\"maxPlayers\":4,\"expectedPlayers\":4,\"mapId\":\"map_smoke\"}")
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "Stage 2b — DS register → HTTP $S | $BODY"
+          if [ "$S" = "200" ] && echo "$BODY" | grep -q '"success":true'; then
+            echo "✅ Stage 2b PASS — DS registered (secret auth + DB update OK)"
+          else
+            echo "FAIL: DS register returned $S — $BODY" && exit 1
+          fi
+
+      - name: "[Stage 3] DS game-ready callback (POST /ds/game-ready)"
         id: stage3
         continue-on-error: true
         run: |
-          SERVER_ID="${{ steps.stage2.outputs.serverId }}"
-          if [ -z "$SERVER_ID" ]; then
-            echo "⚠️  Stage 3 SKIP — no serverId (Stage 2 skipped)"
+          SERVER_ID="${{ steps.stage2.outputs.testServerId }}"
+          DEV_SECRET="${{ steps.stage2.outputs.testSecret }}"
+          if [ -z "$SERVER_ID" ] || [ -z "$DEV_SECRET" ]; then
+            echo "⚠️  Stage 3 SKIP — no test DS record from Stage 2"
             exit 0
           fi
-          # Simulate: DS finished loading env, game objects, reward tables → calls game-ready
+          # DS signals it has fully loaded env/objects/rewards and is accepting connections.
+          # Backend broadcasts ds_ready WS event to match players (matchId is null for test record → no WS broadcast, but auth passes).
           R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/game-ready" \
             -H "Content-Type: application/json" \
-            -H "X-DS-Secret: ${{ secrets.ADMIN_SECRET }}" \
-            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.ADMIN_SECRET }}\"}")
+            -H "X-DS-Secret: ${DEV_SECRET}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${DEV_SECRET}\"}")
           S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
           echo "Stage 3 — DS game-ready → HTTP $S | $BODY"
           if [ "$S" = "200" ] && echo "$BODY" | grep -q '"success":true'; then
-            echo "✅ Stage 3 PASS — Backend received game-ready, ds_ready WS event broadcasted to players"
-            echo "   → Players (A/B/C/D) now receive ds_ready event and begin connecting to DS"
+            echo "✅ Stage 3 PASS — game-ready accepted (BCrypt auth OK, ds_ready would broadcast to match players)"
           else
-            echo "⚠️  Stage 3 WARN — game-ready returned $S (non-fatal)"
+            echo "FAIL: DS game-ready returned $S — $BODY" && exit 1
           fi
 
       - name: "[Stage 4] Client-connect readiness — verify session token validation"
@@ -753,20 +777,23 @@ jobs:
         id: stage5
         continue-on-error: true
         run: |
-          SERVER_ID="${{ steps.stage2.outputs.serverId }}"
-          if [ -z "$SERVER_ID" ]; then
-            echo "⚠️  Stage 5 SKIP — no serverId"
+          SERVER_ID="${{ steps.stage2.outputs.testServerId }}"
+          DEV_SECRET="${{ steps.stage2.outputs.testSecret }}"
+          if [ -z "$SERVER_ID" ] || [ -z "$DEV_SECRET" ]; then
+            echo "⚠️  Stage 5 SKIP — no test DS record from Stage 2"
             exit 0
           fi
           R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/heartbeat" \
             -H "Content-Type: application/json" \
-            -H "X-DS-Secret: ${{ secrets.ADMIN_SECRET }}" \
-            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.ADMIN_SECRET }}\",\"currentPlayers\":4,\"status\":\"in_game\"}")
+            -H "X-DS-Secret: ${DEV_SECRET}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${DEV_SECRET}\",\"currentPlayers\":4,\"status\":\"in_game\"}")
           S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
           echo "Stage 5 — DS heartbeat → HTTP $S | $BODY"
-          [ "$S" = "200" ] \
-            && echo "✅ Stage 5 PASS — DS heartbeat OK (server alive during game loop)" \
-            || echo "⚠️  Stage 5 WARN — heartbeat returned $S (non-fatal)"
+          if [ "$S" = "200" ] && echo "$BODY" | grep -q '"success":true'; then
+            echo "✅ Stage 5 PASS — DS heartbeat OK (server alive during game loop)"
+          else
+            echo "FAIL: DS heartbeat returned $S — $BODY" && exit 1
+          fi
 
       - name: Lifecycle Summary
         if: always()
@@ -774,11 +801,12 @@ jobs:
           echo "============================================"
           echo "DS INIT LIFECYCLE SUMMARY"
           echo "============================================"
-          echo "Stage 1 — Backend allocates DS:          ${{ steps.stage1.outcome }}"
-          echo "Stage 2 — DS boots + registers:          ${{ steps.stage2.outcome }}"
-          echo "Stage 3 — DS loads objects + game-ready: ${{ steps.stage3.outcome }}"
-          echo "Stage 4 — Session token validation:      ${{ steps.stage4.outcome }}"
-          echo "Stage 5 — DS heartbeat during game:      ${{ steps.stage5.outcome }}"
+          echo "Stage 1 — Backend allocates DS:              ${{ steps.stage1.outcome }}"
+          echo "Stage 2 — test-alloc (no Docker, known sec): ${{ steps.stage2.outcome }}"
+          echo "Stage 2b— DS register (BCrypt auth):         ${{ steps.stage2b.outcome }}"
+          echo "Stage 3 — DS game-ready (BCrypt auth):       ${{ steps.stage3.outcome }}"
+          echo "Stage 4 — Session token validation:          ${{ steps.stage4.outcome }}"
+          echo "Stage 5 — DS heartbeat (BCrypt auth):        ${{ steps.stage5.outcome }}"
           echo "--------------------------------------------"
           echo "NOTE: Full init (FishNet client connect + character spawn)"
           echo "      requires Unity client — verified manually via Unity Editor Play mode."

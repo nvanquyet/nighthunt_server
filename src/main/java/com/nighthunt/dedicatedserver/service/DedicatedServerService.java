@@ -299,6 +299,46 @@ public class DedicatedServerService {
         return server.getMatchId();
     }
 
+    /**
+     * Tạo DS record với secret đã biết, KHÔNG spin Docker container.
+     * Dùng cho CI/CD smoke test để có thể test /ds/register, /ds/heartbeat, /ds/game-ready
+     * mà không cần container thật.
+     * Record được tạo với status="test" và không có matchId (sẽ bị cleanup scheduler dọn).
+     *
+     * @return map chứa serverId + devSecret (plain text) + port
+     */
+    @Transactional
+    public Map<String, Object> allocateTestServer() {
+        String serverId     = "smoke-test-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String serverSecret = UUID.randomUUID().toString().replace("-", "");
+        int    port         = findAvailablePort();
+        String secretHash   = bcrypt.encode(serverSecret);
+
+        DedicatedServer server = DedicatedServer.builder()
+                .serverId(serverId)
+                .ip(vpsPublicIp)
+                .port(port)
+                .status("test")
+                .region("smoke")
+                .mapId("map_smoke")
+                .matchId(null)
+                .maxPlayers(4)
+                .imageTag("smoke-test")
+                .serverSecretHash(secretHash)
+                .build();
+        dsRepo.save(server);
+
+        log.info("[AdminDS] test-alloc: created test DS record serverId={} (no Docker)", serverId);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("serverId",  serverId);
+        result.put("devSecret", serverSecret);
+        result.put("port",      port);
+        result.put("status",    "test");
+        result.put("note",      "This is a smoke-test DS record. No Docker container was started.");
+        return result;
+    }
+
     // ── Session Token ─────────────────────────────────────────────────────────
 
     /** Tạo token cho client, lưu vào Redis với TTL 5 phút */
@@ -428,7 +468,8 @@ public class DedicatedServerService {
         );
     }
 
-    /** Mỗi 2 phút: cleanup servers bị treo khi starting > 3 phút */
+    /** Mỗi 2 phút: cleanup servers bị treo khi starting > 3 phút.
+     *  Cũng cleanup smoke-test records (status="test") sau 10 phút. */
     @Scheduled(fixedDelay = 120_000)
     @Transactional
     public void cleanupStaleStartingServers() {
@@ -442,6 +483,19 @@ public class DedicatedServerService {
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
         }
+
+        // Cleanup smoke-test records older than 10 minutes
+        LocalDateTime testCutoff = LocalDateTime.now().minusMinutes(10);
+        dsRepo.findAll().stream()
+                .filter(s -> "test".equals(s.getStatus())
+                        && s.getStartedAt() != null
+                        && s.getStartedAt().isBefore(testCutoff))
+                .forEach(s -> {
+                    log.info("[DS-Svc] Cleaning up smoke-test DS record: {}", s.getServerId());
+                    s.setStatus("stopped");
+                    s.setStoppedAt(LocalDateTime.now());
+                    dsRepo.save(s);
+                });
     }
 
     /** Mỗi 1 phút: cleanup servers không heartbeat > 90s (3 lần miss) → crash */

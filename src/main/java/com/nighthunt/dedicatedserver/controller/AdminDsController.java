@@ -133,4 +133,27 @@ public class AdminDsController {
         servers.forEach(s -> s.setServerSecretHash("[redacted]"));
         return ApiResponse.ok(servers);
     }
+
+    /**
+     * Smoke-test endpoint: tạo DS record với secret đã biết, KHÔNG spin Docker container.
+     * Dùng để CI/CD smoke test có thể gọi /ds/register, /ds/heartbeat, /ds/game-ready
+     * với secret hợp lệ mà không cần container thật.
+     * DS record được tạo với status="test" và bị xóa sau khi smoke test xong
+     * (hoặc bị cleanup scheduler dọn sau 10 phút không heartbeat).
+     *
+     * POST /api/admin/ds/test-alloc
+     * Header: X-Admin-Secret: <adminSecret>
+     * Response: { serverId, devSecret, port, status }
+     */
+    @PostMapping("/test-alloc")
+    public ApiResponse<Map<String, Object>> testAlloc(
+            @RequestHeader("X-Admin-Secret") String secret) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+
+        Map<String, Object> result = dsService.allocateTestServer();
+        return ApiResponse.ok(result);
+    }
 }
