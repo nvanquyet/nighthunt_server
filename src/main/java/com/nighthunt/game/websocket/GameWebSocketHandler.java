@@ -14,6 +14,7 @@ import com.nighthunt.security.port.TokenProvider;
 import com.nighthunt.session.port.SessionStore;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -43,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * through the {@link ConnectionManager} interface.
  */
 @Slf4j
+@Lazy
 @Component
 public class GameWebSocketHandler extends TextWebSocketHandler implements ConnectionManager {
 
