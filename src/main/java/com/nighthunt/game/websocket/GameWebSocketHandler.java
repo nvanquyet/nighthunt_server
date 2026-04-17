@@ -14,6 +14,7 @@ import com.nighthunt.security.port.TokenProvider;
 import com.nighthunt.session.port.SessionStore;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -44,7 +45,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * through the {@link ConnectionManager} interface.
  */
 @Slf4j
-@Lazy
 @Component
 public class GameWebSocketHandler extends TextWebSocketHandler implements ConnectionManager {
 
@@ -56,7 +56,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     private final SessionStore sessionStore;
     private final UserRepository userRepository;
     private final PlayerStatusService playerStatusService;
-    private final MatchmakingQueueService matchmakingQueueService;
+    private MatchmakingQueueService matchmakingQueueService;
     private final TransactionTemplate transactionTemplate;
 
     // userId -> session
@@ -80,7 +80,6 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
             SessionStore sessionStore,
             UserRepository userRepository,
             PlayerStatusService playerStatusService,
-            MatchmakingQueueService matchmakingQueueService,
             TransactionTemplate transactionTemplate) {
         this.roomPlayerRepository = roomPlayerRepository;
         this.roomRepository = roomRepository;
@@ -90,8 +89,13 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         this.sessionStore = sessionStore;
         this.userRepository = userRepository;
         this.playerStatusService = playerStatusService;
-        this.matchmakingQueueService = matchmakingQueueService;
         this.transactionTemplate = transactionTemplate;
+    }
+
+    @Autowired
+    @Lazy
+    public void setMatchmakingQueueService(MatchmakingQueueService matchmakingQueueService) {
+        this.matchmakingQueueService = matchmakingQueueService;
     }
 
     // ==================== WebSocket Lifecycle ====================
