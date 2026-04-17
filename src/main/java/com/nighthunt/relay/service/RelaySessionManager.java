@@ -135,7 +135,7 @@ public class RelaySessionManager {
      */
     private int allocatePortFromRelayServer(String token) {
         try {
-            String url  = relayServerUrl.stripTrailing("/") + "/session/create";
+            String url  = relayServerUrl.replaceAll("/+$", "") + "/session/create";
             Map<String, Object> body = Map.of("token", token);
             @SuppressWarnings("unchecked")
             Map<String, Object> resp = rest.postForObject(url, body, Map.class);
@@ -155,7 +155,7 @@ public class RelaySessionManager {
     public void closeRelayServerSession(String token) {
         if (relayServerUrl.isBlank()) return;
         try {
-            String url = relayServerUrl.stripTrailing("/") + "/session/close";
+            String url = relayServerUrl.replaceAll("/+$", "") + "/session/close";
             rest.postForObject(url, Map.of("token", token), Map.class);
             log.info("[Relay] Relay server session closed: token={}", token);
         } catch (Exception e) {

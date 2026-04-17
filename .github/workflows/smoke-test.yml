@@ -234,6 +234,152 @@ jobs:
           [[ "$STATUS" = "401" || "$STATUS" = "403" ]] \
             || (echo "FAIL: expected 401/403, got $STATUS" && exit 1)
 
+  # ── Flow 6: Custom game — Room create → join → ready → start → relay ────────
+  smoke-custom-game:
+    name: "Flow 6 – Custom Game (Room + Relay)"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: Setup – register & login Host (A) and Player (B)
+        id: setup
+        run: |
+          SUFFIX=$(date +%s)
+          # Register + login Host (A)
+          curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"cgA_${SUFFIX}\",\"email\":\"cgA_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+          BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"cgA_${SUFFIX}\",\"password\":\"Test@1234\"}")
+          TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          # Register + login Player (B)
+          curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"cgB_${SUFFIX}\",\"email\":\"cgB_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+          BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"cgB_${SUFFIX}\",\"password\":\"Test@1234\"}")
+          TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
+          echo "tokenB=$TOKEN_B" >> "$GITHUB_OUTPUT"
+
+      - name: Host creates custom room
+        id: create
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/rooms/create" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" \
+            -H "Content-Type: application/json" \
+            -d '{"mode":"2v2","isPublic":true,"isLocked":false}')
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: create room" && exit 1)
+          ROOM_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['id'])")
+          ROOM_CODE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['roomCode'])")
+          echo "roomId=$ROOM_ID"   >> "$GITHUB_OUTPUT"
+          echo "roomCode=$ROOM_CODE" >> "$GITHUB_OUTPUT"
+          echo "Room created: id=${ROOM_ID} code=${ROOM_CODE}"
+
+      - name: Player B joins room by code
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/rooms/join-by-code" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"roomCode\":\"${{ steps.create.outputs.roomCode }}\"}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: join room" && exit 1)
+
+      - name: Both players mark ready
+        run: |
+          ROOM_ID="${{ steps.create.outputs.roomId }}"
+          curl -sf -X POST "$API_BASE/rooms/${ROOM_ID}/ready" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" \
+            -H "Content-Type: application/json" \
+            -d '{"isReady":true}' | grep -q '"success":true' \
+            || (echo "FAIL: host ready" && exit 1)
+          curl -sf -X POST "$API_BASE/rooms/${ROOM_ID}/ready" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" \
+            -H "Content-Type: application/json" \
+            -d '{"isReady":true}' | grep -q '"success":true' \
+            || (echo "FAIL: player B ready" && exit 1)
+          echo "All players ready ✓"
+
+      - name: Host starts game
+        id: start
+        run: |
+          ROOM_ID="${{ steps.create.outputs.roomId }}"
+          BODY=$(curl -sf -X POST "$API_BASE/rooms/${ROOM_ID}/start" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: start game" && exit 1)
+          echo "Game started ✓"
+
+      - name: Verify relay session created (GET /api/relay/room/{roomId})
+        run: |
+          ROOM_ID="${{ steps.create.outputs.roomId }}"
+          BODY=$(curl -sf "$API_BASE/relay/room/${ROOM_ID}" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: relay session not found" && exit 1)
+          # Verify relayHost and relayPort are present and non-empty
+          RELAY_HOST=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('relayHost',''))")
+          RELAY_PORT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('relayPort',0))")
+          echo "Relay: ${RELAY_HOST}:${RELAY_PORT}"
+          [ -n "$RELAY_HOST" ] && [ "$RELAY_HOST" != "null" ] \
+            || (echo "FAIL: relayHost is empty/null" && exit 1)
+          [ "$RELAY_PORT" -gt "0" ] \
+            || (echo "FAIL: relayPort is 0 or missing" && exit 1)
+          echo "✅ Relay session verified: ${RELAY_HOST}:${RELAY_PORT}"
+
+      - name: Player B registers join in relay
+        run: |
+          BODY=$(curl -sf "$API_BASE/relay/room/${{ steps.create.outputs.roomId }}" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}")
+          SESSION_TOKEN=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessionToken',''))")
+          echo "session token: ${SESSION_TOKEN}"
+          JOIN_RESP=$(curl -sf -X POST "$API_BASE/relay/join" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"sessionToken\":\"${SESSION_TOKEN}\"}" || echo '{"success":false}')
+          echo "$JOIN_RESP"
+          echo "Relay join attempted (non-fatal if relay server not running)"
+
+  # ── Flow 7: DS Admin — update-image endpoint ────────────────────────────────
+  smoke-ds-admin:
+    name: "Flow 7 – DS Admin update-image"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: POST /api/admin/ds/update-image (valid admin secret)
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/admin/ds/update-image" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}" \
+            -d '{"imageRef":"ghcr.io/nvanquyet/nighthunt-ds:smoke-test","version":"smoke-test"}')
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' \
+            || (echo "FAIL: ds update-image" && exit 1)
+          echo "✅ DS Admin update-image OK"
+
+      - name: POST /api/admin/ds/update-image (invalid secret → 401/403)
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            -X POST "$API_BASE/admin/ds/update-image" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Secret: totally-wrong-secret" \
+            -d '{"imageRef":"ghcr.io/nvanquyet/nighthunt-ds:latest","version":"latest"}')
+          echo "HTTP $STATUS"
+          [[ "$STATUS" = "401" || "$STATUS" = "403" ]] \
+            || (echo "FAIL: expected 401/403, got $STATUS" && exit 1)
+          echo "✅ Unauthorized request correctly rejected"
+
+      - name: GET /api/admin/ds/servers (list active DS containers)
+        run: |
+          BODY=$(curl -sf "$API_BASE/admin/ds/servers" \
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' \
+            || (echo "FAIL: ds servers list" && exit 1)
+          echo "✅ DS servers list OK"
+
   # ── Flow 8: Dashboard stats ──────────────────────────────────────────────────
   smoke-dashboard:
     name: "Flow 8 – Dashboard Stats"
@@ -258,23 +404,28 @@ jobs:
       - smoke-profile
       - smoke-matchmaking
       - smoke-ds
+      - smoke-custom-game
+      - smoke-ds-admin
       - smoke-dashboard
     if: always()
     steps:
       - name: Report results
         run: |
           echo "=== Smoke Test Results ==="
-          echo "Health:       ${{ needs.smoke-health.result }}"
-          echo "Auth:         ${{ needs.smoke-auth.result }}"
+          echo "Health:          ${{ needs.smoke-health.result }}"
+          echo "Auth:            ${{ needs.smoke-auth.result }}"
           echo "Profile/Friends: ${{ needs.smoke-profile.result }}"
-          echo "Matchmaking:  ${{ needs.smoke-matchmaking.result }}"
-          echo "DS Register:  ${{ needs.smoke-ds.result }}"
-          echo "Dashboard:    ${{ needs.smoke-dashboard.result }}"
-          # Fail the summary job if any critical test failed
-          if [[ "${{ needs.smoke-health.result }}" != "success" || \
-                "${{ needs.smoke-auth.result }}"   != "success" || \
-                "${{ needs.smoke-profile.result }}" != "success" || \
-                "${{ needs.smoke-matchmaking.result }}" != "success" ]]; then
+          echo "Matchmaking:     ${{ needs.smoke-matchmaking.result }}"
+          echo "DS Register:     ${{ needs.smoke-ds.result }}"
+          echo "Custom Game:     ${{ needs.smoke-custom-game.result }}"
+          echo "DS Admin:        ${{ needs.smoke-ds-admin.result }}"
+          echo "Dashboard:       ${{ needs.smoke-dashboard.result }}"
+          # Fail if any critical test failed
+          if [[ "${{ needs.smoke-health.result }}"          != "success" || \
+                "${{ needs.smoke-auth.result }}"            != "success" || \
+                "${{ needs.smoke-profile.result }}"         != "success" || \
+                "${{ needs.smoke-matchmaking.result }}"     != "success" || \
+                "${{ needs.smoke-custom-game.result }}"     != "success" ]]; then
             echo "CRITICAL smoke tests FAILED"
             exit 1
           fi

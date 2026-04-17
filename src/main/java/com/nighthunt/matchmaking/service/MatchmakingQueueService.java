@@ -88,10 +88,10 @@ public class MatchmakingQueueService {
         }
 
         // Enforce platform restriction set on the game mode
-        if (platform != null && !"ALL".equalsIgnoreCase(mode.getPlatformFilter())) {
-            if (!mode.getPlatformFilter().equalsIgnoreCase(platform)) {
+        if (platform != null && !"ALL".equalsIgnoreCase(mode.getModeKey())) {
+            if (!mode.getModeKey().equalsIgnoreCase(platform)) {
                 throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
-                        "Game mode '" + gameMode + "' is restricted to " + mode.getPlatformFilter() + " players");
+                        "Game mode '" + gameMode + "' is restricted to " + mode.getModeKey() + " players");
             }
         }
 
