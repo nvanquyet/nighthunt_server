@@ -160,6 +160,23 @@ public class RelaySessionManager {
     }
 
     /**
+     * Proxy the relay server's /health endpoint for smoke-test visibility.
+     * Returns null when relay.server.url is not configured (LAN/direct mode).
+     */
+    public Map<String, Object> checkRelayServerHealth() {
+        if (relayServerUrl.isBlank()) return null;
+        try {
+            String url = relayServerUrl.replaceAll("/+$", "") + "/health";
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = rest.getForObject(url, Map.class);
+            return result;
+        } catch (Exception e) {
+            log.warn("[Relay] Health check failed: {}", e.getMessage());
+            return Map.of("status", "unreachable", "error", e.getMessage());
+        }
+    }
+
+    /**
      * Notify the relay server to close and release the port for this session.
      * Called on match end.
      */

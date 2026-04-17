@@ -523,6 +523,217 @@ jobs:
           echo "$BODY" | grep -q '"success":true' \
             || echo "WARN: dashboard stats (HTTP $STATUS) — may require active data"
 
+  # ── Flow 9: Relay server health ──────────────────────────────────────────────
+  smoke-relay-health:
+    name: "Flow 9 – Relay Server Health"
+    runs-on: ubuntu-latest
+    needs: [smoke-health, smoke-dashboard]
+    if: always() && needs.smoke-health.result == 'success'
+    steps:
+      - name: GET /api/relay/health (backend proxies to relay server)
+        run: |
+          RESPONSE=$(curl -s -w '\n%{http_code}' "$API_BASE/relay/health")
+          STATUS=$(echo "$RESPONSE" | tail -1); BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP $STATUS | $BODY"
+          [ "$STATUS" = "200" ] || (echo "FAIL: relay health returned $STATUS" && exit 1)
+          echo "$BODY" | grep -q '"success":true' \
+            || (echo "FAIL: relay health success=false" && exit 1)
+          # Check relay is UP or in direct mode
+          MODE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('mode','relay'))" 2>/dev/null || echo "relay")
+          if [ "$MODE" = "direct" ]; then
+            echo "ℹ️ Relay in direct mode (no relay server URL configured)"
+          else
+            RELAY_STATUS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('status','unknown'))" 2>/dev/null || echo "unknown")
+            FREE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('free_ports','?'))" 2>/dev/null || echo "?")
+            SESSIONS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessions','?'))" 2>/dev/null || echo "?")
+            echo "✅ Relay status=$RELAY_STATUS | sessions=$SESSIONS | free_ports=$FREE"
+            [ "$RELAY_STATUS" = "ok" ] || [ "$RELAY_STATUS" = "unreachable" ] \
+              || (echo "FAIL: unexpected relay status '$RELAY_STATUS'" && exit 1)
+            if [ "$RELAY_STATUS" = "unreachable" ]; then
+              echo "⚠️  WARN: relay server unreachable — check VPS docker ps / nighthunt-relay container"
+            fi
+          fi
+
+      - name: UDP connectivity check — relay port range (7777-7780)
+        # Non-fatal: verifies firewall allows UDP traffic on relay ports
+        continue-on-error: true
+        run: |
+          VPS_HOST=$(echo "$API_BASE" | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
+          echo "Testing UDP to $VPS_HOST:7777-7780 (nc -uz)"
+          for PORT in 7777 7778 7779 7780; do
+            if nc -uz -w2 "$VPS_HOST" "$PORT" 2>/dev/null; then
+              echo "✅ UDP $PORT reachable"
+            else
+              echo "⚠️  UDP $PORT unreachable (no active relay session on this port — expected)"
+            fi
+          done
+
+  # ── Flow 10: DS full lifecycle simulation ────────────────────────────────────
+  smoke-ds-lifecycle:
+    name: "Flow 10 – DS Lifecycle (register → game-ready)"
+    runs-on: ubuntu-latest
+    needs: [smoke-health, smoke-relay-health]
+    if: always() && needs.smoke-health.result == 'success'
+    steps:
+      - name: Setup – register & login 4 test users (2v2 match simulation)
+        id: setup
+        run: |
+          SUFFIX=$(date +%s)
+          for PLAYER in A B C D; do
+            R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/auth/register" \
+              -H "Content-Type: application/json" \
+              -d "{\"username\":\"ds${PLAYER}_${SUFFIX}\",\"email\":\"ds${PLAYER}_${SUFFIX}@t.com\",\"password\":\"Test@1234\",\"confirmPassword\":\"Test@1234\"}")
+            echo "Register ds${PLAYER} → HTTP $(echo "$R" | tail -1)"
+            R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/auth/login" \
+              -H "Content-Type: application/json" \
+              -d "{\"identifier\":\"ds${PLAYER}_${SUFFIX}\",\"password\":\"Test@1234\"}")
+            S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+            echo "Login ds${PLAYER} → HTTP $S"
+            TOKEN=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+            SESSION=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessionId',''))")
+            [ -n "$TOKEN" ] && [ "$TOKEN" != "None" ] \
+              || (echo "FAIL: login ds${PLAYER} failed" && exit 1)
+            echo "token${PLAYER}=$TOKEN"   >> "$GITHUB_OUTPUT"
+            echo "session${PLAYER}=$SESSION" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Host creates 2v2 ranked room
+        id: room
+        run: |
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/create" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" \
+            -H "X-Session-Id: ${{ steps.setup.outputs.sessionA }}" \
+            -H "Content-Type: application/json" \
+            -d '{"mode":"2v2","isPublic":false,"isLocked":false}')
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "Create room → HTTP $S | $BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: create room (HTTP $S)" && exit 1)
+          ROOM_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['roomId'])")
+          ROOM_CODE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['roomCode'])")
+          echo "roomId=$ROOM_ID"     >> "$GITHUB_OUTPUT"
+          echo "roomCode=$ROOM_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Players B/C/D join room
+        run: |
+          ROOM_CODE="${{ steps.room.outputs.roomCode }}"
+          for PLAYER in B C D; do
+            TOKEN_VAR="token${PLAYER}"
+            SID_VAR="session${PLAYER}"
+            R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/join-by-code" \
+              -H "Authorization: Bearer ${{ steps.setup.outputs[format('token{0}', env.PLAYER)] }}" \
+              -H "X-Session-Id: ${{ steps.setup.outputs[format('session{0}', env.PLAYER)] }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"roomCode\":\"$ROOM_CODE\"}" 2>/dev/null || echo "join attempted")
+            echo "Player $PLAYER join → HTTP $(echo "$R" | tail -1)"
+          done
+          # Simpler: join B, C, D with individual curls
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/join-by-code" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" \
+            -H "X-Session-Id: ${{ steps.setup.outputs.sessionB }}" \
+            -H "Content-Type: application/json" -d "{\"roomCode\":\"$ROOM_CODE\"}")
+          echo "B join → HTTP $(echo "$R" | tail -1)"
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/join-by-code" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenC }}" \
+            -H "X-Session-Id: ${{ steps.setup.outputs.sessionC }}" \
+            -H "Content-Type: application/json" -d "{\"roomCode\":\"$ROOM_CODE\"}")
+          echo "C join → HTTP $(echo "$R" | tail -1)"
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/join-by-code" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenD }}" \
+            -H "X-Session-Id: ${{ steps.setup.outputs.sessionD }}" \
+            -H "Content-Type: application/json" -d "{\"roomCode\":\"$ROOM_CODE\"}")
+          echo "D join → HTTP $(echo "$R" | tail -1)"
+
+      - name: All 4 players mark ready
+        run: |
+          ROOM_ID="${{ steps.room.outputs.roomId }}"
+          for PAIR in "A/${{ steps.setup.outputs.tokenA }}/${{ steps.setup.outputs.sessionA }}" \
+                      "B/${{ steps.setup.outputs.tokenB }}/${{ steps.setup.outputs.sessionB }}" \
+                      "C/${{ steps.setup.outputs.tokenC }}/${{ steps.setup.outputs.sessionC }}" \
+                      "D/${{ steps.setup.outputs.tokenD }}/${{ steps.setup.outputs.sessionD }}"; do
+            PLAYER=$(echo "$PAIR" | cut -d/ -f1)
+            TOKEN=$(echo  "$PAIR" | cut -d/ -f2)
+            SID=$(echo    "$PAIR" | cut -d/ -f3)
+            R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/${ROOM_ID}/ready" \
+              -H "Authorization: Bearer $TOKEN" -H "X-Session-Id: $SID" \
+              -H "Content-Type: application/json" -d '{"isReady":true}')
+            S=$(echo "$R" | tail -1)
+            echo "Player $PLAYER ready → HTTP $S"
+            echo "$(echo "$R" | head -n -1)" | grep -q '"success":true' \
+              || echo "WARN: player $PLAYER ready failed (HTTP $S)"
+          done
+
+      - name: Host starts game → triggers DS spin-up
+        id: start
+        # Non-fatal: DS docker may not be configured in CI; important is the API response structure
+        continue-on-error: true
+        run: |
+          ROOM_ID="${{ steps.room.outputs.roomId }}"
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/rooms/${ROOM_ID}/start" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" \
+            -H "X-Session-Id: ${{ steps.setup.outputs.sessionA }}")
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "Start game → HTTP $S | $BODY"
+          if [ "$S" = "200" ]; then
+            echo "$BODY" | grep -q '"success":true' \
+              && echo "✅ startGame OK — DS spin-up initiated" \
+              || echo "WARN: startGame returned 200 but success=false"
+          else
+            echo "WARN: startGame returned $S (DS docker may be disabled — non-fatal in CI)"
+          fi
+          # Extract matchId if available
+          MATCH_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('matchId',''))" 2>/dev/null || echo "")
+          echo "matchId=${MATCH_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Simulate DS register callback (POST /api/ds/register)
+        # Non-fatal: requires real DS_ADMIN_SECRET to match server config
+        continue-on-error: true
+        run: |
+          MATCH_ID="${{ steps.start.outputs.matchId }}"
+          if [ -z "$MATCH_ID" ] || [ "$MATCH_ID" = "None" ]; then
+            echo "SKIP: no matchId from startGame (DS not launched in CI)"
+            exit 0
+          fi
+          SERVER_ID="smoke-ds-$(date +%s)"
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/register" \
+            -H "Content-Type: application/json" \
+            -H "X-DS-Secret: ${{ secrets.DS_ADMIN_SECRET }}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.DS_ADMIN_SECRET }}\",\"gamePort\":9001,\"maxPlayers\":4,\"expectedPlayers\":4,\"mapId\":\"map_test\",\"matchId\":\"${MATCH_ID}\"}")
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "DS register → HTTP $S | $BODY"
+          [ "$S" = "200" ] || echo "WARN: DS register returned $S (non-fatal — secret mismatch or no match)"
+          echo "serverId=${SERVER_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Simulate DS game-ready callback (POST /api/ds/game-ready)
+        # Non-fatal: only works if register succeeded with a valid match
+        continue-on-error: true
+        run: |
+          SERVER_ID="${{ steps.simulate.outputs.serverId }}"
+          if [ -z "$SERVER_ID" ]; then
+            echo "SKIP: no serverId (DS register skipped)"
+            exit 0
+          fi
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/game-ready" \
+            -H "Content-Type: application/json" \
+            -H "X-DS-Secret: ${{ secrets.DS_ADMIN_SECRET }}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.DS_ADMIN_SECRET }}\"}")
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "DS game-ready → HTTP $S | $BODY"
+          [ "$S" = "200" ] || echo "WARN: DS game-ready returned $S (non-fatal)"
+
+      - name: Validate DS session token (POST /api/ds/validate-token)
+        # Validates that the backend correctly rejects expired/unknown tokens
+        run: |
+          R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/validate-token" \
+            -H "Content-Type: application/json" \
+            -d '{"token":"invalid-smoke-token","serverId":"smoke-fake"}')
+          S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
+          echo "Validate invalid token → HTTP $S | $BODY"
+          [ "$S" = "200" ] || (echo "FAIL: validate-token unexpected status $S" && exit 1)
+          VALID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'])" 2>/dev/null || echo "false")
+          [ "$VALID" = "False" ] || [ "$VALID" = "false" ] \
+            && echo "✅ Invalid token correctly rejected" \
+            || echo "WARN: unexpected validation result: $VALID"
+
   # ── Summary ──────────────────────────────────────────────────────────────────
   smoke-summary:
     name: "Smoke Test Summary"
@@ -536,6 +747,8 @@ jobs:
       - smoke-custom-game
       - smoke-ds-admin
       - smoke-dashboard
+      - smoke-relay-health
+      - smoke-ds-lifecycle
     if: always()
     steps:
       - name: Report results
@@ -549,11 +762,14 @@ jobs:
           echo "Custom Game:     ${{ needs.smoke-custom-game.result }}"
           echo "DS Admin:        ${{ needs.smoke-ds-admin.result }}"
           echo "Dashboard:       ${{ needs.smoke-dashboard.result }}"
+          echo "Relay Health:    ${{ needs.smoke-relay-health.result }}"
+          echo "DS Lifecycle:    ${{ needs.smoke-ds-lifecycle.result }}"
           if [[ "${{ needs.smoke-health.result }}"          != "success" || \
                 "${{ needs.smoke-auth.result }}"            != "success" || \
                 "${{ needs.smoke-profile.result }}"         != "success" || \
                 "${{ needs.smoke-matchmaking.result }}"     != "success" || \
-                "${{ needs.smoke-custom-game.result }}"     != "success" ]]; then
+                "${{ needs.smoke-custom-game.result }}"     != "success" || \
+                "${{ needs.smoke-relay-health.result }}"    != "success" ]]; then
             echo "CRITICAL smoke tests FAILED"
             exit 1
           fi

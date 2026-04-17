@@ -106,6 +106,25 @@ public class RelayController {
         return ResponseEntity.ok(ApiResponse.ok());
     }
 
+    // ── GET /api/relay/health (admin/debug) ──────────────────────────────────
+
+    /**
+     * Proxies the relay server's /health endpoint so smoke tests can verify the
+     * relay process is up from the public API without exposing relay port 7776.
+     * Returns 200 with relay status if configured, or {"mode":"direct"} if not.
+     */
+    @GetMapping("/health")
+    public ResponseEntity<ApiResponse<Object>> relayHealth() {
+        var health = relaySessionManager.checkRelayServerHealth();
+        if (health == null) {
+            return ResponseEntity.ok(ApiResponse.ok(java.util.Map.of(
+                    "mode", "direct",
+                    "status", "ok",
+                    "sessions", relaySessionManager.getAllActiveSessions().size())));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(health));
+    }
+
     // ── GET /api/relay/active (admin/debug) ──────────────────────────────────
 
     /**
