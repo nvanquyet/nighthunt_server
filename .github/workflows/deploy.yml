@@ -218,7 +218,7 @@ jobs:
           port: 22
           script: |
             set -e
-            ADMIN_SECRET=$(grep "^DS_ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
+            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
             DS_IMAGE=$(grep "^DS_IMAGE_REF=" /opt/nighthunt/.env.production | cut -d= -f2)
 
             echo "=== [1/4] Backend health ==="

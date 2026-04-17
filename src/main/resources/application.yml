@@ -123,7 +123,7 @@ ds:
 
   admin:
     # Secret dùng cho CI/CD webhook (POST /api/admin/ds/update-image)
-    secret: ${DS_ADMIN_SECRET:change-me-in-production}
+    secret: ${ADMIN_SECRET:change-me-in-production}
 
 # ── Custom Game / Relay Configuration ─────────────────────────────────────────
 # Three modes (evaluated in order):

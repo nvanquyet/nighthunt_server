@@ -462,7 +462,7 @@ jobs:
         run: |
           RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/admin/ds/update-image" \
             -H "Content-Type: application/json" \
-            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}" \
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}" \
             -d '{"imageRef":"ghcr.io/nvanquyet/nighthunt-ds:latest","version":"smoke-test"}')
           STATUS=$(echo "$RESPONSE" | tail -1); BODY=$(echo "$RESPONSE" | head -n -1)
           echo "HTTP $STATUS | $BODY"
@@ -494,7 +494,7 @@ jobs:
       - name: GET /api/admin/ds/servers (list active DS containers)
         run: |
           RESPONSE=$(curl -s -w '\n%{http_code}' "$API_BASE/admin/ds/servers" \
-            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}")
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
           STATUS=$(echo "$RESPONSE" | tail -1); BODY=$(echo "$RESPONSE" | head -n -1)
           echo "HTTP $STATUS | $BODY"
           if [ "$STATUS" = "200" ]; then
@@ -517,7 +517,7 @@ jobs:
       - name: GET /api/dashboard/stats (requires admin secret)
         run: |
           RESPONSE=$(curl -s -w '\n%{http_code}' "$API_BASE/dashboard/stats" \
-            -H "X-Admin-Secret: ${{ secrets.BACKEND_ADMIN_SECRET }}")
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
           STATUS=$(echo "$RESPONSE" | tail -1); BODY=$(echo "$RESPONSE" | head -n -1)
           echo "HTTP $STATUS | $BODY"
           echo "$BODY" | grep -q '"success":true' \
@@ -685,7 +685,7 @@ jobs:
           echo "matchId=${MATCH_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Simulate DS register callback (POST /api/ds/register)
-        # Non-fatal: requires real DS_ADMIN_SECRET to match server config
+        # Non-fatal: requires real ADMIN_SECRET to match server config
         continue-on-error: true
         run: |
           MATCH_ID="${{ steps.start.outputs.matchId }}"
@@ -696,8 +696,8 @@ jobs:
           SERVER_ID="smoke-ds-$(date +%s)"
           R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/register" \
             -H "Content-Type: application/json" \
-            -H "X-DS-Secret: ${{ secrets.DS_ADMIN_SECRET }}" \
-            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.DS_ADMIN_SECRET }}\",\"gamePort\":9001,\"maxPlayers\":4,\"expectedPlayers\":4,\"mapId\":\"map_test\",\"matchId\":\"${MATCH_ID}\"}")
+            -H "X-DS-Secret: ${{ secrets.ADMIN_SECRET }}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.ADMIN_SECRET }}\",\"gamePort\":9001,\"maxPlayers\":4,\"expectedPlayers\":4,\"mapId\":\"map_test\",\"matchId\":\"${MATCH_ID}\"}")
           S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
           echo "DS register → HTTP $S | $BODY"
           [ "$S" = "200" ] || echo "WARN: DS register returned $S (non-fatal — secret mismatch or no match)"
@@ -714,8 +714,8 @@ jobs:
           fi
           R=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/ds/game-ready" \
             -H "Content-Type: application/json" \
-            -H "X-DS-Secret: ${{ secrets.DS_ADMIN_SECRET }}" \
-            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.DS_ADMIN_SECRET }}\"}")
+            -H "X-DS-Secret: ${{ secrets.ADMIN_SECRET }}" \
+            -d "{\"serverId\":\"${SERVER_ID}\",\"serverSecret\":\"${{ secrets.ADMIN_SECRET }}\"}")
           S=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -n -1)
           echo "DS game-ready → HTTP $S | $BODY"
           [ "$S" = "200" ] || echo "WARN: DS game-ready returned $S (non-fatal)"
