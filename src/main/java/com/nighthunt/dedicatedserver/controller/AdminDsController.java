@@ -25,7 +25,7 @@ public class AdminDsController {
     private final DedicatedServerService dsService;
     private final DedicatedServerRepository dsRepo;
 
-    @Value("${ds.admin.secret:change-me-in-production}")
+    @Value("${ADMIN_SECRET:change-me-in-production}")
     private String adminSecret;
 
     /**

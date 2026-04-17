@@ -43,7 +43,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AdminGameConfigController {
 
-    @Value("${ds.admin.secret:change-me-in-production}")
+    @Value("${ADMIN_SECRET:change-me-in-production}")
     private String adminSecret;
 
     private final GameModeService     gameModeService;

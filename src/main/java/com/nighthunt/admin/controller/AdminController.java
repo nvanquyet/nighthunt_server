@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AdminController {
 
-    @Value("${ds.admin.secret:change-me-in-production}")
+    @Value("${ADMIN_SECRET:change-me-in-production}")
     private String adminSecret;
 
     private final UserRepository              userRepository;

@@ -123,6 +123,7 @@ ds:
 
   admin:
     # Secret dùng cho CI/CD webhook (POST /api/admin/ds/update-image)
+    # NOTE: Controllers read ${ADMIN_SECRET} directly to bypass nested-placeholder resolution.
     secret: ${ADMIN_SECRET:change-me-in-production}
 
 # ── Custom Game / Relay Configuration ─────────────────────────────────────────
