@@ -38,13 +38,17 @@ jobs:
         with:
           java-version: '17'
           distribution: temurin
-          cache: gradle
+
+      - name: Setup Gradle (dependency cache)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Build JAR (skip tests)
         run: ./gradlew build -x test --no-daemon
 
       - name: Run Tests
-        run: ./gradlew test --no-daemon
+        run: ./gradlew test --no-daemon --no-parallel
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4.6.2
