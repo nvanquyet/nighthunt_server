@@ -86,12 +86,14 @@ jobs:
           ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           REFRESH=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['refreshToken'])")
           SESSION=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('sessionId',''))")
-          [ -n "$ACCESS" ] || (echo "FAIL: empty accessToken" && exit 1)
+          [ -n "$ACCESS" ] && [ "$ACCESS" != "None" ] && [ "$ACCESS" != "null" ] \
+            || (echo "FAIL: empty/null accessToken: '$ACCESS'" && exit 1)
           echo "access=$ACCESS" >> "$GITHUB_OUTPUT"
           echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
           echo "session=$SESSION" >> "$GITHUB_OUTPUT"
 
       - name: Auto-login (check-session)
+        continue-on-error: true   # session check is informational — must not block refresh/logout
         run: |
           BODY=$(curl -sf -X POST "$API_BASE/auth/auto-login" \
             -H "Content-Type: application/json" \
@@ -108,7 +110,8 @@ jobs:
           echo "$BODY"
           echo "$BODY" | grep -q '"success":true' || (echo "FAIL: refresh-token" && exit 1)
           NEW_ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
-          [ -n "$NEW_ACCESS" ] || (echo "FAIL: empty new accessToken" && exit 1)
+          [ -n "$NEW_ACCESS" ] && [ "$NEW_ACCESS" != "None" ] && [ "$NEW_ACCESS" != "null" ] \
+            || (echo "FAIL: invalid new accessToken: '$NEW_ACCESS'" && exit 1)
           echo "access=$NEW_ACCESS" >> "$GITHUB_OUTPUT"
 
       - name: Logout
@@ -122,7 +125,8 @@ jobs:
   smoke-profile:
     name: "Flow 3+4 – Profile & Friends"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-auth]   # serialized: prevents concurrent auth rate-limiting
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: Setup – create & login two test users
         id: setup
@@ -137,6 +141,7 @@ jobs:
             -d "{\"identifier\":\"smokeA_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           USER_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
+          [ -n "$TOKEN_A" ] && [ "$TOKEN_A" != "None" ] || (echo "FAIL: login A failed" && exit 1)
           # User B
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
@@ -146,6 +151,7 @@ jobs:
             -d "{\"identifier\":\"smokeB_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
           USER_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
+          [ -n "$TOKEN_B" ] && [ "$TOKEN_B" != "None" ] || (echo "FAIL: login B failed" && exit 1)
           echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
           echo "tokenB=$TOKEN_B" >> "$GITHUB_OUTPUT"
           echo "userA=$USER_A" >> "$GITHUB_OUTPUT"
@@ -195,7 +201,8 @@ jobs:
   smoke-matchmaking:
     name: "Flow 2 – Matchmaking Queue"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-profile]   # serialized
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: Setup – login test user
         id: login
@@ -208,6 +215,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"identifier\":\"smokeQ_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          [ -n "$TOKEN" ] && [ "$TOKEN" != "None" ] || (echo "FAIL: matchmaking login failed" && exit 1)
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Enqueue for matchmaking
@@ -230,17 +238,17 @@ jobs:
   smoke-ds:
     name: "Flow 5 – DS Registration"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-matchmaking]   # serialized
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: POST /api/ds/register (invalid secret → 401)
         run: |
-          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API_BASE/ds/register" \
+          # Use -s (not -sf) so curl always exits 0 and we get the actual HTTP status code
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_BASE/ds/register" \
             -H "X-DS-Secret: invalid_secret" \
             -H "Content-Type: application/json" \
-            -d '{"serverId":"smoke-test","gamePort":7770,"maxPlayers":4,"expectedPlayers":4,"mapId":"map_01"}' \
-            || echo "$?")
+            -d '{"serverId":"smoke-test","gamePort":7770,"maxPlayers":4,"expectedPlayers":4,"mapId":"map_01"}')
           echo "HTTP $STATUS"
-          # Controller now throws ResponseStatusException(401) for invalid secret
           [[ "$STATUS" = "401" || "$STATUS" = "403" ]] \
             || (echo "FAIL: expected 401/403, got $STATUS" && exit 1)
 
@@ -248,7 +256,8 @@ jobs:
   smoke-custom-game:
     name: "Flow 6 – Custom Game (Room + Relay)"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-ds]   # serialized
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: Setup – register & login Host (A) and Player (B)
         id: setup
@@ -262,6 +271,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"identifier\":\"cgA_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          [ -n "$TOKEN_A" ] && [ "$TOKEN_A" != "None" ] || (echo "FAIL: login cgA failed" && exit 1)
           # Register + login Player (B)
           curl -sf -X POST "$API_BASE/auth/register" \
             -H "Content-Type: application/json" \
@@ -270,6 +280,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"identifier\":\"cgB_${SUFFIX}\",\"password\":\"Test@1234\"}")
           TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          [ -n "$TOKEN_B" ] && [ "$TOKEN_B" != "None" ] || (echo "FAIL: login cgB failed" && exit 1)
           echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
           echo "tokenB=$TOKEN_B" >> "$GITHUB_OUTPUT"
 
@@ -356,7 +367,8 @@ jobs:
   smoke-ds-admin:
     name: "Flow 7 – DS Admin update-image"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-custom-game]   # serialized
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: POST /api/admin/ds/update-image (valid admin secret)
         run: |
@@ -371,7 +383,7 @@ jobs:
 
       - name: POST /api/admin/ds/update-image (invalid secret → 401/403)
         run: |
-          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST "$API_BASE/admin/ds/update-image" \
             -H "Content-Type: application/json" \
             -H "X-Admin-Secret: totally-wrong-secret" \
@@ -394,7 +406,8 @@ jobs:
   smoke-dashboard:
     name: "Flow 8 – Dashboard Stats"
     runs-on: ubuntu-latest
-    needs: smoke-health
+    needs: [smoke-health, smoke-ds-admin]   # serialized
+    if: always() && needs.smoke-health.result == 'success'
     steps:
       - name: GET /api/dashboard/stats (requires admin secret)
         run: |
