@@ -1,4 +1,130 @@
-name: Build & Deploy Dedicated Server
+name: Deploy Dedicated Server Image
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Role của workflow này trong nighthunt_SERVER repo:
+#   • NHẬN thông báo từ nighthunt_CLIENT repo sau khi client đã build Unity
+#     và push DS image lên GHCR.
+#   • Pull image mới về VPS, cập nhật .env.production, notify backend.
+#
+# Unity build & Docker image build đều do nighthunt_CLIENT repo xử lý.
+# nighthunt_SERVER KHÔNG cần UNITY_LICENSE / UNITY_EMAIL / UNITY_PASSWORD.
+#
+# Trigger options:
+# 1. repository_dispatch từ client repo (recommended):
+#      curl -X POST https://api.github.com/repos/nvanquyet/nighthunt_server/dispatches \
+#        -H "Authorization: Bearer <PAT_repo_scope>" \
+#        -H "Content-Type: application/json" \
+#        -d '{"event_type":"ds_build","client_payload":{"image_ref":"ghcr.io/nvanquyet/nighthunt-ds:latest","version":"abc1234"}}'
+#
+# 2. Manual trigger từ GitHub Actions UI (workflow_dispatch)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  repository_dispatch:
+    types: [ds_build]
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: 'DS image ref to pull & deploy (default: ghcr.io/nvanquyet/nighthunt-ds:latest)'
+        required: false
+        default: 'ghcr.io/nvanquyet/nighthunt-ds:latest'
+      version:
+        description: 'Image version/tag (for logging only)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write    # push git tag
+  packages: read
+
+env:
+  DS_IMAGE_NAME: ${{ github.repository_owner }}/nighthunt-ds
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy-ds:
+    name: Pull DS Image & Notify Backend
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image ref & version
+        id: vars
+        run: |
+          IMAGE_REF="${{ github.event.client_payload.image_ref || inputs.image_ref || format('ghcr.io/{0}/nighthunt-ds:latest', github.repository_owner) }}"
+          VERSION="${{ github.event.client_payload.version || inputs.version || 'latest' }}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "DS image: ${IMAGE_REF} (version: ${VERSION})"
+
+      - name: SSH — Pull DS image & notify backend
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     22
+          script: |
+            set -e
+
+            IMAGE_REF="${{ steps.vars.outputs.image_ref }}"
+            VERSION="${{ steps.vars.outputs.version }}"
+            ADMIN_SECRET=$(grep "^DS_ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
+
+            echo "=== [1/4] Login to GHCR ==="
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "=== [2/4] Pull new DS image: ${IMAGE_REF} ==="
+            docker pull "${IMAGE_REF}"
+            echo "Pull done"
+
+            echo "=== [3/4] Update DS_IMAGE_REF in .env.production ==="
+            sed -i "s|^DS_IMAGE_REF=.*|DS_IMAGE_REF=${IMAGE_REF}|" /opt/nighthunt/.env.production
+            grep '^DS_IMAGE_REF=' /opt/nighthunt/.env.production
+
+            echo "=== [4/4] Notify backend Admin API ==="
+            RESP=$(curl -sf -X POST http://localhost:8080/api/admin/ds/update-image \
+              -H "Content-Type: application/json" \
+              -H "X-Admin-Secret: ${ADMIN_SECRET}" \
+              -d "{\"imageRef\":\"${IMAGE_REF}\",\"version\":\"${VERSION}\"}" \
+              || echo '{"success":false,"message":"curl failed"}')
+            echo "Backend response: ${RESP}"
+            echo "${RESP}" | grep -q '"success":true' \
+              && echo "Backend updated" \
+              || echo "Backend response: ${RESP}"
+
+      - name: Push DS git tag
+        run: |
+          DATE=$(date +%Y%m%d)
+          SHA="${GITHUB_SHA:0:7}"
+          TAG="ds/${DATE}-${SHA}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git tag -d "${TAG}" 2>/dev/null || true
+          git push origin ":refs/tags/${TAG}" 2>/dev/null || true
+          git tag -a "${TAG}" -m "DS deployed: ${{ steps.vars.outputs.image_ref }} (v${{ steps.vars.outputs.version }})"
+          git push origin "${TAG}"
+
+      - name: Job Summary
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          ICON=$([ "$STATUS" = "success" ] && echo "✅" || echo "❌")
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          {
+            echo "## ${ICON} DS Deploy — ${STATUS^^}"
+            echo "| Key | Value |"
+            echo "|-----|-------|"
+            echo "| DS Image | \`${{ steps.vars.outputs.image_ref }}\` |"
+            echo "| Version | \`${{ steps.vars.outputs.version }}\` |"
+            echo "| Deployed at | ${DATE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Trigger options:

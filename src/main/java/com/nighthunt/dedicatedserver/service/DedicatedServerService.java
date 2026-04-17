@@ -119,33 +119,6 @@ public class DedicatedServerService {
                 .build();
     }
 
-    /** Backward-compat overload for admin/manual allocation (uses defaultMaxPlayers as expected count). */
-    @Transactional
-    public ServerAllocateResponse allocateServer(String region, String mapId) {
-        return allocateServerForMatch(region, mapId, defaultMaxPlayers, null);
-    }
-
-    /**
-     * Allocate a DS for a specific ranked match.
-     * Stores matchId so /ds/game-ready can broadcast ds_ready to the right players.
-     */
-    @Transactional
-    public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
-                                                         int expectedPlayers, String matchId) {
-        log.info("[DS-Alloc] allocateServerForMatch \u25ba region={} mapId={} expectedPlayers={} matchId={}",
-                region, mapId, expectedPlayers, matchId);
-        ServerAllocateResponse response = allocateServer(region, mapId, expectedPlayers);
-        if (matchId != null) {
-            dsRepo.findByServerId(response.getServerId()).ifPresent(ds -> {
-                ds.setMatchId(matchId);
-                dsRepo.save(ds);
-                log.info("[DS-Alloc] serverId={} bound to matchId={}", ds.getServerId(), matchId);
-            });
-        }
-        return response;
-    }
-
-
     /**
      * Called by DS via POST /ds/game-ready when it has fully booted and is accepting players.
      * Validates the DS secret, updates status to "ready", then broadcasts "ds_ready" to all
