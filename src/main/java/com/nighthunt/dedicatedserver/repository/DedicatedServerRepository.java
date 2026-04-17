@@ -15,17 +15,20 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
 
     Optional<DedicatedServer> findByServerId(String serverId);
 
-    /** Tìm server available (ready + có chỗ) theo region và mapId, ưu tiên gần đầy nhất */
+    /** Tìm server available (ready + có chỗ) theo region, IP và mapId, ưu tiên gần đầy nhất */
     @Query("""
         SELECT d FROM DedicatedServer d
         WHERE d.region = :region
+          AND d.ip = :ip
           AND d.status = 'ready'
           AND d.currentPlayers < d.maxPlayers
           AND (:mapId IS NULL OR d.mapId IS NULL OR d.mapId = :mapId)
         ORDER BY d.currentPlayers DESC
         LIMIT 1
     """)
-    Optional<DedicatedServer> findAvailable(@Param("region") String region, @Param("mapId") String mapId);
+    Optional<DedicatedServer> findAvailable(@Param("region") String region,
+                                            @Param("ip") String ip,
+                                            @Param("mapId") String mapId);
 
     /** Tìm servers đang starting quá lâu (timeout → cleanup) */
     @Query("""

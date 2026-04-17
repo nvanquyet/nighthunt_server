@@ -70,7 +70,7 @@ class DedicatedServerServiceTest {
         @DisplayName("Returns existing idle server when one is available")
         void allocate_returnsExistingIdleServer() {
             DedicatedServer idle = idleServer("srv-001", 7777);
-            when(dsRepo.findAvailable("vn", "map_01")).thenReturn(Optional.of(idle));
+            when(dsRepo.findAvailable("vn", "20.2.235.140", "map_01")).thenReturn(Optional.of(idle));
             when(redis.opsForValue()).thenReturn(valueOps);
             doNothing().when(valueOps).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 
@@ -87,7 +87,7 @@ class DedicatedServerServiceTest {
         @Test
         @DisplayName("Spawns new server when no idle server is available")
         void allocate_spawnsNewWhenNoIdle() throws Exception {
-            when(dsRepo.findAvailable("vn", "map_01")).thenReturn(Optional.empty());
+            when(dsRepo.findAvailable("vn", "20.2.235.140", "map_01")).thenReturn(Optional.empty());
             when(dockerManager.getCurrentImageRef()).thenReturn("ghcr.io/nvanquyet/nighthunt-ds:latest");
             // findByPort not called in this path — just ensure port loop doesn't block
             when(dsRepo.existsByPortAndStatusNot(anyInt(), anyString())).thenReturn(false);
@@ -108,7 +108,7 @@ class DedicatedServerServiceTest {
         @DisplayName("allocateServerForMatch stores matchId on idle server")
         void allocateForMatch_setsMatchIdOnIdleServer() {
             DedicatedServer idle = idleServer("srv-002", 7778);
-            when(dsRepo.findAvailable("vn", null)).thenReturn(Optional.of(idle));
+            when(dsRepo.findAvailable("vn", "20.2.235.140", null)).thenReturn(Optional.of(idle));
             when(dsRepo.save(idle)).thenReturn(idle);
             when(redis.opsForValue()).thenReturn(valueOps);
             doNothing().when(valueOps).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));

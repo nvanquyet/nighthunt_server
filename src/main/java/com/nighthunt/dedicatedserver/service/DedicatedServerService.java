@@ -96,7 +96,7 @@ public class DedicatedServerService {
      */
     @Transactional
     private ServerAllocateResponse doAllocate(String region, String mapId, int expectedPlayers, String matchId) {
-        DedicatedServer server = dsRepo.findAvailable(region, mapId).orElse(null);
+        DedicatedServer server = dsRepo.findAvailable(region, vpsPublicIp, mapId).orElse(null);
         String devSecret = null;
 
         if (server == null) {
