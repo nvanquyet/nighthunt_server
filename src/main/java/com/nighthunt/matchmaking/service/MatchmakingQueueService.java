@@ -16,6 +16,7 @@ import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,10 +64,16 @@ public class MatchmakingQueueService {
     // ── Dependencies ─────────────────────────────────────────────────────────
     private final MatchmakingEntryRepository entryRepository;
     private final UserRepository              userRepository;
-    private final ConnectionManager           connectionManager;
+    private ConnectionManager                 connectionManager;
     private final RoomService                 roomService;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
+
+    @Lazy
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setConnectionManager(ConnectionManager connectionManager) {
+        this.connectionManager = connectionManager;
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
