@@ -8,18 +8,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 /**
- * BE-28 — Ranked matchmaking queue endpoints.
+ * Ranked matchmaking queue endpoints.
  *
  * <ul>
- *   <li>{@code POST /api/matchmaking/queue}     — enter the ranked queue</li>
- *   <li>{@code DELETE /api/matchmaking/queue}   — leave the ranked queue</li>
+ *   <li>{@code POST   /api/matchmaking/queue} — enter the ranked queue</li>
+ *   <li>{@code DELETE /api/matchmaking/queue} — leave the ranked queue</li>
  * </ul>
  *
- * The existing {@code POST /api/matchmaking/request} endpoint in
- * {@code MatchmakingController} handles DS allocation and remains intact.
+ * No accept/decline endpoints — when a full group is formed the DS boots
+ * immediately and {@code match_ready} is sent directly to all players.
  */
 @RestController
 @RequestMapping("/matchmaking/queue")
@@ -54,5 +52,4 @@ public class MatchmakingQueueController {
         queueService.dequeue(userId);
         return ResponseEntity.ok(ApiResponse.ok());
     }
-
 }

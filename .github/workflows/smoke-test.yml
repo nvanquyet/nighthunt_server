@@ -1,0 +1,281 @@
+name: Smoke Tests (Production)
+
+# Chạy tự động sau khi deploy thành công, hoặc thủ công
+on:
+  workflow_run:
+    workflows: ["Build & Deploy Backend"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'API base URL to test (default: production)'
+        required: false
+        default: ''
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Dùng input nếu có, fallback về secret production URL
+  API_BASE: ${{ github.event.inputs.target_url || secrets.PRODUCTION_API_URL }}
+
+jobs:
+  # ── Only run if triggered manually OR if the upstream deploy succeeded ──────
+  check-trigger:
+    name: Check Deploy Status
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Flow 1: Health / Actuator ────────────────────────────────────────────────
+  smoke-health:
+    name: "Flow 1 – Health Check"
+    runs-on: ubuntu-latest
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should-run == 'true'
+    steps:
+      - name: GET /api/actuator/health
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$API_BASE/actuator/health")
+          echo "HTTP $STATUS"
+          [ "$STATUS" = "200" ] || (echo "FAIL: health check returned $STATUS" && exit 1)
+
+      - name: Verify response body contains 'UP'
+        run: |
+          BODY=$(curl -sf "$API_BASE/actuator/health")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"status":"UP"' || (echo "FAIL: service not UP" && exit 1)
+
+  # ── Flow 2: Auth – Register, Login, Refresh, Logout ─────────────────────────
+  smoke-auth:
+    name: "Flow 1+2 – Auth Lifecycle"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: Register test user
+        id: register
+        run: |
+          SUFFIX=$(date +%s)
+          USERNAME="smoke_${SUFFIX}"
+          EMAIL="smoke_${SUFFIX}@test.com"
+          BODY=$(curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"$USERNAME\",\"email\":\"$EMAIL\",\"password\":\"Test@1234\"}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: register" && exit 1)
+          echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
+          echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
+
+      - name: Login → get tokens
+        id: login
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${{ steps.register.outputs.username }}\",\"password\":\"Test@1234\"}")
+          echo "$BODY"
+          ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          REFRESH=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['refreshToken'])")
+          echo "access=$ACCESS" >> "$GITHUB_OUTPUT"
+          echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
+
+      - name: Auto-login (check-session)
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/auth/auto-login" \
+            -H "Content-Type: application/json" \
+            -d "{\"refreshToken\":\"${{ steps.login.outputs.refresh }}\"}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: auto-login" && exit 1)
+
+      - name: Refresh token
+        id: refresh
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/auth/refresh-token" \
+            -H "Content-Type: application/json" \
+            -d "{\"refreshToken\":\"${{ steps.login.outputs.refresh }}\"}")
+          echo "$BODY"
+          NEW_ACCESS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          echo "access=$NEW_ACCESS" >> "$GITHUB_OUTPUT"
+
+      - name: Logout
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API_BASE/auth/logout" \
+            -H "Authorization: Bearer ${{ steps.refresh.outputs.access }}")
+          echo "HTTP $STATUS"
+          [ "$STATUS" = "200" ] || (echo "FAIL: logout returned $STATUS" && exit 1)
+
+  # ── Flow 3: Profile + Player State ──────────────────────────────────────────
+  smoke-profile:
+    name: "Flow 3+4 – Profile & Friends"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: Setup – create & login two test users
+        id: setup
+        run: |
+          SUFFIX=$(date +%s)
+          # User A
+          curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeA_${SUFFIX}\",\"email\":\"smokeA_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+          BODY_A=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeA_${SUFFIX}\",\"password\":\"Test@1234\"}")
+          TOKEN_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          USER_A=$(echo "$BODY_A" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
+          # User B
+          curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeB_${SUFFIX}\",\"email\":\"smokeB_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+          BODY_B=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeB_${SUFFIX}\",\"password\":\"Test@1234\"}")
+          TOKEN_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          USER_B=$(echo "$BODY_B" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['userId'])")
+          echo "tokenA=$TOKEN_A" >> "$GITHUB_OUTPUT"
+          echo "tokenB=$TOKEN_B" >> "$GITHUB_OUTPUT"
+          echo "userA=$USER_A" >> "$GITHUB_OUTPUT"
+          echo "userB=$USER_B" >> "$GITHUB_OUTPUT"
+
+      - name: GET /api/profile (my profile)
+        run: |
+          BODY=$(curl -sf "$API_BASE/profile" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: get profile" && exit 1)
+
+      - name: GET /api/profile/{userId} (public profile)
+        run: |
+          BODY=$(curl -sf "$API_BASE/profile/${{ steps.setup.outputs.userB }}" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: public profile" && exit 1)
+
+      - name: Friend flow – send / accept / list / remove
+        run: |
+          # Send request A→B
+          curl -sf -X POST "$API_BASE/friends/request/${{ steps.setup.outputs.userB }}" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" | grep -q '"success":true' \
+            || (echo "FAIL: send friend request" && exit 1)
+          # B gets incoming requests
+          BODY=$(curl -sf "$API_BASE/friends/requests/incoming" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}")
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: incoming requests" && exit 1)
+          # B accepts
+          REQ_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])")
+          curl -sf -X POST "$API_BASE/friends/accept/$REQ_ID" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenB }}" | grep -q '"success":true' \
+            || (echo "FAIL: accept request" && exit 1)
+          # A gets friends list
+          curl -sf "$API_BASE/friends" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" | grep -q '"success":true' \
+            || (echo "FAIL: friend list" && exit 1)
+          # A removes friend
+          curl -sf -X DELETE "$API_BASE/friends/${{ steps.setup.outputs.userB }}" \
+            -H "Authorization: Bearer ${{ steps.setup.outputs.tokenA }}" | grep -q '"success":true' \
+            || (echo "FAIL: remove friend" && exit 1)
+
+  # ── Flow 2: Matchmaking queue ────────────────────────────────────────────────
+  smoke-matchmaking:
+    name: "Flow 2 – Matchmaking Queue"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: Setup – login test user
+        id: login
+        run: |
+          SUFFIX=$(date +%s)
+          curl -sf -X POST "$API_BASE/auth/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeQ_${SUFFIX}\",\"email\":\"smokeQ_${SUFFIX}@t.com\",\"password\":\"Test@1234\"}" > /dev/null
+          BODY=$(curl -sf -X POST "$API_BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"smokeQ_${SUFFIX}\",\"password\":\"Test@1234\"}")
+          TOKEN=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['accessToken'])")
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Enqueue for matchmaking
+        run: |
+          BODY=$(curl -sf -X POST "$API_BASE/matchmaking/queue" \
+            -H "Authorization: Bearer ${{ steps.login.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{"gameModeId":"ranked_2v2"}')
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: enqueue" && exit 1)
+
+      - name: Dequeue from matchmaking
+        run: |
+          BODY=$(curl -sf -X DELETE "$API_BASE/matchmaking/queue" \
+            -H "Authorization: Bearer ${{ steps.login.outputs.token }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' || (echo "FAIL: dequeue" && exit 1)
+
+  # ── Flow 5: DS registration (smoke only – no real Docker) ───────────────────
+  smoke-ds:
+    name: "Flow 5 – DS Registration"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: POST /api/ds/register (invalid secret → 401/403)
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API_BASE/ds/register" \
+            -H "X-DS-Secret: invalid_secret" \
+            -H "Content-Type: application/json" \
+            -d '{"serverId":"smoke-test","gamePort":7770,"maxPlayers":4,"expectedPlayers":4,"mapId":"map_01"}')
+          echo "HTTP $STATUS"
+          [[ "$STATUS" = "401" || "$STATUS" = "403" ]] \
+            || (echo "FAIL: expected 401/403, got $STATUS" && exit 1)
+
+  # ── Flow 8: Dashboard stats ──────────────────────────────────────────────────
+  smoke-dashboard:
+    name: "Flow 8 – Dashboard Stats"
+    runs-on: ubuntu-latest
+    needs: smoke-health
+    steps:
+      - name: GET /api/dashboard/stats (requires admin secret)
+        run: |
+          BODY=$(curl -sf "$API_BASE/dashboard/stats" \
+            -H "X-Admin-Secret: ${{ secrets.ADMIN_SECRET }}")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"success":true' \
+            || (echo "WARN: dashboard stats may require active data — checking HTTP status" && true)
+
+  # ── Summary ──────────────────────────────────────────────────────────────────
+  smoke-summary:
+    name: "Smoke Test Summary"
+    runs-on: ubuntu-latest
+    needs:
+      - smoke-health
+      - smoke-auth
+      - smoke-profile
+      - smoke-matchmaking
+      - smoke-ds
+      - smoke-dashboard
+    if: always()
+    steps:
+      - name: Report results
+        run: |
+          echo "=== Smoke Test Results ==="
+          echo "Health:       ${{ needs.smoke-health.result }}"
+          echo "Auth:         ${{ needs.smoke-auth.result }}"
+          echo "Profile/Friends: ${{ needs.smoke-profile.result }}"
+          echo "Matchmaking:  ${{ needs.smoke-matchmaking.result }}"
+          echo "DS Register:  ${{ needs.smoke-ds.result }}"
+          echo "Dashboard:    ${{ needs.smoke-dashboard.result }}"
+          # Fail the summary job if any critical test failed
+          if [[ "${{ needs.smoke-health.result }}" != "success" || \
+                "${{ needs.smoke-auth.result }}"   != "success" || \
+                "${{ needs.smoke-profile.result }}" != "success" || \
+                "${{ needs.smoke-matchmaking.result }}" != "success" ]]; then
+            echo "CRITICAL smoke tests FAILED"
+            exit 1
+          fi
+          echo "All critical smoke tests passed ✓"

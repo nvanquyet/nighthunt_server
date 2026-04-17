@@ -10,6 +10,7 @@ import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.entity.MatchPlayerResult;
 import com.nighthunt.match.repository.MatchPlayerResultRepository;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.dedicatedserver.service.DedicatedServerService;
 import com.nighthunt.relay.service.RelaySessionManager;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -46,6 +47,7 @@ public class MatchResultService {
     private final UserRepository               userRepository;
     private final EloService                   eloService;
     private final RelaySessionManager          relaySessionManager;
+    private final DedicatedServerService       dedicatedServerService;
     private final ConnectionManager            connectionManager;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
@@ -166,9 +168,13 @@ public class MatchResultService {
         match.setFinishedAt(LocalDateTime.now());
         matchRepository.save(match);
 
-        // 5. Close relay session
+        // 5a. Close relay session (custom game relay server → releases UDP port)
         relaySessionManager.getByRoomId(match.getRoomId())
                 .ifPresent(s -> relaySessionManager.finishSession(s.getSessionToken()));
+
+        // 5b. Reclaim DS container (ranked match → stop Docker container immediately)
+        //     No-op for custom games (no DS is linked to a custom match).
+        dedicatedServerService.reclaimServerForMatch(req.getMatchId());
 
         // 6. Broadcast match_ended WS event to all participants
         MatchEndResponse response = MatchEndResponse.builder()

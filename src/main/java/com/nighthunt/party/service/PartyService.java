@@ -378,6 +378,42 @@ public class PartyService {
     }
 
     /**
+     * Transfer party leadership to another member (host only).
+     * The current host remains in the party as a regular member.
+     */
+    @Transactional
+    public PartyDTO transferLeader(Long hostUserId, Long newHostUserId) {
+        PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
+                .orElseThrow(() -> new BusinessException("PARTY_NOT_IN_PARTY", "You are not in a party"));
+
+        Party party = findParty(hostMember.getPartyId());
+
+        // Validate: caller is current host
+        if (!party.getHostUserId().equals(hostUserId)) {
+            throw new BusinessException("PARTY_NOT_HOST", "Only the host can transfer leadership");
+        }
+
+        // Validate: cannot transfer to self
+        if (hostUserId.equals(newHostUserId)) {
+            throw new BusinessException("PARTY_TRANSFER_SAME_USER", "Cannot transfer leadership to yourself");
+        }
+
+        // Validate: target is in the party
+        if (!partyMemberRepository.existsByPartyIdAndUserId(party.getId(), newHostUserId)) {
+            throw new BusinessException("PARTY_USER_NOT_IN_PARTY", "Target user is not in this party");
+        }
+
+        Long oldHostUserId = party.getHostUserId();
+        party.setHostUserId(newHostUserId);
+        partyRepository.save(party);
+
+        messageBrokerService.publishPartyHostChanged(party.getId(), oldHostUserId, newHostUserId);
+        log.info("[Party] Leader transferred: party={} oldHost={} newHost={}", party.getId(), oldHostUserId, newHostUserId);
+
+        return toPartyDTO(party);
+    }
+
+    /**
      * Disband party (host only).
      */
     @Transactional

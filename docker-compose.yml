@@ -123,8 +123,15 @@ services:
       DS_MAX_PLAYERS: ${DS_MAX_PLAYERS}
       GHCR_TOKEN: ${GHCR_TOKEN:-}
       GHCR_OWNER: ${GHCR_OWNER:-}
+      # Relay Configuration (custom games across networks)
+      RELAY_SERVER_URL: ${RELAY_SERVER_URL:-http://nighthunt-relay:7776}
+      RELAY_HOST: ${RELAY_HOST:-}
+      RELAY_PORT: ${RELAY_PORT:-7777}
       # [PRODUCTION] Backend runs HTTP internally — nginx handles TLS on 443.
       # Port exposed here for debug access; firewall port 8080 on VPS if desired.
+      # Logging
+      LOG_PATH: /app/logs
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     volumes:
@@ -132,10 +139,14 @@ services:
       - ./src/main/resources/certs:/app/certs:ro
       # Docker socket for spawning DS containers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent log files (survives container restarts)
+      - backend_logs:/app/logs
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      nighthunt-relay:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -185,6 +196,35 @@ services:
     networks:
       - nighthunt-network
 
+  # ── nighthunt-relay — UDP relay server for custom games ──────────────────────
+  # Handles cross-network custom games (different WiFi, mobile, etc.).
+  # All players (host + clients) connect outbound to relay → works with any NAT.
+  # Exposes UDP ports 7777-7900 to the internet (open these in VPS firewall).
+  # Backend communicates with this service on internal port 7776 (HTTP control API).
+  nighthunt-relay:
+    build:
+      context: ./relay
+      dockerfile: Dockerfile
+    container_name: nighthunt-relay
+    ports:
+      - "7776:7776"           # HTTP management API (internal — do NOT expose publicly)
+      - "7777-7900:7777-7900/udp"  # UDP game sessions (expose in VPS firewall)
+    environment:
+      - RELAY_PORT_START=${RELAY_PORT_START:-7777}
+      - RELAY_PORT_END=${RELAY_PORT_END:-7900}
+    command:
+      - "--http-port=7776"
+      - "--port-start=${RELAY_PORT_START:-7777}"
+      - "--port-end=${RELAY_PORT_END:-7900}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7776/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nighthunt-network
+
   dashboard:
     build:
       context: ./dashboard
@@ -214,6 +254,7 @@ volumes:
   redis_data:
   letsencrypt_certs:   # Let's Encrypt certs managed by certbot container
   certbot_www:         # ACME HTTP-01 challenge webroot
+  backend_logs:        # Persistent rolling log files (nighthunt.log, nighthunt-error.log)
 
 networks:
   nighthunt-network:

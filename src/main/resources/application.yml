@@ -126,3 +126,29 @@ ds:
   admin:
     # Secret dùng cho CI/CD webhook (POST /api/admin/ds/update-image)
     secret: ${DS_ADMIN_SECRET:change-me-in-production}
+
+# ── Custom Game / Relay Configuration ─────────────────────────────────────────
+# Three modes (evaluated in order):
+#
+# Mode A — Full relay server (RECOMMENDED for production):
+#   Set relay.server.url to the relay server's internal HTTP API URL.
+#   The relay server (relay/relay_server.py) allocates a unique UDP port per session.
+#   All players (host + clients) connect outbound to relay → works on any network/NAT.
+#   relay.host = public IP/hostname of the relay server (sent to clients).
+#   REQUIRES: relay_server.py running on VPS (see docker-compose.yml nighthunt-relay service).
+#
+# Mode B — Static host + fixed port (single concurrent game, no relay process):
+#   Set relay.host to VPS public IP, leave relay.server.url blank.
+#   Only 1 custom game can run at a time (all use same port).
+#
+# Mode C — Direct P2P (LAN / port-forward):
+#   Leave both relay.server.url and relay.host blank.
+#   Backend detects host player's IP from WebSocket connection.
+#   Works on LAN; internet requires host to open RELAY_PORT on their router.
+relay:
+  server:
+    url:  ${RELAY_SERVER_URL:}      # internal URL of relay_server.py, e.g. http://nighthunt-relay:7776
+  host: ${RELAY_HOST:}              # public IP/hostname of relay VPS (sent to game clients)
+  port: ${RELAY_PORT:7777}          # UDP port (Mode B/C only; Mode A uses dynamic allocation)
+  session:
+    ttl-hours: ${RELAY_SESSION_TTL_HOURS:2}

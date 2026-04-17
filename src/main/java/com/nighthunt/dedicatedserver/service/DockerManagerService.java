@@ -175,13 +175,16 @@ public class DockerManagerService {
     }
 
     /**
-     * Stop và remove container (--rm tự xóa, nhưng stop vẫn cần thiết)
+     * Stop và force-remove container.
+     * Dùng 'docker rm -f' để vừa stop vừa remove luôn trong 1 lệnh,
+     * đảm bảo không còn lại stopped container chiếm disk/port.
+     * (Containers start với --rm tự xóa, nhưng fallback stale cleanup cần rm -f)
      */
     public void stopContainer(String containerId) {
         if (containerId == null || containerId.isBlank()) return;
 
-        log.info("[DockerManager] Stopping container: {}", containerId);
-        runDockerCommand("docker", "stop", containerId);
+        log.info("[DockerManager] Force-removing container: {}", containerId);
+        runDockerCommand("docker", "rm", "-f", containerId);
     }
 
     /**

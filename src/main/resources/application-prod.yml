@@ -13,4 +13,6 @@ logging:
   level:
     root: INFO
     com.nighthunt: INFO
+  file:
+    path: ${LOG_PATH:/app/logs}   # Docker volume: mount as /app/logs → persist across restarts
 

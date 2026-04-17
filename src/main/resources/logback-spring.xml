@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  logback-spring.xml — Production-grade structured logging for NightHunt Backend.
+
+  Log format includes:
+    - Timestamp (ISO-8601)
+    - Log level (padded)
+    - Thread name
+    - Logger class (last 40 chars)
+    - MDC fields: requestId, userId, matchId (auto-injected by MdcLoggingFilter)
+    - Message
+
+  Console output:  Human-readable for local/dev (uses color codes)
+  File output:     Rolling JSON-like lines (easier to grep in production)
+
+  Active profiles:
+    - default / dev  → Console only (colored), DEBUG for com.nighthunt
+    - prod           → Console (no color) + rolling file, INFO for com.nighthunt
+
+  Usage in service classes (via @Slf4j):
+    log.info("[AUTH] Login SUCCESS: userId={} username={}", userId, username);
+    log.warn("[MM] No match found: userId={} eloRange={}", userId, range);
+    log.error("[DS-Alloc] Container start failed: {}", ex.getMessage(), ex);
+-->
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <!-- ── Properties ────────────────────────────────────────────────────── -->
+    <springProperty name="APP_NAME"   source="spring.application.name" defaultValue="nighthunt"/>
+    <springProperty name="LOG_DIR"    source="logging.file.path"       defaultValue="logs"/>
+    <springProperty name="LOG_LEVEL"  source="logging.level.com.nighthunt" defaultValue="INFO"/>
+
+    <!-- ── Patterns ───────────────────────────────────────────────────────── -->
+
+    <!-- Dev: colored, human-readable -->
+    <property name="CONSOLE_PATTERN_COLOR"
+              value="%d{HH:mm:ss.SSS} %highlight(%-5level) %cyan(%thread) %yellow(%-40.40logger{40}) [%X{requestId:--} userId=%X{userId:--}] %msg%n%ex"/>
+
+    <!-- Prod: plain (nginx may capture; avoid ANSI codes in file logs) -->
+    <property name="CONSOLE_PATTERN_PLAIN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %-40.40logger{40} [rid=%X{requestId:--} uid=%X{userId:--} mid=%X{matchId:--}] %msg%n"/>
+
+    <!-- File: one JSON-ish line per entry for grep / ELK -->
+    <property name="FILE_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} level=%-5level thread=%thread logger=%logger{40} rid=%X{requestId:--} uid=%X{userId:--} mid=%X{matchId:--} msg=%msg%ex{5}%n"/>
+
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+    <!-- APPENDERS                                                           -->
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+
+    <!-- ── Dev Console (color) ────────────────────────────────────────────── -->
+    <springProfile name="default,dev">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${CONSOLE_PATTERN_COLOR}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <!-- ── Prod Console (no color) ───────────────────────────────────────── -->
+    <springProfile name="prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${CONSOLE_PATTERN_PLAIN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+
+        <!-- ── Rolling file (prod only) ───────────────────────────────────── -->
+        <appender name="FILE_ALL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/nighthunt.log</file>
+            <encoder>
+                <pattern>${FILE_PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <!-- Daily rollover, keep 30 days -->
+                <fileNamePattern>${LOG_DIR}/nighthunt.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <timeBasedFileNamingAndTriggeringPolicy
+                        class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                    <maxFileSize>100MB</maxFileSize>
+                </timeBasedFileNamingAndTriggeringPolicy>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>3GB</totalSizeCap>
+                <cleanHistoryOnStart>false</cleanHistoryOnStart>
+            </rollingPolicy>
+        </appender>
+
+        <!-- ── Error-only log (prod) ────────────────────────────────────────── -->
+        <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/nighthunt-error.log</file>
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>ERROR</level>
+            </filter>
+            <encoder>
+                <pattern>${FILE_PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_DIR}/nighthunt-error.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+                <maxHistory>60</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+    </springProfile>
+
+    <!-- ── Async wrapper (prevents log I/O from blocking request threads) ── -->
+    <springProfile name="prod">
+        <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="FILE_ALL"/>
+            <queueSize>1024</queueSize>
+            <discardingThreshold>0</discardingThreshold>
+            <includeCallerData>false</includeCallerData>
+        </appender>
+    </springProfile>
+
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+    <!-- LOGGER LEVELS                                                        -->
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+
+    <!-- ── Framework noise reduction ──────────────────────────────────────── -->
+    <logger name="org.springframework"          level="WARN"/>
+    <logger name="org.springframework.security" level="WARN"/>
+    <logger name="org.springframework.web"      level="WARN"/>
+    <logger name="org.hibernate"                level="WARN"/>
+    <logger name="org.hibernate.SQL"            level="WARN"/><!-- set DEBUG to see all SQL -->
+    <logger name="com.zaxxer.hikari"            level="WARN"/>
+    <logger name="io.lettuce"                   level="WARN"/>
+    <logger name="org.flywaydb"                 level="INFO"/>
+
+    <!-- ── NightHunt subsystems ────────────────────────────────────────────── -->
+    <!-- Fine-grained level control without redeploying — change via env: -->
+    <!--   LOGGING_LEVEL_COM_NIGHTHUNT_AUTH=DEBUG  -->
+    <logger name="com.nighthunt"                    level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.auth"               level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.friend"             level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.matchmaking"        level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.room"               level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.party"              level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.dedicatedserver"    level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.relay"              level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.match"              level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.profile"            level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.messaging"          level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.websocket"          level="${LOG_LEVEL}"/>
+    <logger name="com.nighthunt.dashboard"          level="${LOG_LEVEL}"/>
+    <!-- WebSocket is very chatty at DEBUG; keep INFO unless diagnosing WS issues -->
+    <logger name="com.nighthunt.websocket.handler"  level="INFO"/>
+
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+    <!-- ROOT LOGGER                                                          -->
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+
+    <springProfile name="default,dev">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+</configuration>

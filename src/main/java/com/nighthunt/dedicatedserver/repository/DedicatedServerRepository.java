@@ -58,4 +58,12 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
           AND d.lastHeartbeatAt < :cutoff
     """)
     List<DedicatedServer> findIdleServers(@Param("cutoff") LocalDateTime cutoff);
+
+    /** Tìm DS đang phục vụ một match cụ thể (để reclaim khi match kết thúc). */
+    @Query("""
+        SELECT d FROM DedicatedServer d
+        WHERE d.matchId = :matchId
+          AND d.status IN ('ready', 'in_game', 'starting')
+    """)
+    Optional<DedicatedServer> findActiveByMatchId(@Param("matchId") String matchId);
 }

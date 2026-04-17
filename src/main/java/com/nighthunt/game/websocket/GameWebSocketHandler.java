@@ -305,6 +305,14 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         return s != null && s.isOpen();
     }
 
+    @Override
+    public String getClientIp(Long userId) {
+        WebSocketSession s = userSessions.get(userId);
+        if (s == null || !s.isOpen()) return null;
+        java.net.InetSocketAddress addr = s.getRemoteAddress();
+        return addr != null ? addr.getAddress().getHostAddress() : null;
+    }
+
     // ==================== Session-Level Events ====================
 
     public void sendForceLogout(Long userId, String reason) {
