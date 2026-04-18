@@ -65,25 +65,39 @@ public class DedicatedServerService {
 
     @PostConstruct
     public void validateConfig() {
+        // Read env var DIRECTLY from OS (bypasses Spring property resolution) for comparison.
+        String envVarDirect = System.getenv("VPS_PUBLIC_IP");
+
+        // Spring-injected value (via application.yml placeholder ${VPS_PUBLIC_IP:127.0.0.1})
         boolean isLocalIp = "127.0.0.1".equals(vpsPublicIp) || "localhost".equals(vpsPublicIp);
         boolean dockerEnabled = dockerManager.isDockerEnabled();
-        log.info("╔══════════════════════════════════════════════════════╗");
-        log.info("║  Dedicated Server Config                              ║");
-        log.info("╠══════════════════════════════════════════════════════╣");
-        log.info("║  VPS_PUBLIC_IP  = {}  {}  ║", vpsPublicIp,
-                isLocalIp ? "⚠ LOCAL" : "✓ REAL ");
-        log.info("║  DS_DOCKER      = {}                                  ║", dockerEnabled ? "ENABLED " : "DISABLED");
-        log.info("║  Port range     = {} - {}                            ║", portStart, portEnd);
-        log.info("╚══════════════════════════════════════════════════════╝");
+
+        log.info("╔══════════════════════════════════════════════════════════╗");
+        log.info("║  Dedicated Server Config                                  ║");
+        log.info("╠══════════════════════════════════════════════════════════╣");
+        log.info("║  OS env VPS_PUBLIC_IP  = {} (raw System.getenv)   ║", envVarDirect);
+        log.info("║  Spring vpsPublicIp    = {} {}                    ║", vpsPublicIp,
+                isLocalIp ? "⚠ LOCAL" : "✓ REAL");
+        log.info("║  DS_DOCKER             = {}                               ║", dockerEnabled ? "ENABLED " : "DISABLED");
+        log.info("║  Port range            = {} - {}                         ║", portStart, portEnd);
+        log.info("╚══════════════════════════════════════════════════════════╝");
+
+        // Auto-fix: if Spring resolved the default but OS env has a real IP, use it directly.
+        if (isLocalIp && envVarDirect != null && !envVarDirect.isBlank()
+                && !"127.0.0.1".equals(envVarDirect) && !"localhost".equals(envVarDirect)) {
+            log.warn("[DS-Config] ⚠ Spring did not pick up VPS_PUBLIC_IP from env! " +
+                     "Overriding vpsPublicIp: '127.0.0.1' → '{}'", envVarDirect);
+            vpsPublicIp = envVarDirect;
+            isLocalIp = false;
+        }
 
         if (isLocalIp && dockerEnabled) {
-            log.warn("[DS-Config] ⚠ VPS_PUBLIC_IP=127.0.0.1 với DS_DOCKER_ENABLED=true!");
+            log.warn("[DS-Config] ⚠ vpsPublicIp=127.0.0.1 với DS_DOCKER_ENABLED=true!");
             log.warn("[DS-Config]   Clients sẽ nhận dsIp=127.0.0.1 → chỉ kết nối được nếu cùng máy.");
             log.warn("[DS-Config]   Production: set VPS_PUBLIC_IP=<your-domain-or-ip> trong .env.production");
         }
         if (isLocalIp && !dockerEnabled) {
-            log.info("[DS-Config] DEV MODE: docker disabled, VPS_PUBLIC_IP=127.0.0.1");
-            log.info("[DS-Config]   Để test với IP khác: export VPS_PUBLIC_IP=<LAN-ip> trước khi chạy backend");
+            log.info("[DS-Config] DEV MODE: docker disabled, vpsPublicIp=127.0.0.1");
         }
     }
 
