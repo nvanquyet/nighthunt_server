@@ -179,18 +179,22 @@ public class DedicatedServerService {
     private ServerAllocateResponse doAllocate(String region, String mapId, int expectedPlayers, String matchId) {
         DedicatedServer server = dsRepo.findAvailable(region, vpsPublicIp, mapId).orElse(null);
         String devSecret = null;
+        boolean reusingReadyServer = false;
 
         if (server == null) {
             SpawnResult result = spinUpNewServer(region, mapId, expectedPlayers, matchId);
             server    = result.server();
             devSecret = result.plainSecret(); // null trên production
         } else if (matchId != null) {
+            // DS đã READY từ match trước — assign matchId mới và broadcast ds_ready ngay
+            // vì DS sẽ không bao giờ gọi /game-ready lần 2 (đã hoàn thành boot sequence rồi)
             server.setMatchId(matchId);
             dsRepo.save(server);
+            reusingReadyServer = true;
         }
 
         String token = generateSessionToken(server.getServerId());
-        return ServerAllocateResponse.builder()
+        ServerAllocateResponse resp = ServerAllocateResponse.builder()
                 .serverId(server.getServerId())
                 .ip(server.getIp())
                 .port(server.getPort())
@@ -198,6 +202,14 @@ public class DedicatedServerService {
                 .sessionToken(token)
                 .devSecret(devSecret)
                 .build();
+
+        if (reusingReadyServer) {
+            log.info("[DS-Alloc] Reusing existing READY server {} for matchId={} — broadcasting ds_ready immediately",
+                    server.getServerId(), matchId);
+            broadcastDsReady(server, matchId);
+        }
+
+        return resp;
     }
 
     /**
@@ -207,6 +219,35 @@ public class DedicatedServerService {
      *
      * @return true if broadcast was sent, false if credentials were invalid
      */
+    /** Broadcast ds_ready WS event to all players in the given match. */
+    private void broadcastDsReady(DedicatedServer server, String matchId) {
+        var roomOpt = roomRepository.findByMatchId(matchId);
+        if (roomOpt.isEmpty()) {
+            log.warn("[DS-Svc] broadcastDsReady: room not found for matchId={}", matchId);
+            return;
+        }
+        var room = roomOpt.get();
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+        List<Long> playerIds = players.stream().map(RoomPlayer::getUserId).toList();
+        log.info("[DS-Svc] ds_ready: sending to {} players={} dsIp={}:{} matchId={} mapId={}",
+                players.size(), playerIds, server.getIp(), server.getPort(), matchId, server.getMapId());
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("matchId",  matchId);
+        payload.put("dsIp",     server.getIp());
+        payload.put("dsPort",   server.getPort());
+        payload.put("mapId",    server.getMapId());
+        payload.put("serverId", server.getServerId());
+
+        int sent = 0;
+        for (RoomPlayer rp : players) {
+            connectionManager.sendToUser(rp.getUserId(), "ds_ready", payload);
+            sent++;
+        }
+        log.info("[DS-Svc] ds_ready broadcast complete — sent={}/{} matchId={} ds={}:{}",
+                sent, players.size(), matchId, server.getIp(), server.getPort());
+    }
+
     @Transactional
     public boolean notifyGameReady(String serverId, String serverSecret) {
         log.info("[DS-Svc] game-ready ▶ serverId={}", serverId);
@@ -230,36 +271,7 @@ public class DedicatedServerService {
             return true; // DS is marked ready but no players to notify
         }
 
-        // Find players in the match
-        var roomOpt = roomRepository.findByMatchId(matchId);
-        if (roomOpt.isEmpty()) {
-            log.warn("[DS-Svc] game-ready: room not found for matchId={}", matchId);
-            return true;
-        }
-
-        var room = roomOpt.get();
-        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
-
-        List<Long> playerIds = players.stream().map(RoomPlayer::getUserId).toList();
-        log.info("[DS-Svc] game-ready: sending ds_ready to {} players={} dsIp={}:{} matchId={} mapId={}",
-                players.size(), playerIds, server.getIp(), server.getPort(), matchId, server.getMapId());
-
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("matchId",  matchId);
-        payload.put("dsIp",     server.getIp());
-        payload.put("dsPort",   server.getPort());
-        payload.put("mapId",    server.getMapId());
-        payload.put("serverId", serverId);
-
-        int sent = 0;
-        for (RoomPlayer rp : players) {
-            connectionManager.sendToUser(rp.getUserId(), "ds_ready", payload);
-            log.debug("[DS-Svc] ds_ready sent to userId={}", rp.getUserId());
-            sent++;
-        }
-
-        log.info("[DS-Svc] game-ready: ds_ready broadcast complete \u2014 sent={}/{} matchId={} ds={}:{}",
-                sent, players.size(), matchId, server.getIp(), server.getPort());
+        broadcastDsReady(server, matchId);
         return true;
     }
 
