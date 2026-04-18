@@ -134,7 +134,7 @@ Vào: `GitHub Repo → Settings → Secrets and variables → Actions → New re
 | `VPS_SSH_KEY` | Nội dung file `~/.ssh/nighthunt_deploy` | Private key PEM |
 | `VPS_DEPLOY_PATH` | `/home/ubuntu/nighthunt` | Thư mục deploy |
 | `ENV_PRODUCTION_B64` | base64 encoded `.env.production` | Xem bên dưới |
-| `DS_ADMIN_SECRET` | Giá trị `DS_ADMIN_SECRET` trong `.env.production` | Cho smoke tests |
+| `ADMIN_SECRET` | Giá trị `ADMIN_SECRET` trong `.env.production` | Cho smoke tests |
 | `ADMIN_SECRET` | Giá trị `X-Admin-Secret` | Dashboard smoke test |
 | `PRODUCTION_API_URL` | `https://vawnwuyest.me/api` | Base URL cho smoke-test.yml |
 | `SMOKE_TEST_USER` | Username tài khoản test | Pre-create trong DB |
@@ -161,7 +161,7 @@ MYSQL_ROOT_PASSWORD=<strong-root-password>
 DB_PASSWORD=<same-as-MYSQL_PASSWORD>
 REDIS_PASSWORD=<strong-redis-password>
 JWT_SECRET=<openssl rand -base64 48>     # 64 chars minimum
-DS_ADMIN_SECRET=<openssl rand -hex 32>   # 64 hex chars
+ADMIN_SECRET=<openssl rand -hex 32>   # 64 hex chars
 GHCR_TOKEN=<your-github-pat>
 DASHBOARD_ADMIN_PASS=<strong-password>
 DASHBOARD_ROOT_PASS=<strong-password>
@@ -762,7 +762,7 @@ curl -X POST "$BASE_URL/api/party/transfer-leader" \
 
 # Admin allocate
 curl -X POST "$BASE_URL/api/admin/ds/allocate" \
-  -H "X-Admin-Secret: $DS_ADMIN_SECRET" \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"region":"vn","mapId":"map_01","expectedPlayers":4}'
 # ✅ Expected: {"serverId":"...","ip":"...","port":9000,"status":"starting"}
@@ -864,7 +864,7 @@ curl -X POST http://localhost:7776/session/close \
 **DS calls /match/end/ranked:**
 ```bash
 curl -X POST "$BASE_URL/api/match/end/ranked" \
-  -H "X-DS-Secret: $DS_ADMIN_SECRET" \
+  -H "X-DS-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{
     "matchId":"<matchId>",
@@ -918,12 +918,12 @@ curl "$BASE_URL/api/dashboard/analytics/top-players" -H "Authorization: Bearer $
 # ✅ Expected: [{userId,username,elo,tier,wins},...] top 10
 
 # Active DS sessions
-curl "$BASE_URL/api/admin/ds" -H "X-Admin-Secret: $DS_ADMIN_SECRET"
+curl "$BASE_URL/api/admin/ds" -H "X-Admin-Secret: $ADMIN_SECRET"
 # ✅ Expected: list DS containers với status
 
 # Admin config update — DS image ref
 curl -X POST "$BASE_URL/api/admin/ds/update-image" \
-  -H "X-Admin-Secret: $DS_ADMIN_SECRET" \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"imageRef":"ghcr.io/nvanquyet/nighthunt-ds:abc1234"}'
 # ✅ Expected: {"success":true,"imageRef":"..."}
@@ -1126,7 +1126,7 @@ docker exec nighthunt-ds-XXXXXXXX netstat -unlp | grep 9000
 - [ ] `.env.production` — tất cả `CHANGE_ME_*` đã thay
 - [ ] MySQL password mạnh (min 16 chars, có số + chữ hoa)
 - [ ] JWT_SECRET min 32 chars (random)
-- [ ] DS_ADMIN_SECRET min 32 chars (random)
+- [ ] ADMIN_SECRET min 32 chars (random)
 - [ ] GHCR_TOKEN có scope `read:packages`, `write:packages`
 - [ ] `SPRING_PROFILES_ACTIVE=prod` trong docker-compose env (để kích hoạt logback-spring.xml prod profile)
 - [ ] Flyway migrations chạy thành công (`SHOW TABLES` trong MySQL)

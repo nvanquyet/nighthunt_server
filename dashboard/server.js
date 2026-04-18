@@ -11,7 +11,7 @@ const path    = require('path');
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT         = process.env.PORT                || 3000;
 const BACKEND_URL  = process.env.BACKEND_URL         || 'https://nighthunt-backend:8443';
-const ADMIN_SECRET = process.env.DS_ADMIN_SECRET     || 'change-me-in-production';
+const ADMIN_SECRET = process.env.ADMIN_SECRET        || 'change-me-in-production';
 const ADMIN_USER   = process.env.DASHBOARD_ADMIN_USER || 'admin';
 const ADMIN_PASS   = process.env.DASHBOARD_ADMIN_PASS || 'admin123';
 // Root admin = highest privilege (sees passwordHash & full user data)

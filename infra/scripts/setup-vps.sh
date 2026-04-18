@@ -104,7 +104,7 @@ LE_EMAIL=admin@${VPS_IP}
 VPS_PUBLIC_IP=${VPS_IP}
 DS_DOCKER_ENABLED=true
 DS_IMAGE_REF=ghcr.io/nvanquyet/nighthunt-ds:latest
-DS_ADMIN_SECRET=CHANGE_ME_DS_ADMIN_SECRET
+ADMIN_SECRET=CHANGE_ME_DS_ADMIN_SECRET
 # DS → Backend URL
 # IMPORTANT: Java reads ds.docker.backend-internal-url = env DS_DOCKER_BACKEND_INTERNAL_URL
 # Unity has "Disallow Downloads Over HTTP" ON — must use HTTPS.
@@ -136,7 +136,7 @@ EOF
   echo "    │    MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD              │"
   echo "    │    REDIS_PASSWORD                                   │"
   echo "    │    JWT_SECRET  (openssl rand -hex 32)               │"
-  echo "    │    DS_ADMIN_SECRET                                  │"
+  echo "    │    ADMIN_SECRET                                      │"
   echo "    │    GHCR_TOKEN  (PAT: read:packages)                 │"
   echo "    │    API_BASE_URL / CORS_ALLOWED_ORIGINS (domain)     │"
   echo "    └─────────────────────────────────────────────────────┘"

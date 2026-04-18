@@ -172,7 +172,7 @@ if (-not (Test-Path $ENV_FILE)) {
         "",
         "VPS_PUBLIC_IP=127.0.0.1",
         "DS_IMAGE_REF=ghcr.io/yourname/nighthunt-ds:latest",
-        "DS_ADMIN_SECRET=local-admin-secret",
+        "ADMIN_SECRET=local-admin-secret",
         "DS_BACKEND_INTERNAL_URL=https://nighthunt-backend:8443",
         "DS_PORT_START=7777",
         "DS_PORT_END=7900",
