@@ -219,8 +219,10 @@ jobs:
           script: |
             set -e
             # Use -f2- (not -f2) to capture the full value even if it contains '=' characters.
-            ADMIN_SECRET=$(grep "^DS_ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2-)
+            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2-)
             DS_IMAGE=$(grep "^DS_IMAGE_REF=" /opt/nighthunt/.env.production | cut -d= -f2-)
+            [ -n "${ADMIN_SECRET}" ] || (echo "❌ ADMIN_SECRET not found in .env.production" && exit 1)
+            [ -n "${DS_IMAGE}"     ] || (echo "❌ DS_IMAGE_REF not found in .env.production"  && exit 1)
 
             echo "=== [1/4] Backend health ==="
             STATUS=$(curl -sf http://localhost:8080/api/actuator/health | grep -o '"status":"[A-Z]*"' | head -1)
