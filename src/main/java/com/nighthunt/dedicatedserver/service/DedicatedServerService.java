@@ -1,7 +1,5 @@
 package com.nighthunt.dedicatedserver.service;
 
-import com.nighthunt.common.exception.BusinessException;
-import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.dedicatedserver.dto.*;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
@@ -43,16 +41,16 @@ public class DedicatedServerService {
 
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
 
-    @Value("${VPS_PUBLIC_IP:127.0.0.1}")
+    @Value("${ds.vps.public-ip:127.0.0.1}")
     private String vpsPublicIp;
 
-    @Value("${DS_PORT_START:7777}")
+    @Value("${ds.port.start:7777}")
     private int portStart;
 
-    @Value("${DS_PORT_END:7900}")
+    @Value("${ds.port.end:7900}")
     private int portEnd;
 
-    @Value("${DS_MAX_PLAYERS:16}")
+    @Value("${ds.max-players:16}")
     private int defaultMaxPlayers;
 
     // Redis key prefix cho session tokens
@@ -284,59 +282,19 @@ public class DedicatedServerService {
      * @param serverId    the DS serverId from the request body
      * @param plainSecret the plain-text serverSecret from the request body or X-DS-Secret header
      * @return the matchId stored on the DS entity (may be null if no match was ever allocated)
-     * @throws BusinessException if serverId is unknown or secret is wrong
+     * @throws IllegalArgumentException if serverId is unknown or secret is wrong
      */
     public String validateDsAndGetMatchId(String serverId, String plainSecret) {
         DedicatedServer server = dsRepo.findByServerId(serverId).orElse(null);
         if (server == null) {
             log.warn("[DSService] validateDsAndGetMatchId: unknown serverId={}", serverId);
-            throw new BusinessException(ErrorCodes.DS_BAD_REQUEST, "Unknown DS: " + serverId);
+            throw new IllegalArgumentException("Unknown DS: " + serverId);
         }
         if (plainSecret == null || !bcrypt.matches(plainSecret, server.getServerSecretHash())) {
             log.warn("[DSService] validateDsAndGetMatchId: invalid secret for serverId={}", serverId);
-            throw new BusinessException(ErrorCodes.DS_INVALID_SECRET, "Invalid DS secret for serverId=" + serverId);
+            throw new SecurityException("Invalid DS secret for serverId=" + serverId);
         }
         return server.getMatchId();
-    }
-
-    /**
-     * Tạo DS record với secret đã biết, KHÔNG spin Docker container.
-     * Dùng cho CI/CD smoke test để có thể test /ds/register, /ds/heartbeat, /ds/game-ready
-     * mà không cần container thật.
-     * Record được tạo với status="test" và không có matchId (sẽ bị cleanup scheduler dọn).
-     *
-     * @return map chứa serverId + devSecret (plain text) + port
-     */
-    @Transactional
-    public Map<String, Object> allocateTestServer() {
-        String serverId     = "smoke-test-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
-        String serverSecret = UUID.randomUUID().toString().replace("-", "");
-        int    port         = findAvailablePort();
-        String secretHash   = bcrypt.encode(serverSecret);
-
-        DedicatedServer server = DedicatedServer.builder()
-                .serverId(serverId)
-                .ip(vpsPublicIp)
-                .port(port)
-                .status("test")
-                .region("smoke")
-                .mapId("map_smoke")
-                .matchId(null)
-                .maxPlayers(4)
-                .imageTag("smoke-test")
-                .serverSecretHash(secretHash)
-                .build();
-        dsRepo.save(server);
-
-        log.info("[AdminDS] test-alloc: created test DS record serverId={} (no Docker)", serverId);
-
-        Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("serverId",  serverId);
-        result.put("devSecret", serverSecret);
-        result.put("port",      port);
-        result.put("status",    "test");
-        result.put("note",      "This is a smoke-test DS record. No Docker container was started.");
-        return result;
     }
 
     // ── Session Token ─────────────────────────────────────────────────────────
@@ -405,30 +363,19 @@ public class DedicatedServerService {
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
-            throw new BusinessException(ErrorCodes.DS_BAD_REQUEST, "Failed to start dedicated server: " + e.getMessage());
+            throw new RuntimeException("Failed to start dedicated server: " + e.getMessage(), e);
         }
 
         return new SpawnResult(server, returnedSecret);
     }
 
-    /**
-     * Find an available port atomically using Redis SETNX to prevent race conditions
-     * when two allocation requests happen concurrently.
-     */
     private int findAvailablePort() {
         for (int port = portStart; port <= portEnd; port++) {
             if (!dsRepo.existsByPortAndStatusNot(port, "stopped")) {
-                // Atomically claim the port via Redis to prevent concurrent allocation
-                String lockKey = "ds:port:lock:" + port;
-                Boolean claimed = redis.opsForValue().setIfAbsent(lockKey, "1", 60, TimeUnit.SECONDS);
-                if (Boolean.TRUE.equals(claimed)) {
-                    return port;
-                }
-                // Another thread already claimed this port, try next
+                return port;
             }
         }
-        throw new BusinessException(ErrorCodes.DS_BAD_REQUEST,
-                "No available ports in range " + portStart + "-" + portEnd);
+        throw new RuntimeException("No available ports in range " + portStart + "-" + portEnd);
     }
 
     // ── Scheduled Cleanup ─────────────────────────────────────────────────────
@@ -458,9 +405,6 @@ public class DedicatedServerService {
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
 
-            // Release the port lock so it can be reused
-            redis.delete("ds:port:lock:" + server.getPort());
-
             log.info("[DS-Reclaim] DS container stopped and DB marked STOPPED — serverId={} matchId={}",
                     server.getServerId(), matchId);
         }, () ->
@@ -468,8 +412,7 @@ public class DedicatedServerService {
         );
     }
 
-    /** Mỗi 2 phút: cleanup servers bị treo khi starting > 3 phút.
-     *  Cũng cleanup smoke-test records (status="test") sau 10 phút. */
+    /** Mỗi 2 phút: cleanup servers bị treo khi starting > 3 phút */
     @Scheduled(fixedDelay = 120_000)
     @Transactional
     public void cleanupStaleStartingServers() {
@@ -483,19 +426,6 @@ public class DedicatedServerService {
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
         }
-
-        // Cleanup smoke-test records older than 10 minutes
-        LocalDateTime testCutoff = LocalDateTime.now().minusMinutes(10);
-        dsRepo.findAll().stream()
-                .filter(s -> "test".equals(s.getStatus())
-                        && s.getStartedAt() != null
-                        && s.getStartedAt().isBefore(testCutoff))
-                .forEach(s -> {
-                    log.info("[DS-Svc] Cleaning up smoke-test DS record: {}", s.getServerId());
-                    s.setStatus("stopped");
-                    s.setStoppedAt(LocalDateTime.now());
-                    dsRepo.save(s);
-                });
     }
 
     /** Mỗi 1 phút: cleanup servers không heartbeat > 90s (3 lần miss) → crash */

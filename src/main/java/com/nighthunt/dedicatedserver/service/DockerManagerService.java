@@ -29,7 +29,7 @@ public class DockerManagerService {
     @Value("${DS_BACKEND_INTERNAL_URL:http://nighthunt-backend:8080}")
     private String backendInternalUrl;
 
-    @Value("${DS_MAX_MEMORY_MB:512}")
+    @Value("${DS_MAX_MEMORY_MB:1024}")
     private int maxMemoryMb;
 
     /**
@@ -128,7 +128,9 @@ public class DockerManagerService {
             // net.ipv6.bindv6only=1 is the correct fix: IPv6 sockets only handle IPv6,
             // so [::]:port and 0.0.0.0:port can coexist on the same port number.
             "--sysctl",  "net.ipv6.bindv6only=1",
-            "--rm",                         // Tự xóa container khi stop
+            // NOTE: --rm intentionally omitted so containers persist on exit for log inspection.
+            // Use `docker ps -a` + `docker logs <id>` to debug crashes, then
+            // `docker rm <id>` to clean up manually (or cleanupStaleStartingServers handles it).
             "--network", "nighthunt_game-network",   // Cùng Docker network với backend
             imageRef
         ));

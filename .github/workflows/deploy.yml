@@ -38,17 +38,13 @@ jobs:
         with:
           java-version: '17'
           distribution: temurin
-
-      - name: Setup Gradle (dependency cache)
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
+          cache: gradle
 
       - name: Build JAR (skip tests)
         run: ./gradlew build -x test --no-daemon
 
       - name: Run Tests
-        run: ./gradlew test --no-daemon --no-parallel
+        run: ./gradlew test --no-daemon
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4.6.2
@@ -222,7 +218,7 @@ jobs:
           port: 22
           script: |
             set -e
-            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
+            ADMIN_SECRET=$(grep "^DS_ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
             DS_IMAGE=$(grep "^DS_IMAGE_REF=" /opt/nighthunt/.env.production | cut -d= -f2)
 
             echo "=== [1/4] Backend health ==="
