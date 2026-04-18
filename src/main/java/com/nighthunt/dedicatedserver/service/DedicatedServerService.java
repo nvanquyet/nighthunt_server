@@ -81,6 +81,46 @@ public class DedicatedServerService {
     }
 
     /**
+     * CI/CD smoke-test: creates a DS record with a known plain-text secret WITHOUT spinning
+     * up a real Docker container. Used by POST /api/admin/ds/test-alloc so the pipeline
+     * can call /ds/register, /ds/heartbeat, and /ds/game-ready with valid credentials.
+     *
+     * The record is created with status="test" and will be removed by cleanupDeadServers
+     * after 90 s of no heartbeat (or immediately via /api/admin/ds/cleanup).
+     *
+     * @return map with { serverId, devSecret, port, status }
+     */
+    @Transactional
+    public Map<String, Object> allocateTestServer() {
+        String serverId     = UUID.randomUUID().toString();
+        String serverSecret = UUID.randomUUID().toString().replace("-", "");
+        int    port         = findAvailablePort();
+        String secretHash   = bcrypt.encode(serverSecret);
+
+        DedicatedServer server = dsRepo.save(DedicatedServer.builder()
+                .serverId(serverId)
+                .ip(vpsPublicIp)
+                .port(port)
+                .status("test")
+                .region("vn")
+                .mapId("map_01")
+                .maxPlayers(defaultMaxPlayers)
+                .imageTag("test")
+                .serverSecretHash(secretHash)
+                .dockerContainerId("test-no-container")
+                .build());
+
+        log.info("[DS-Svc] allocateTestServer: created test DS record serverId={} port={}", serverId, port);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("serverId",  server.getServerId());
+        result.put("devSecret", serverSecret);
+        result.put("port",      server.getPort());
+        result.put("status",    server.getStatus());
+        return result;
+    }
+
+    /**
      * Allocate a DS for a specific ranked match.
      * matchId được truyền xuống spinUpNewServer và gán ngay khi tạo DS record,
      * sau đó được pass vào container ENV (MATCH_ID) — DS biết matchId từ lúc boot.
