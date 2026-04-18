@@ -259,6 +259,30 @@ public class DockerManagerService {
     }
 
     /**
+     * Run docker command và trả về stdout output (dùng cho commands cần kết quả).
+     */
+    public String runDockerCommandWithOutput(String... cmd) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            String output   = new String(process.getInputStream().readAllBytes()).trim();
+            process.waitFor();
+            return output;
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "error: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Lấy logs của DS container (docker logs --tail N <containerId>).
+     */
+    public String getContainerLogs(String containerId, int tail) {
+        return runDockerCommandWithOutput("docker", "logs", "--tail", String.valueOf(tail), containerId);
+    }
+
+    /**
      * @param throwOnError nếu true, ném RuntimeException khi exit code != 0.
      *                     Dùng cho pullImage để pullImage caller biết pull thất bại.
      */

@@ -162,6 +162,29 @@ public class AdminDsController {
     }
 
     /**
+     * Lấy logs của một DS container.
+     * GET /api/admin/ds/logs/{containerId}?tail=200
+     */
+    @GetMapping("/logs/{containerId}")
+    public ApiResponse<Map<String, String>> containerLogs(
+            @PathVariable String containerId,
+            @RequestParam(defaultValue = "200") int tail,
+            @RequestHeader("X-Admin-Secret") String secret) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+
+        // Validate containerId — chỉ cho phép hex chars và dashes (container ID hoặc name)
+        if (!containerId.matches("[a-zA-Z0-9_\\-]+")) {
+            return ApiResponse.error("Invalid containerId", "BAD_REQUEST");
+        }
+
+        String logs = dockerManager.getContainerLogs(containerId, Math.min(tail, 1000));
+        return ApiResponse.ok(Map.of("containerId", containerId, "logs", logs));
+    }
+
+    /**
      * Trả về image ref hiện tại backend đang dùng để spawn DS containers.
      * GET /api/admin/ds/current-image
      */
