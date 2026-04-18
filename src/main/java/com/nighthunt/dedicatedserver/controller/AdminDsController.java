@@ -4,11 +4,14 @@ import com.nighthunt.common.ApiResponse;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
+import com.nighthunt.dedicatedserver.service.DockerManagerService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +27,7 @@ public class AdminDsController {
 
     private final DedicatedServerService dsService;
     private final DedicatedServerRepository dsRepo;
+    private final DockerManagerService dockerManager;
 
     @Value("${ADMIN_SECRET:change-me-in-production}")
     private String adminSecret;
@@ -155,5 +159,63 @@ public class AdminDsController {
 
         Map<String, Object> result = dsService.allocateTestServer();
         return ApiResponse.ok(result);
+    }
+
+    /**
+     * Trả về image ref hiện tại backend đang dùng để spawn DS containers.
+     * GET /api/admin/ds/current-image
+     */
+    @GetMapping("/current-image")
+    public ApiResponse<Map<String, String>> currentImage(
+            @RequestHeader("X-Admin-Secret") String secret) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+
+        return ApiResponse.ok(Map.of("imageRef", dockerManager.getCurrentImageRef()));
+    }
+
+    /**
+     * Force-stop tất cả DS containers đang chạy + mark stopped trong DB.
+     * Dùng sau khi deploy image mới để đảm bảo lần allocate tiếp theo dùng image mới.
+     * POST /api/admin/ds/cleanup-all
+     */
+    @PostMapping("/cleanup-all")
+    public ApiResponse<Map<String, Object>> cleanupAll(
+            @RequestHeader("X-Admin-Secret") String secret) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+
+        List<DedicatedServer> active = dsRepo.findAll().stream()
+                .filter(s -> !"stopped".equals(s.getStatus()))
+                .toList();
+
+        List<String> removed  = new ArrayList<>();
+        List<String> failed   = new ArrayList<>();
+
+        for (DedicatedServer server : active) {
+            try {
+                dockerManager.stopContainer(server.getDockerContainerId());
+                server.setStatus("stopped");
+                server.setStoppedAt(LocalDateTime.now());
+                dsRepo.save(server);
+                removed.add(server.getServerId());
+                log.info("[AdminDS] cleanup-all: stopped container={} serverId={}",
+                        server.getDockerContainerId(), server.getServerId());
+            } catch (Exception e) {
+                log.error("[AdminDS] cleanup-all: failed to stop serverId={}: {}",
+                        server.getServerId(), e.getMessage());
+                failed.add(server.getServerId());
+            }
+        }
+
+        return ApiResponse.ok(Map.of(
+                "removed", removed,
+                "failed",  failed,
+                "total",   active.size()
+        ));
     }
 }
