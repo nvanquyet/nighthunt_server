@@ -7,6 +7,7 @@ import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.repository.RoomRepository;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,6 +60,32 @@ public class DedicatedServerService {
 
     /** Internal record: server entity + plain secret (chỉ dùng trong dev mode) */
     private record SpawnResult(DedicatedServer server, String plainSecret) {}
+
+    // ── Startup Validation ────────────────────────────────────────────────────
+
+    @PostConstruct
+    public void validateConfig() {
+        boolean isLocalIp = "127.0.0.1".equals(vpsPublicIp) || "localhost".equals(vpsPublicIp);
+        boolean dockerEnabled = dockerManager.isDockerEnabled();
+        log.info("╔══════════════════════════════════════════════════════╗");
+        log.info("║  Dedicated Server Config                              ║");
+        log.info("╠══════════════════════════════════════════════════════╣");
+        log.info("║  VPS_PUBLIC_IP  = {}  {}  ║", vpsPublicIp,
+                isLocalIp ? "⚠ LOCAL" : "✓ REAL ");
+        log.info("║  DS_DOCKER      = {}                                  ║", dockerEnabled ? "ENABLED " : "DISABLED");
+        log.info("║  Port range     = {} - {}                            ║", portStart, portEnd);
+        log.info("╚══════════════════════════════════════════════════════╝");
+
+        if (isLocalIp && dockerEnabled) {
+            log.warn("[DS-Config] ⚠ VPS_PUBLIC_IP=127.0.0.1 với DS_DOCKER_ENABLED=true!");
+            log.warn("[DS-Config]   Clients sẽ nhận dsIp=127.0.0.1 → chỉ kết nối được nếu cùng máy.");
+            log.warn("[DS-Config]   Production: set VPS_PUBLIC_IP=<your-domain-or-ip> trong .env.production");
+        }
+        if (isLocalIp && !dockerEnabled) {
+            log.info("[DS-Config] DEV MODE: docker disabled, VPS_PUBLIC_IP=127.0.0.1");
+            log.info("[DS-Config]   Để test với IP khác: export VPS_PUBLIC_IP=<LAN-ip> trước khi chạy backend");
+        }
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -245,9 +272,18 @@ public class DedicatedServerService {
         server.setStatus("ready");
         server.setMaxPlayers(req.getMaxPlayers() != null ? req.getMaxPlayers() : defaultMaxPlayers);
         server.setLastHeartbeatAt(LocalDateTime.now());
+
+        // DS có thể báo IP thực (multi-VPS hoặc container IP khác VPS_PUBLIC_IP).
+        // Nếu không → giữ nguyên IP từ lúc allocate.
+        if (req.getReportedIp() != null && !req.getReportedIp().isBlank()) {
+            log.info("[DS-Svc] Register: DS reports IP override {}→{} for serverId={}",
+                    server.getIp(), req.getReportedIp(), req.getServerId());
+            server.setIp(req.getReportedIp());
+        }
+
         dsRepo.save(server);
 
-        log.info("[DS-Svc] Server {} registered → READY on port {}", req.getServerId(), server.getPort());
+        log.info("[DS-Svc] Server {} registered → READY on ip={}:{}", req.getServerId(), server.getIp(), server.getPort());
         return true;
     }
 

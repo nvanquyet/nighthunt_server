@@ -12,14 +12,19 @@ api:
   base-url: https://localhost:8443
   use-https: true
 
-# bắt buộćc để debug DS endpoints local
+# bắt buộc để debug DS endpoints local
+# VPS_PUBLIC_IP: override bằng env var khi test với IP thực (e.g. LAN IP, ngrok, ...)
+#   - Chạy Spring với: export VPS_PUBLIC_IP=192.168.1.x  → client trong cùng LAN connect được
+#   - Mặc định 127.0.0.1 → chỉ dùng khi client cùng máy với backend
 ds:
   vps:
-    public-ip: 127.0.0.1
+    public-ip: ${VPS_PUBLIC_IP:127.0.0.1}
   docker:
-    enabled: false   # Không chạy docker run trên local - simulate bằng curl
+    # false = skip docker run, DS phải boot thủ công rồi gọi /api/ds/register
+    # true  = backend gọi docker CLI → cần DS image sẵn có và docker socket mount
+    enabled: ${DS_DOCKER_ENABLED:false}
   admin:
-    secret: local-admin-secret
+    secret: ${ADMIN_SECRET:local-admin-secret}
 
 logging:
   level:

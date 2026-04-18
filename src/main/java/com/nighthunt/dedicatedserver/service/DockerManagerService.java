@@ -63,6 +63,10 @@ public class DockerManagerService {
         return (envRef != null && !envRef.isBlank()) ? envRef : defaultImageRef;
     }
 
+    public boolean isDockerEnabled() {
+        return dockerEnabled;
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
