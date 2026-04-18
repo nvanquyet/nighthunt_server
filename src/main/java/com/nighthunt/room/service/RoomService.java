@@ -571,6 +571,24 @@ public class RoomService {
     }
 
     /**
+     * Immediately transitions a ranked room to IN_GAME status after match_ready has been broadcast.
+     * This prevents RoomOwnerTransferService (which only inspects WAITING rooms) from erroneously
+     * disbanding the room when a player disconnects and reconnects during DS boot.
+     *
+     * @param matchId the matchId of the room to transition
+     */
+    @Transactional
+    public void markRankedRoomInGame(String matchId) {
+        roomRepository.findByMatchId(matchId).ifPresentOrElse(room -> {
+            if (GameConstants.ROOM_STATUS_WAITING.equals(room.getStatus())) {
+                room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
+                roomRepository.save(room);
+                log.info("[RankedMM] Room {} (matchId={}) → IN_GAME (match_ready sent)", room.getId(), matchId);
+            }
+        }, () -> log.warn("[RankedMM] markRankedRoomInGame: no room found for matchId={}", matchId));
+    }
+
+    /**
      * Get count of rooms waiting for server assignment
      * Used for auto-scaling
      */

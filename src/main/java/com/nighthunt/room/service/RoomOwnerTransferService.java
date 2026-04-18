@@ -47,6 +47,15 @@ public class RoomOwnerTransferService {
         
         int transferredCount = 0;
         for (Room room : waitingRooms) {
+            // Skip ranked rooms that have a matchId set — they are managed by the matchmaking
+            // pipeline and should NOT be disbanded here even if owner's lastSeenAt is stale.
+            // (Ranked rooms are now set to IN_GAME before match_ready is sent, so this is a
+            //  defence-in-depth guard for any race condition where status update is delayed.)
+            if (room.getMatchId() != null && room.getIsLocked() != null && room.getIsLocked()) {
+                log.trace("Room {} has matchId={} and is locked — skipping (ranked match)", room.getId(), room.getMatchId());
+                continue;
+            }
+
             // Get owner player
             RoomPlayer ownerPlayer = roomPlayerRepository.findByRoomIdAndUserId(room.getId(), room.getOwnerId())
                     .orElse(null);
