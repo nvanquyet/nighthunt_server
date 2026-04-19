@@ -8,6 +8,7 @@ import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.gamemode.dto.GameModeDTO;
 import com.nighthunt.gamemode.service.GameModeService;
+import com.nighthunt.map.service.GameMapService;
 import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.room.dto.RoomResponse;
@@ -68,6 +69,7 @@ public class MatchmakingQueueService {
     private final RoomService                 roomService;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
+    private final GameMapService               gameMapService;
     private final PlayerStatusService         playerStatusService;
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -87,6 +89,12 @@ public class MatchmakingQueueService {
         if (!"AVAILABLE".equalsIgnoreCase(mode.getModeStatus()) || !mode.isMatchmakingEnabled()) {
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Game mode not available for matchmaking: " + gameMode);
+        }
+
+        // Validate mapId: reject if client sends a mapId that does not exist / is locked
+        if (mapId != null && !mapId.isBlank() && !gameMapService.isMapValid(mapId)) {
+            throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
+                    "Map not available for matchmaking: " + mapId);
         }
 
         User user = userRepository.findById(userId)
@@ -242,12 +250,18 @@ public class MatchmakingQueueService {
      * is formed the logic here is identical for all modes.
      */
     private void formMatch(List<MatchmakingEntry> group, GameModeDTO mode) {
-        // Prefer first non-null mapId in group (anchor is first)
+        // Prefer first non-null mapId in group (anchor is first).
+        // Re-validate at form time — a map may have been locked/deactivated since the player queued.
         String resolvedMapId = group.stream()
                 .map(MatchmakingEntry::getMapId)
                 .filter(m -> m != null && !m.isBlank())
+                .filter(gameMapService::isMapValid)   // skip maps disabled since enqueue
                 .findFirst()
                 .orElse(null);
+        // null resolvedMapId means server picks any available map (DS decides)
+        if (resolvedMapId == null) {
+            log.info("[MM] formMatch — no valid mapId requested by group, letting DS pick default.");
+        }
 
         String lobbyToken = UUID.randomUUID().toString();
 
