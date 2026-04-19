@@ -3,6 +3,7 @@ package com.nighthunt.match.service;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.elo.service.EloService;
+import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.match.dto.MatchEndRequest;
 import com.nighthunt.match.dto.MatchEndResponse;
@@ -49,6 +50,7 @@ public class MatchResultService {
     private final RelaySessionManager          relaySessionManager;
     private final DedicatedServerService       dedicatedServerService;
     private final ConnectionManager            connectionManager;
+    private final PlayerStatusService          playerStatusService;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
     @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
@@ -186,6 +188,7 @@ public class MatchResultService {
 
         for (var entry : req.getPlayerResults()) {
             connectionManager.sendToUser(entry.getUserId(), "match_ended", response);
+            try { playerStatusService.setBackToOnline(entry.getUserId()); } catch (Exception ignored) {}
         }
 
         log.info("[MatchEnd] Processed match {} winner={} reason={} players={}",

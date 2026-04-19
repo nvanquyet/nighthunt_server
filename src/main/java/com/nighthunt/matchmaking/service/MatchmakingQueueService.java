@@ -4,6 +4,7 @@ import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.dedicatedserver.dto.ServerAllocateResponse;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
+import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.gamemode.dto.GameModeDTO;
 import com.nighthunt.gamemode.service.GameModeService;
@@ -67,6 +68,7 @@ public class MatchmakingQueueService {
     private final RoomService                 roomService;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
+    private final PlayerStatusService         playerStatusService;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -295,26 +297,39 @@ public class MatchmakingQueueService {
             payload.put("sessionToken", ds.getSessionToken());
             if (ds.getDevSecret() != null) payload.put("devSecret", ds.getDevSecret());
 
+            // Phase 3: include player list so client overlay can show all cards before DS connects.
+            if (room.getPlayers() != null && !room.getPlayers().isEmpty()) {
+                List<Map<String, Object>> playerEntries = new ArrayList<>();
+                for (var p : room.getPlayers()) {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("userId",   p.getUserId());
+                    entry.put("username", p.getUsername());
+                    entry.put("team",     p.getTeam() != null ? p.getTeam() : 1);
+                    // Enrich with ELO + tier from User table (best-effort)
+                    User u = userRepository.findById(p.getUserId()).orElse(null);
+                    entry.put("elo",  u != null ? u.getElo()  : 0);
+                    entry.put("tier", u != null ? u.getTier() : "");
+                    playerEntries.add(entry);
+                }
+                payload.put("players", playerEntries);
+            }
+
             // Step 3: Clean up queue entries
             for (MatchmakingEntry e : group) {
                 entryRepository.delete(e);
             }
             log.info("[MM] Step 3 OK: Queue entries deleted for {} players", group.size());
 
-            // Step 4: Broadcast match_ready via WS
+            // Step 4: Broadcast match_ready via WS + mark players IN_GAME
             int sent = 0;
             for (Long uid : userIds) {
                 connectionManager.sendToUser(uid, "match_ready", payload);
                 log.debug("[MM] match_ready sent to userId={}", uid);
+                try { playerStatusService.setInGame(uid); } catch (Exception ignored) {}
                 sent++;
             }
             log.info("[MM] Step 4 OK: match_ready broadcast complete — sent={}/{} matchId={} ds={}:{}",
                     sent, userIds.size(), room.getMatchId(), ds.getIp(), ds.getPort());
-
-            // Step 5: Transition ranked room to IN_GAME so RoomOwnerTransferService
-            // cannot disband it while the DS is booting and players are loading the scene.
-            roomService.markRankedRoomInGame(room.getMatchId());
-            log.info("[MM] Step 5 OK: room transitioned to IN_GAME — matchId={}", room.getMatchId());
 
         } catch (Exception ex) {
             log.error("[MM] createMatchedRoom FAILED — mode={} players={} err={}", modeKey, userIds, ex.getMessage(), ex);
