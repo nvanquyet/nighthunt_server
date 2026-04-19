@@ -1,11 +1,8 @@
 package com.nighthunt.queue.interceptor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nighthunt.common.exception.BusinessException;
-import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.queue.processor.RequestQueueProcessor;
 import com.nighthunt.queue.service.RequestQueueService;
-import com.nighthunt.ratelimit.service.RateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +23,6 @@ import java.util.stream.Collectors;
 public class RequestQueueInterceptor implements HandlerInterceptor {
     
     private final RequestQueueService requestQueueService;
-    private final RateLimitService rateLimitService;
     private final RequestQueueProcessor requestQueueProcessor;
     private final ObjectMapper objectMapper;
     
@@ -40,7 +36,8 @@ public class RequestQueueInterceptor implements HandlerInterceptor {
     
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String endpoint = request.getRequestURI();
+        // Use getServletPath() to stay consistent with RateLimitInterceptor
+        String endpoint = request.getServletPath();
         String method = request.getMethod();
         
         // Skip queue for certain endpoints (health checks, static resources, etc.)
@@ -53,18 +50,8 @@ public class RequestQueueInterceptor implements HandlerInterceptor {
             return handleQueuedRequest(request, response, endpoint, method);
         }
         
-        // Normal processing - check rate limit first
-        try {
-            String identifier = getIdentifier(request);
-            rateLimitService.checkRateLimit(endpoint, method, identifier);
-        } catch (BusinessException e) {
-            // Rate limit exceeded - try to queue instead of rejecting
-            if (e.getErrorCode().equals(ErrorCodes.RATE_LIMIT_EXCEEDED)) {
-                return handleQueuedRequest(request, response, endpoint, method);
-            }
-            throw e;
-        }
-        
+        // Rate limiting is handled exclusively by RateLimitInterceptor (order=1).
+        // Do NOT call checkRateLimit here — it would double-count every request.
         return true;
     }
     

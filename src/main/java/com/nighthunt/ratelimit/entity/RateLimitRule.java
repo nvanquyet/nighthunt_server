@@ -92,17 +92,40 @@ public class RateLimitRule {
     }
 
     public boolean matchesEndpoint(String endpoint, String httpMethod) {
-        // Simple pattern matching (can be enhanced with regex)
-        boolean endpointMatches = endpointPattern.equals("*") || 
-                                 endpointPattern.equals(endpoint) ||
-                                 (endpointPattern.endsWith("/*") && 
-                                  endpoint.startsWith(endpointPattern.substring(0, endpointPattern.length() - 2)));
-        
-        boolean methodMatches = method == null || 
-                               method.equals("*") || 
-                               method.equalsIgnoreCase(httpMethod);
-        
+        boolean endpointMatches = matchesPattern(endpointPattern, endpoint);
+        boolean methodMatches   = method == null || method.equals("*") || method.equalsIgnoreCase(httpMethod);
         return endpointMatches && methodMatches;
+    }
+
+    /**
+     * Simple glob-style path matching that supports '*' wildcards at any position.
+     * Examples:
+     *   /*              matches everything
+     *   /rooms/*&#47;ready  matches /rooms/abc123/ready
+     *   /auth/login     matches exactly /auth/login
+     */
+    private boolean matchesPattern(String pattern, String path) {
+        if ("*".equals(pattern)) return true;
+        if (pattern.equals(path))  return true;
+
+        // Split on '*' and verify each segment is present in order
+        String[] parts = pattern.split("\\*", -1);
+        int pos = 0;
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.isEmpty()) {
+                // Leading/trailing/consecutive '*' — skip
+                if (i == parts.length - 1) return true; // trailing '*' matches rest
+                continue;
+            }
+            int idx = path.indexOf(part, pos);
+            if (idx == -1) return false;
+            // First segment must start at position 0
+            if (i == 0 && idx != 0) return false;
+            pos = idx + part.length();
+        }
+        // All parts matched; if last char of pattern is '*', any suffix is fine
+        return pattern.endsWith("*") || pos == path.length();
     }
 }
 
