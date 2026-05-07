@@ -172,8 +172,8 @@ jobs:
             echo "=== Ensure game-network exists ==="
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
-            echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
-            compose up -d mysql redis
+            echo "=== Ensure dependencies are running in compose project: $COMPOSE_PROJECT_NAME ==="
+            compose up -d mysql redis nighthunt-relay
 
             CURRENT_BACKEND_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' nighthunt-backend 2>/dev/null || true)
             if [ -n "$CURRENT_BACKEND_PROJECT" ] && [ "$CURRENT_BACKEND_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
