@@ -153,6 +153,15 @@ jobs:
                 "$@"
             }
 
+            remove_if_wrong_project() {
+              CONTAINER_NAME="$1"
+              CURRENT_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CONTAINER_NAME" 2>/dev/null || true)
+              if [ -n "$CURRENT_PROJECT" ] && [ "$CURRENT_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
+                echo "=== Remove $CONTAINER_NAME from old compose project: $CURRENT_PROJECT ==="
+                docker rm -f "$CONTAINER_NAME"
+              fi
+            }
+
             mkdir -p "$DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
@@ -175,11 +184,7 @@ jobs:
             echo "=== Ensure dependencies are running in compose project: $COMPOSE_PROJECT_NAME ==="
             compose up -d mysql redis nighthunt-relay
 
-            CURRENT_BACKEND_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' nighthunt-backend 2>/dev/null || true)
-            if [ -n "$CURRENT_BACKEND_PROJECT" ] && [ "$CURRENT_BACKEND_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
-              echo "=== Remove backend container from old compose project: $CURRENT_BACKEND_PROJECT ==="
-              docker rm -f nighthunt-backend
-            fi
+            remove_if_wrong_project nighthunt-backend
 
             echo "=== Pull latest image ==="
             compose pull backend
@@ -199,18 +204,27 @@ jobs:
             echo "=== Health check (30s timeout) ==="
             BACKEND_PORT=$(grep ^SERVER_PORT "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             BACKEND_PORT=${BACKEND_PORT:-8080}
+            BACKEND_UP=false
             for i in $(seq 1 6); do
               sleep 5
               STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1 || true)
               if [ "$STATUS" = '"status":"UP"' ]; then
                 echo "Backend UP"
-                exit 0
+                BACKEND_UP=true
+                break
               fi
               echo "Waiting... ($i/6)"
             done
-            echo "Health check failed"
-            compose logs backend --tail=80
-            exit 1
+
+            if [ "$BACKEND_UP" != "true" ]; then
+              echo "Health check failed"
+              compose logs backend --tail=80
+              exit 1
+            fi
+
+            echo "=== Ensure nginx reverse proxy is in compose project: $COMPOSE_PROJECT_NAME ==="
+            remove_if_wrong_project nighthunt-nginx
+            compose up -d nginx
 
       - name: Push git tag
         run: |
