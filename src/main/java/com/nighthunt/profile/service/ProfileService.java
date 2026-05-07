@@ -26,12 +26,10 @@ public class ProfileService {
     }
 
     /**
-     * Public profile — returns a limited view suitable for viewing another player's card.
-     * Coins and platform are excluded from public profiles.
+     * Public profile - returns a limited view suitable for another player's card.
      */
     public ProfileResponse getPublicProfile(Long targetUserId) {
-        User user = userRepository.findById(targetUserId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.USER_NOT_FOUND, "User not found"));
+        User user = findUser(targetUserId);
         log.info("[Profile] Public profile viewed: targetUserId={}", targetUserId);
         return ProfileResponse.builder()
                 .userId(user.getId())
@@ -41,8 +39,8 @@ public class ProfileService {
                 .tier(user.getTier())
                 .totalWins(user.getTotalWins())
                 .totalLosses(user.getTotalLosses())
-                .coins(0L)      // hidden on public profile
-                .platform(null) // hidden on public profile
+                .coins(0L)
+                .platform(null)
                 .build();
     }
 

@@ -28,4 +28,9 @@ public class PartyMatchmakingRequest {
      */
     @Builder.Default
     private boolean allowFill = true;
+
+    /**
+     * Optional map preference selected by the party host. Null means any map.
+     */
+    private String mapId;
 }

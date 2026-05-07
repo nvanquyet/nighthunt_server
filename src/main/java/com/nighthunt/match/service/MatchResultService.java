@@ -3,7 +3,6 @@ package com.nighthunt.match.service;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.elo.service.EloService;
-import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.match.dto.MatchEndRequest;
 import com.nighthunt.match.dto.MatchEndResponse;
@@ -11,7 +10,6 @@ import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.entity.MatchPlayerResult;
 import com.nighthunt.match.repository.MatchPlayerResultRepository;
 import com.nighthunt.match.repository.MatchRepository;
-import com.nighthunt.dedicatedserver.service.DedicatedServerService;
 import com.nighthunt.relay.service.RelaySessionManager;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -48,9 +46,7 @@ public class MatchResultService {
     private final UserRepository               userRepository;
     private final EloService                   eloService;
     private final RelaySessionManager          relaySessionManager;
-    private final DedicatedServerService       dedicatedServerService;
     private final ConnectionManager            connectionManager;
-    private final PlayerStatusService          playerStatusService;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
     @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
@@ -68,7 +64,7 @@ public class MatchResultService {
                         "Match not found: " + req.getMatchId()));
 
         if ("FINISHED".equals(match.getStatus())) {
-            throw new BusinessException(ErrorCodes.MATCH_ALREADY_FINISHED,
+            throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Match already finished: " + req.getMatchId());
         }
 
@@ -170,13 +166,9 @@ public class MatchResultService {
         match.setFinishedAt(LocalDateTime.now());
         matchRepository.save(match);
 
-        // 5a. Close relay session (custom game relay server → releases UDP port)
+        // 5. Close relay session
         relaySessionManager.getByRoomId(match.getRoomId())
                 .ifPresent(s -> relaySessionManager.finishSession(s.getSessionToken()));
-
-        // 5b. Reclaim DS container (ranked match → stop Docker container immediately)
-        //     No-op for custom games (no DS is linked to a custom match).
-        dedicatedServerService.reclaimServerForMatch(req.getMatchId());
 
         // 6. Broadcast match_ended WS event to all participants
         MatchEndResponse response = MatchEndResponse.builder()
@@ -188,7 +180,6 @@ public class MatchResultService {
 
         for (var entry : req.getPlayerResults()) {
             connectionManager.sendToUser(entry.getUserId(), "match_ended", response);
-            try { playerStatusService.setBackToOnline(entry.getUserId()); } catch (Exception ignored) {}
         }
 
         log.info("[MatchEnd] Processed match {} winner={} reason={} players={}",

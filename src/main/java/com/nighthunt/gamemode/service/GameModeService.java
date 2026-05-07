@@ -252,6 +252,7 @@ public class GameModeService {
                 .maxElo(gameMode.getMaxElo())
                 .modeStatus(gameMode.getModeStatus())
                 .displayOrder(gameMode.getDisplayOrder())
+                .platformFilter(gameMode.getPlatformFilter())
                 .isActive(gameMode.isActive())
                 .isDevMode(gameMode.isDevMode())
                 .build();

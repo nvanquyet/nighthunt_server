@@ -69,7 +69,7 @@ public class MatchmakingQueueService {
     private final RoomService                 roomService;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
-    private final GameMapService               gameMapService;
+    private final GameMapService              gameMapService;
     private final PlayerStatusService         playerStatusService;
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -91,7 +91,14 @@ public class MatchmakingQueueService {
                     "Game mode not available for matchmaking: " + gameMode);
         }
 
-        // Validate mapId: reject if client sends a mapId that does not exist / is locked
+        // Enforce platform restriction set on the game mode
+        if (platform != null && !"ALL".equalsIgnoreCase(mode.getPlatformFilter())) {
+            if (!mode.getPlatformFilter().equalsIgnoreCase(platform)) {
+                throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
+                        "Game mode '" + gameMode + "' is restricted to " + mode.getPlatformFilter() + " players");
+            }
+        }
+
         if (mapId != null && !mapId.isBlank() && !gameMapService.isMapValid(mapId)) {
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Map not available for matchmaking: " + mapId);
@@ -241,63 +248,129 @@ public class MatchmakingQueueService {
     }
 
     /**
-     * Mark entries as MATCHED and immediately start DS allocation.
-     * No accept/decline phase — when players are grouped the DS boots right away
-     * and {@code match_ready} is broadcast to all players.
+     * Mark entries as MATCHED and notify players via WebSocket.
+     * Resolves mapId: anchor's map wins; if null, leave null (DS allocator may randomize).
      *
-     * {@code mode.isDevMode()} only controls the minimum player count
-     * (1 instead of totalPlayers) set in {@link #tryFormMatches}. Once a group
-     * is formed the logic here is identical for all modes.
+     * Dev mode fast-path: when {@code mode.isDevMode()} the entire lobby/accept phase
+     * is skipped.  The DS container is started immediately, and the single player
+     * receives a {@code match_ready} event right away — no {@code match_found} or
+     * {@code /accept} call required.
      */
     private void formMatch(List<MatchmakingEntry> group, GameModeDTO mode) {
-        // Prefer first non-null mapId in group (anchor is first).
-        // Re-validate at form time — a map may have been locked/deactivated since the player queued.
+        // Prefer first non-null mapId in group (anchor is first)
         String resolvedMapId = group.stream()
                 .map(MatchmakingEntry::getMapId)
                 .filter(m -> m != null && !m.isBlank())
-                .filter(gameMapService::isMapValid)   // skip maps disabled since enqueue
+                .filter(gameMapService::isMapValid)
                 .findFirst()
                 .orElse(null);
-        // null resolvedMapId means server picks any available map (DS decides)
-        if (resolvedMapId == null) {
-            log.info("[MM] formMatch — no valid mapId requested by group, letting DS pick default.");
-        }
 
         String lobbyToken = UUID.randomUUID().toString();
 
+        // ── Dev mode: skip accept phase, start DS immediately ────────────────
+        if (mode.isDevMode()) {
+            for (MatchmakingEntry entry : group) {
+                entry.setStatus("MATCHED");
+                entry.setLobbyToken(lobbyToken);
+                entry.setAcceptStatus("ACCEPTED"); // pre-accept
+                entry.setMapId(resolvedMapId);
+                entryRepository.save(entry);
+            }
+            log.info("[MM][DEV] devMode=true — skipping accept phase, starting DS immediately. players={}",
+                    group.stream().map(MatchmakingEntry::getUserId).toList());
+            createMatchedRoom(group);
+            return;
+        }
+
+        // ── Normal ranked flow: send match_found, wait for all-accept ────────
         for (MatchmakingEntry entry : group) {
             entry.setStatus("MATCHED");
             entry.setLobbyToken(lobbyToken);
+            entry.setAcceptStatus("PENDING");
             entry.setMapId(resolvedMapId);
             entryRepository.save(entry);
+            log.info("[MM] Matched user {} into group token={} map={}", entry.getUserId(), lobbyToken, resolvedMapId);
         }
 
-        log.info("[MM] Match formed — mode={} lobbyToken={} players={} devMode={}",
-                mode.getModeKey(), lobbyToken,
-                group.stream().map(MatchmakingEntry::getUserId).toList(),
-                mode.isDevMode());
+        List<Long> playerIds = group.stream().map(MatchmakingEntry::getUserId).toList();
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("event",      "match_found");
+        payload.put("lobbyToken", lobbyToken);
+        payload.put("gameMode",   mode.getModeKey());
+        payload.put("playerIds",  playerIds);
 
-        createMatchedRoom(group);
+        for (MatchmakingEntry entry : group) {
+            connectionManager.sendToUser(entry.getUserId(), "match_found", payload);
+        }
+        log.info("[MM] Formed {} match, lobbyToken={}, players={}", mode.getModeKey(), lobbyToken, playerIds);
+    }
+
+    // ── Accept / Decline ─────────────────────────────────────────────────────
+
+    /**
+     * Player accepts the pending match offer.
+     * When ALL players in the group accept, a ranked room is created and
+     * {@code match_ready} is broadcast to everyone with DS info.
+     */
+    @Transactional
+    public void accept(Long userId, String lobbyToken) {
+        MatchmakingEntry entry = entryRepository.findByUserId(userId)
+                .filter(e -> lobbyToken.equals(e.getLobbyToken()) && "MATCHED".equals(e.getStatus()))
+                .orElseThrow(() -> new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
+                        "No pending match found for lobbyToken: " + lobbyToken));
+
+        entry.setAcceptStatus("ACCEPTED");
+        entryRepository.save(entry);
+        log.info("[MM] User {} accepted match lobbyToken={}", userId, lobbyToken);
+
+        List<MatchmakingEntry> group = entryRepository.findByLobbyToken(lobbyToken);
+        boolean allAccepted = group.stream().allMatch(e -> "ACCEPTED".equals(e.getAcceptStatus()));
+        if (allAccepted) {
+            createMatchedRoom(group);
+        }
+    }
+
+    /**
+     * Player declines (or timeout auto-declines). Re-queues any players who had already accepted.
+     */
+    @Transactional
+    public void decline(Long userId, String lobbyToken) {
+        List<MatchmakingEntry> group = entryRepository.findByLobbyToken(lobbyToken);
+        List<Long> allPlayerIds = group.stream().map(MatchmakingEntry::getUserId).toList();
+
+        for (MatchmakingEntry e : group) {
+            if ("CANCELLED".equals(e.getStatus())) continue;
+            String prevMode = e.getGameMode();
+            e.setStatus("CANCELLED");
+            e.setAcceptStatus("DECLINED");
+            entryRepository.save(e);
+            // Re-queue anyone who isn't the decliner and was still in-lobby
+            if (!e.getUserId().equals(userId)) {
+                enqueue(e.getUserId(), prevMode, e.getMapId(), e.getPlatform());
+            }
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("lobbyToken", lobbyToken);
+        payload.put("reason", "A player declined");
+        for (Long pid : allPlayerIds) {
+            connectionManager.sendToUser(pid, "match_cancelled", payload);
+        }
+        log.info("[MM] User {} declined match lobbyToken={}. Re-queued {} players.",
+                userId, lobbyToken, allPlayerIds.size() - 1);
     }
 
     // ── Room Creation ─────────────────────────────────────────────────────────
 
     private void createMatchedRoom(List<MatchmakingEntry> group) {
-        String modeKey  = group.get(0).getGameMode();
+        String modeKey  = group.get(0).getGameMode(); // stored as lowercase string e.g. "2v2"
         List<Long> userIds = group.stream().map(MatchmakingEntry::getUserId).toList();
         String lToken    = group.get(0).getLobbyToken();
-        String mapId     = group.get(0).getMapId();
-
-        log.info("[MM] createMatchedRoom ▶ mode={} mapId={} players={} lobbyToken={}", modeKey, mapId, userIds, lToken);
+        String mapId     = group.get(0).getMapId(); // unified mapId set in formMatch()
 
         try {
-            // Step 1: Create room
             RoomResponse room = roomService.createRankedRoom(userIds, modeKey, mapId);
-            log.info("[MM] Step 1 OK: Room created — roomCode={} matchId={}", room.getRoomCode(), room.getMatchId());
-
-            // Step 2: Allocate DS
             ServerAllocateResponse ds = dsService.allocateServerForMatch("vn", mapId, group.size(), room.getMatchId());
-            log.info("[MM] Step 2 OK: DS allocated — serverId={} ds={}:{} devMode={}", ds.getServerId(), ds.getIp(), ds.getPort(), ds.getDevSecret() != null);
 
             Map<String, Object> payload = new HashMap<>();
             payload.put("lobbyToken",   lToken);
@@ -309,9 +382,10 @@ public class MatchmakingQueueService {
             payload.put("dsIp",         ds.getIp());
             payload.put("dsPort",       ds.getPort());
             payload.put("sessionToken", ds.getSessionToken());
+            // Only populated when ds.docker.enabled=false (local dev/test).
+            // Developer uses this to simulate DS boot: POST /api/ds/register.
             if (ds.getDevSecret() != null) payload.put("devSecret", ds.getDevSecret());
 
-            // Phase 3: include player list so client overlay can show all cards before DS connects.
             if (room.getPlayers() != null && !room.getPlayers().isEmpty()) {
                 List<Map<String, Object>> playerEntries = new ArrayList<>();
                 for (var p : room.getPlayers()) {
@@ -319,7 +393,6 @@ public class MatchmakingQueueService {
                     entry.put("userId",   p.getUserId());
                     entry.put("username", p.getUsername());
                     entry.put("team",     p.getTeam() != null ? p.getTeam() : 1);
-                    // Enrich with ELO + tier from User table (best-effort)
                     User u = userRepository.findById(p.getUserId()).orElse(null);
                     entry.put("elo",  u != null ? u.getElo()  : 0);
                     entry.put("tier", u != null ? u.getTier() : "");
@@ -328,31 +401,25 @@ public class MatchmakingQueueService {
                 payload.put("players", playerEntries);
             }
 
-            // Step 3: Clean up queue entries
+            // Clean up queue entries
             for (MatchmakingEntry e : group) {
                 entryRepository.delete(e);
             }
-            log.info("[MM] Step 3 OK: Queue entries deleted for {} players", group.size());
 
-            // Step 4: Broadcast match_ready via WS + mark players IN_GAME
-            int sent = 0;
             for (Long uid : userIds) {
                 connectionManager.sendToUser(uid, "match_ready", payload);
-                log.debug("[MM] match_ready sent to userId={}", uid);
                 try { playerStatusService.setInGame(uid); } catch (Exception ignored) {}
-                sent++;
             }
-            log.info("[MM] Step 4 OK: match_ready broadcast complete — sent={}/{} matchId={} ds={}:{}",
-                    sent, userIds.size(), room.getMatchId(), ds.getIp(), ds.getPort());
+            roomService.markRankedRoomInGame(room.getMatchId());
 
+            log.info("[MM] Match ready: room={}, mode={}, ds={}:{}, players={}",
+                    room.getRoomCode(), modeKey, ds.getIp(), ds.getPort(), userIds);
         } catch (Exception ex) {
-            log.error("[MM] createMatchedRoom FAILED — mode={} players={} err={}", modeKey, userIds, ex.getMessage(), ex);
+            log.error("[MM] Failed to create matched room: {}", ex.getMessage(), ex);
             // Re-queue all players on failure
-            int requeued = 0;
             for (MatchmakingEntry e : group) {
-                try { enqueue(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); requeued++; } catch (Exception ignored) {}
+                try { enqueue(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); } catch (Exception ignored) {}
             }
-            log.warn("[MM] Re-queued {}/{} players after failure", requeued, group.size());
         }
     }
 }

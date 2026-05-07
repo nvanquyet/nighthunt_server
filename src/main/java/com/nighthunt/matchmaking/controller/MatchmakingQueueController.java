@@ -11,15 +11,15 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * Ranked matchmaking queue endpoints.
+ * BE-28 — Ranked matchmaking queue endpoints.
  *
  * <ul>
- *   <li>{@code POST   /api/matchmaking/queue} — enter the ranked queue</li>
- *   <li>{@code DELETE /api/matchmaking/queue} — leave the ranked queue</li>
+ *   <li>{@code POST /api/matchmaking/queue}     — enter the ranked queue</li>
+ *   <li>{@code DELETE /api/matchmaking/queue}   — leave the ranked queue</li>
  * </ul>
  *
- * No accept/decline endpoints — when a full group is formed the DS boots
- * immediately and {@code match_ready} is sent directly to all players.
+ * The existing {@code POST /api/matchmaking/request} endpoint in
+ * {@code MatchmakingController} handles DS allocation and remains intact.
  */
 @RestController
 @RequestMapping("/matchmaking/queue")
@@ -52,6 +52,32 @@ public class MatchmakingQueueController {
     public ResponseEntity<ApiResponse<Void>> dequeue() {
         Long userId = SecurityUtils.getCurrentUserId();
         queueService.dequeue(userId);
+        return ResponseEntity.ok(ApiResponse.ok());
+    }
+
+    /**
+     * Accept the pending match offer.
+     * Body: {@code { "lobbyToken": "..." }}
+     */
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/accept")
+    public ResponseEntity<ApiResponse<Void>> accept(@RequestBody Map<String, String> body) {
+        Long   userId     = SecurityUtils.getCurrentUserId();
+        String lobbyToken = body.get("lobbyToken");
+        queueService.accept(userId, lobbyToken);
+        return ResponseEntity.ok(ApiResponse.ok());
+    }
+
+    /**
+     * Decline the pending match offer. Re-queues the other players who already accepted.
+     * Body: {@code { "lobbyToken": "..." }}
+     */
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/decline")
+    public ResponseEntity<ApiResponse<Void>> decline(@RequestBody Map<String, String> body) {
+        Long   userId     = SecurityUtils.getCurrentUserId();
+        String lobbyToken = body.get("lobbyToken");
+        queueService.decline(userId, lobbyToken);
         return ResponseEntity.ok(ApiResponse.ok());
     }
 }

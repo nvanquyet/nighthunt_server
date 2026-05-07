@@ -26,6 +26,7 @@ public class GameModeDTO {
     private int    maxElo;               // max ELO cap
     private String modeStatus;           // AVAILABLE, LOCKED, COMING_SOON, DISABLED
     private int    displayOrder;
+    private String platformFilter;       // ALL, MOBILE, PC
     @JsonProperty("isActive")
     private boolean isActive;
     @JsonProperty("isDevMode")

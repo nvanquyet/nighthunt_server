@@ -27,8 +27,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -58,7 +60,6 @@ public class RoomService {
         // Validate game mode upfront so invalid modes are rejected at creation time
         gameModeService.validateModeOrThrow(request.getMode());
 
-        // Prevent creating a room if already in one
         if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
@@ -122,7 +123,6 @@ public class RoomService {
 
     @Transactional
     public RoomResponse joinRoomByCode(Long userId, String roomCode, String password) {
-        // Prevent joining if already in another room
         if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
@@ -135,9 +135,9 @@ public class RoomService {
         // Check password if room has one
         if (room.getPassword() != null && !room.getPassword().isEmpty()) {
             if (password == null || password.isEmpty()
-                    || !java.security.MessageDigest.isEqual(
-                        room.getPassword().getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        password.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                    || !MessageDigest.isEqual(
+                    room.getPassword().getBytes(StandardCharsets.UTF_8),
+                    password.getBytes(StandardCharsets.UTF_8))) {
                 throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
                         "Room password is required or incorrect");
             }
@@ -197,7 +197,6 @@ public class RoomService {
 
     @Transactional
     public RoomResponse quickPlay(Long userId, QuickPlayRequest request) {
-        // Prevent quick play if already in a room
         if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
@@ -401,7 +400,7 @@ public class RoomService {
         
         connectionManager.updateUserRoom(userId, null);
 
-        // Handle owner transfer or room disband BEFORE broadcasting
+        // Handle owner transfer or room disband before broadcasting the updated room.
         if (room.getOwnerId().equals(userId)) {
             List<RoomPlayer> remainingPlayers = roomPlayerRepository.findByRoomId(roomId);
             if (remainingPlayers.isEmpty()) {
@@ -414,7 +413,6 @@ public class RoomService {
             }
         }
 
-        // Broadcast AFTER ownership is resolved so clients get the correct owner
         connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
     }
 
@@ -471,17 +469,15 @@ public class RoomService {
         // Delete all players
         roomPlayerRepository.deleteByRoomId(roomId);
 
-        // Close relay session if one was allocated (Custom_Relay mode)
-        // This releases the UDP port on the relay server immediately.
         relaySessionManager.getByRoomId(roomId).ifPresent(session -> {
-            log.info("[Room] Disbanding room {} — closing relay session={}", roomId, session.getSessionToken());
+            log.info("[Room] Disbanding room {} - closing relay session={}", roomId, session.getSessionToken());
             relaySessionManager.finishSession(session.getSessionToken());
         });
 
         // Update room status
         room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
         roomRepository.save(room);
-        log.info("[Room] Room {} disbanded by owner {}", roomId, ownerId);
+        log.info("Room {} disbanded by owner {}", roomId, ownerId);
     }
 
     @Transactional
@@ -519,7 +515,6 @@ public class RoomService {
         log.info("Game starting for room {} (code: {}, matchId: {}, mode: {}, players: {})",
                 roomId, room.getRoomCode(), room.getMatchId(), room.getMode(), currentPlayerCount);
 
-        // Capture old status before updating
         String oldStatus = room.getStatus();
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
@@ -527,11 +522,8 @@ public class RoomService {
         // ── BE-27: Create relay session for Custom mode ──────────────────────
         // If the room is a Custom (non-ranked) lobby, spin up a Mini-Relay session
         // so clients get host/port info via WS game_starting event.
-        RelaySession relaySession = null;
-        // Detect the host player's IP from their active WebSocket connection.
-        // Used as relayHost in direct P2P mode (when relay.host is not configured).
         String hostPlayerIp = connectionManager.getClientIp(ownerId);
-        relaySession = relaySessionManager.createSession(roomId, room.getMatchId(), hostPlayerIp);
+        RelaySession relaySession = relaySessionManager.createSession(roomId, room.getMatchId(), hostPlayerIp);
 
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
 
@@ -572,10 +564,6 @@ public class RoomService {
 
     /**
      * Immediately transitions a ranked room to IN_GAME status after match_ready has been broadcast.
-     * This prevents RoomOwnerTransferService (which only inspects WAITING rooms) from erroneously
-     * disbanding the room when a player disconnects and reconnects during DS boot.
-     *
-     * @param matchId the matchId of the room to transition
      */
     @Transactional
     public void markRankedRoomInGame(String matchId) {
@@ -583,7 +571,7 @@ public class RoomService {
             if (GameConstants.ROOM_STATUS_WAITING.equals(room.getStatus())) {
                 room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
                 roomRepository.save(room);
-                log.info("[RankedMM] Room {} (matchId={}) → IN_GAME (match_ready sent)", room.getId(), matchId);
+                log.info("[RankedMM] Room {} (matchId={}) -> IN_GAME (match_ready sent)", room.getId(), matchId);
             }
         }, () -> log.warn("[RankedMM] markRankedRoomInGame: no room found for matchId={}", matchId));
     }

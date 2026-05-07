@@ -82,14 +82,14 @@ public class PartyMatchmakingService {
 
         // Validate party size
         if (partySize > playersPerTeam) {
-            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH, 
+            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH,
                 String.format("Party size (%d) exceeds team size (%d) for %s", 
                     partySize, playersPerTeam, request.getGameMode()));
         }
 
         // If fill option disabled, party must be full team
         if (!request.isAllowFill() && partySize < playersPerTeam) {
-            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH, 
+            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH,
                 String.format("Party must have %d players for %s (no fill)", 
                     playersPerTeam, request.getGameMode()));
         }
@@ -100,16 +100,16 @@ public class PartyMatchmakingService {
         
         // Add all members to matchmaking queue
         for (Long memberId : memberIds) {
-            matchmakingQueueService.enqueue(memberId, request.getGameMode(), null, null);
-            log.info("Party member {} queued for matchmaking (party={}, mode={})", 
-                memberId, party.getId(), request.getGameMode());
+            matchmakingQueueService.enqueue(memberId, request.getGameMode(), request.getMapId(), null);
+            log.info("Party member {} queued for matchmaking (party={}, mode={}, mapId={})",
+                memberId, party.getId(), request.getGameMode(), request.getMapId());
         }
 
         // Publish party status change event
         messageBrokerService.publishPartyStatusChanged(party.getId(), "IDLE", "IN_QUEUE");
         
-        log.info("Party {} queued for matchmaking: mode={}, size={}, allowFill={}", 
-            party.getId(), request.getGameMode(), partySize, request.isAllowFill());
+        log.info("Party {} queued for matchmaking: mode={}, mapId={}, size={}, allowFill={}",
+            party.getId(), request.getGameMode(), request.getMapId(), partySize, request.isAllowFill());
     }
 
     /**
