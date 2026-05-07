@@ -16,6 +16,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/nighthunt-backend
+  DEPLOY_DIR: /opt/nighthunt
+  COMPOSE_PROJECT_NAME: nighthunt_server
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -121,8 +123,8 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "docker-compose.yml,docker/,dashboard/"
-          target: /opt/nighthunt
+          source: "docker-compose.yml,docker/,dashboard/,relay/"
+          target: ${{ env.DEPLOY_DIR }}
           strip_components: 0
 
       - name: SSH Deploy
@@ -130,16 +132,39 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
+          COMPOSE_PROJECT_NAME: ${{ env.COMPOSE_PROJECT_NAME }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          envs: GHCR_TOKEN,GH_ACTOR
+          envs: GHCR_TOKEN,GH_ACTOR,DEPLOY_DIR,COMPOSE_PROJECT_NAME
           script: |
             set -e
-            mkdir -p /opt/nighthunt
-            cd /opt/nighthunt
+            : "${DEPLOY_DIR:=/opt/nighthunt}"
+            : "${COMPOSE_PROJECT_NAME:=nighthunt_server}"
+
+            compose() {
+              docker compose \
+                -p "$COMPOSE_PROJECT_NAME" \
+                --project-directory "$DEPLOY_DIR" \
+                --env-file "$DEPLOY_DIR/.env.production" \
+                "$@"
+            }
+
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            if [ ! -f "$DEPLOY_DIR/.env.production" ]; then
+              echo "ERROR: Missing $DEPLOY_DIR/.env.production"
+              exit 1
+            fi
+
+            if grep -Eq '^[A-Z0-9_]+=.*CHANGE_ME' "$DEPLOY_DIR/.env.production"; then
+              echo "ERROR: $DEPLOY_DIR/.env.production still contains CHANGE_ME placeholders"
+              exit 1
+            fi
 
             echo "=== Login GHCR ==="
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
@@ -147,37 +172,36 @@ jobs:
             echo "=== Ensure game-network exists ==="
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
+            echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
+            compose up -d mysql redis
+
+            CURRENT_BACKEND_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' nighthunt-backend 2>/dev/null || true)
+            if [ -n "$CURRENT_BACKEND_PROJECT" ] && [ "$CURRENT_BACKEND_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
+              echo "=== Remove backend container from old compose project: $CURRENT_BACKEND_PROJECT ==="
+              docker rm -f nighthunt-backend
+            fi
+
             echo "=== Pull latest image ==="
-            docker compose \
-              --project-directory /opt/nighthunt \
-              --env-file /opt/nighthunt/.env.production \
-              pull backend
+            compose pull backend
 
             echo "=== Restart backend ==="
-            docker compose \
-              --project-directory /opt/nighthunt \
-              --env-file /opt/nighthunt/.env.production \
-              up -d --no-deps --force-recreate backend
-
-            echo "=== Ensure backend is on correct network ==="
-            docker network connect nighthunt_nighthunt-network nighthunt-backend 2>/dev/null || true
-            # game-network: DS containers dùng mạng này để gọi về backend
-            docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
-            docker network connect nighthunt_game-network nighthunt-backend 2>/dev/null || true
+            compose up -d --no-deps --force-recreate backend
 
             echo "=== Clean stale DS records with wrong IP ==="
-            VPS_IP=$(grep VPS_PUBLIC_IP /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
-            DB_USER=$(grep ^DB_USERNAME /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
-            DB_PASS=$(grep ^DB_PASSWORD /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
-            DB_NAME=$(grep ^MYSQL_DATABASE /opt/nighthunt/.env.production | cut -d= -f2 | tr -d '\r')
+            VPS_IP=$(grep ^VPS_PUBLIC_IP "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            DB_USER=$(grep ^DB_USERNAME "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            DB_PASS=$(grep ^DB_PASSWORD "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            DB_NAME=$(grep ^MYSQL_DATABASE "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             docker exec nighthunt-mysql mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e \
               "UPDATE dedicated_server SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
               2>/dev/null && echo "Stale DS records cleaned." || echo "WARN: DB cleanup failed (non-fatal)"
 
             echo "=== Health check (30s timeout) ==="
+            BACKEND_PORT=$(grep ^SERVER_PORT "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            BACKEND_PORT=${BACKEND_PORT:-8080}
             for i in $(seq 1 6); do
               sleep 5
-              STATUS=$(curl -s http://localhost:8080/api/actuator/health | grep -o '"status":"[A-Z]*"' | head -1 || true)
+              STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1 || true)
               if [ "$STATUS" = '"status":"UP"' ]; then
                 echo "Backend UP"
                 exit 0
@@ -185,7 +209,7 @@ jobs:
               echo "Waiting... ($i/6)"
             done
             echo "Health check failed"
-            docker compose --project-directory /opt/nighthunt --env-file /opt/nighthunt/.env.production logs backend --tail=50
+            compose logs backend --tail=80
             exit 1
 
       - name: Push git tag
@@ -211,26 +235,32 @@ jobs:
     steps:
       - name: Run smoke tests via SSH
         uses: appleboy/ssh-action@v1.0.0
+        env:
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          envs: DEPLOY_DIR
           script: |
             set -e
+            : "${DEPLOY_DIR:=/opt/nighthunt}"
             # Use -f2- (not -f2) to capture the full value even if it contains '=' characters.
-            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2-)
-            DS_IMAGE=$(grep "^DS_IMAGE_REF=" /opt/nighthunt/.env.production | cut -d= -f2-)
+            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            DS_IMAGE=$(grep "^DS_IMAGE_REF=" "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            BACKEND_PORT=$(grep "^SERVER_PORT=" "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
+            BACKEND_PORT=${BACKEND_PORT:-8080}
             [ -n "${ADMIN_SECRET}" ] || (echo "❌ ADMIN_SECRET not found in .env.production" && exit 1)
             [ -n "${DS_IMAGE}"     ] || (echo "❌ DS_IMAGE_REF not found in .env.production"  && exit 1)
 
             echo "=== [1/4] Backend health ==="
-            STATUS=$(curl -sf http://localhost:8080/api/actuator/health | grep -o '"status":"[A-Z]*"' | head -1)
+            STATUS=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1)
             [ "$STATUS" = '"status":"UP"' ] || (echo "❌ Backend not healthy: $STATUS" && exit 1)
             echo "✅ Backend UP"
 
             echo "=== [2/4] DB & Redis health components ==="
-            HEALTH=$(curl -sf http://localhost:8080/api/actuator/health)
+            HEALTH=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health")
             echo "${HEALTH}" | grep -o '"db":{[^}]*}' || true
             echo "${HEALTH}" | grep -o '"redis":{[^}]*}' || true
             echo "✅ Components checked"
@@ -239,7 +269,7 @@ jobs:
             # Use -s (silent) without -f so we capture the body even on HTTP error codes.
             # Check HTTP status separately to emit a useful error message.
             HTTP_CODE=$(curl -s -o /tmp/admin_resp.json -w "%{http_code}" \
-              http://localhost:8080/api/admin/ds/servers \
+              "http://localhost:${BACKEND_PORT}/api/admin/ds/servers" \
               -H "X-Admin-Secret: ${ADMIN_SECRET}")
             RESP=$(cat /tmp/admin_resp.json)
             if [ "${HTTP_CODE}" != "200" ]; then
