@@ -295,6 +295,7 @@ def main():
 if __name__ == "__main__":
     main()
 
+'''
 Architecture
 ------------
 All players (host + clients) connect OUTBOUND to relay:sessionPort.
@@ -602,3 +603,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''

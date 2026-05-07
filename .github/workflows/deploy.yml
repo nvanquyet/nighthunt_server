@@ -181,8 +181,11 @@ jobs:
             echo "=== Ensure game-network exists ==="
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
-            echo "=== Ensure dependencies are running in compose project: $COMPOSE_PROJECT_NAME ==="
-            compose up -d mysql redis nighthunt-relay
+            echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
+            compose up -d mysql redis
+
+            echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
+            compose up -d --build nighthunt-relay
 
             remove_if_wrong_project nighthunt-backend
 
@@ -224,7 +227,7 @@ jobs:
 
             echo "=== Ensure nginx reverse proxy is in compose project: $COMPOSE_PROJECT_NAME ==="
             remove_if_wrong_project nighthunt-nginx
-            compose up -d nginx
+            compose up -d --no-deps nginx
 
       - name: Push git tag
         run: |
