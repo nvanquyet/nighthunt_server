@@ -360,7 +360,7 @@ public class RoomService {
         // Update player position
         player.setTeam(team);
         player.setSlot(slot);
-        player.setIsReady(false); // Reset ready when changing team
+        setReadyAfterPositionChange(room, player);
         
         try {
             roomPlayerRepository.save(player);
@@ -516,7 +516,8 @@ public class RoomService {
 
         // Check all players ready
         List<RoomPlayer> players = roomPlayerRepository.findByRoomId(roomId);
-        boolean allReady = players.stream().allMatch(RoomPlayer::getIsReady);
+        ensureOwnerReady(room, players);
+        boolean allReady = players.stream().allMatch(player -> isReadyForStart(room, player));
         if (!allReady) {
             throw new BusinessException(ErrorCodes.ROOM_NOT_READY,
                     "Not all players are ready");
@@ -634,7 +635,7 @@ public class RoomService {
             // Move requester to empty slot (no swap request needed)
             requester.setTeam(targetTeam);
             requester.setSlot(targetSlot);
-            requester.setIsReady(false); // Reset ready when changing position
+            setReadyAfterPositionChange(room, requester);
             
             try {
                 roomPlayerRepository.save(requester);
@@ -779,21 +780,21 @@ public class RoomService {
             // Step 1: move requester to a temporary slot to avoid unique constraint clash
             requester.setSlot(tempSlotValue);
             requester.setTeam(origRequesterTeam);
-            requester.setIsReady(false);
+            setReadyAfterPositionChange(room, requester);
             roomPlayerRepository.save(requester);
             roomPlayerRepository.flush();
 
             // Step 2: move target into requester's original slot
             target.setTeam(origRequesterTeam);
             target.setSlot(origRequesterSlot);
-            target.setIsReady(false);
+            setReadyAfterPositionChange(room, target);
             roomPlayerRepository.save(target);
             roomPlayerRepository.flush();
 
             // Step 3: move requester into target's original slot
             requester.setTeam(origTargetTeam);
             requester.setSlot(origTargetSlot);
-            requester.setIsReady(false);
+            setReadyAfterPositionChange(room, requester);
             roomPlayerRepository.save(requester);
             roomPlayerRepository.flush();
         } catch (DataIntegrityViolationException ex) {
@@ -1066,6 +1067,40 @@ public class RoomService {
         connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
+    }
+
+    private void setReadyAfterPositionChange(Room room, RoomPlayer player) {
+        if (room == null || player == null) {
+            return;
+        }
+
+        // The room owner is the authoritative starter, so moving slots must not
+        // put a solo host back into a blocked "waiting for ready" state.
+        player.setIsReady(room.getOwnerId().equals(player.getUserId()));
+    }
+
+    private void ensureOwnerReady(Room room, List<RoomPlayer> players) {
+        if (room == null || players == null) {
+            return;
+        }
+
+        for (RoomPlayer player : players) {
+            if (player != null
+                    && room.getOwnerId().equals(player.getUserId())
+                    && !Boolean.TRUE.equals(player.getIsReady())) {
+                player.setIsReady(true);
+                roomPlayerRepository.save(player);
+            }
+        }
+    }
+
+    private boolean isReadyForStart(Room room, RoomPlayer player) {
+        if (room == null || player == null) {
+            return false;
+        }
+
+        return Boolean.TRUE.equals(player.getIsReady())
+                || room.getOwnerId().equals(player.getUserId());
     }
 
     private void normalizeRoomSlotsForMode(Room room) {
