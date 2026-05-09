@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -112,8 +113,9 @@ public class RoomService {
         // Broadcast room update via WebSocket
         User owner = userRepository.findById(userId).orElse(null);
         String username = owner != null ? owner.getUsername() : "Unknown";
-        connectionManager.sendToUser(userId, "player_joined", response);
         connectionManager.updateUserRoom(userId, room.getId());
+        connectionManager.sendToUser(userId, "player_joined",
+                java.util.Map.of("userId", userId, "username", username, "room", response));
         
         // Publish event via Message Broker
         messageBroker.publishPlayerJoined(room.getId(), userId, username);
@@ -164,7 +166,7 @@ public class RoomService {
         }
 
         // Find available slot
-        int[] allocation = teamSlotAllocator.allocate(room.getId());
+        int[] allocation = teamSlotAllocator.allocate(room.getId(), gameModeService.getPlayersPerTeam(room.getMode()));
         int team = allocation[0];
         int slot = allocation[1];
 
@@ -186,8 +188,9 @@ public class RoomService {
         // Broadcast player joined event via WebSocket
         User user = userRepository.findById(userId).orElse(null);
         String username = user != null ? user.getUsername() : "Unknown";
-        connectionManager.broadcastToRoom(room.getId(), "player_joined", response);
         connectionManager.updateUserRoom(userId, room.getId());
+        connectionManager.broadcastToRoom(room.getId(), "player_joined",
+                java.util.Map.of("userId", userId, "username", username, "room", response));
         
         // Publish event via Message Broker
         messageBroker.publishPlayerJoined(room.getId(), userId, username);
@@ -208,6 +211,8 @@ public class RoomService {
         // Filter by mode and not full
         availableRooms = availableRooms.stream()
                 .filter(room -> room.getMode().equals(request.getMode()))
+                .filter(room -> request.getMapId() == null || request.getMapId().isBlank()
+                        || request.getMapId().equals(room.getMapId()))
                 .filter(room -> {
                     int maxPlayers = gameModeService.getTotalPlayers(room.getMode());
                     int currentPlayers = roomPlayerRepository.countByRoomId(room.getId());
@@ -219,6 +224,7 @@ public class RoomService {
             // Create new room if none available
             CreateRoomRequest createRequest = new CreateRoomRequest();
             createRequest.setMode(request.getMode());
+            createRequest.setMapId(request.getMapId());
             createRequest.setIsPublic(true);
             createRequest.setIsLocked(false);
             return createRoom(userId, createRequest);
@@ -233,6 +239,7 @@ public class RoomService {
             // Create new room if all available rooms have password
             CreateRoomRequest createRequest = new CreateRoomRequest();
             createRequest.setMode(request.getMode());
+            createRequest.setMapId(request.getMapId());
             createRequest.setIsPublic(true);
             createRequest.setIsLocked(false);
             return createRoom(userId, createRequest);
@@ -278,7 +285,7 @@ public class RoomService {
         matchRepository.save(match);
 
         for (Long uid : userIds) {
-            int[] alloc = teamSlotAllocator.allocate(room.getId());
+            int[] alloc = teamSlotAllocator.allocate(room.getId(), gameModeService.getPlayersPerTeam(gameMode));
             RoomPlayer rp = RoomPlayer.builder()
                     .roomId(room.getId())
                     .userId(uid)
@@ -310,7 +317,8 @@ public class RoomService {
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast player ready event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "player_ready", response);
+        connectionManager.broadcastToRoom(roomId, "player_ready",
+                java.util.Map.of("userId", userId, "isReady", player.getIsReady(), "room", response));
         
         // Publish event via Message Broker
         messageBroker.publishPlayerReady(roomId, userId, player.getIsReady());
@@ -331,6 +339,14 @@ public class RoomService {
         // Check if slot is available
         int team = request.getTeam();
         int slot = request.getSlot();
+
+        int slotsPerTeam = gameModeService.getPlayersPerTeam(room.getMode());
+        if ((team != GameConstants.TEAM_1 && team != GameConstants.TEAM_2)
+                || slot < 0
+                || slot >= slotsPerTeam) {
+            throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
+                    "Invalid slot for current room mode");
+        }
         
         // Check if slot is occupied by another player
         boolean slotOccupied = roomPlayerRepository.findByRoomIdAndTeam(roomId, team).stream()
@@ -413,7 +429,8 @@ public class RoomService {
             }
         }
 
-        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
+        connectionManager.broadcastToRoom(roomId, "player_left",
+                java.util.Map.of("userId", userId, "room", roomResponseAssembler.toResponseById(roomId)));
     }
 
     @Transactional
@@ -440,7 +457,8 @@ public class RoomService {
         connectionManager.updateUserRoom(targetUserId, null);
 
         // Broadcast updated room state to remaining players
-        connectionManager.broadcastToRoom(roomId, "player_left", roomResponseAssembler.toResponseById(roomId));
+        connectionManager.broadcastToRoom(roomId, "player_left",
+                java.util.Map.of("userId", targetUserId, "room", roomResponseAssembler.toResponseById(roomId)));
     }
 
     @Transactional
@@ -540,7 +558,8 @@ public class RoomService {
         connectionManager.broadcastToRoom(roomId, "game_starting", startPayload);
 
         // Broadcast room status changed event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "room_status_changed", response);
+        connectionManager.broadcastToRoom(roomId, "room_status_changed",
+                java.util.Map.of("newStatus", GameConstants.ROOM_STATUS_IN_GAME, "room", response));
 
         // Publish event via Message Broker
         messageBroker.publishRoomStatusChanged(roomId, oldStatus, GameConstants.ROOM_STATUS_IN_GAME);
@@ -628,7 +647,12 @@ public class RoomService {
             }
 
             // Broadcast team changed event via WebSocket
-            connectionManager.broadcastToRoom(roomId, "team_changed", roomResponseAssembler.toResponseById(roomId));
+            connectionManager.broadcastToRoom(roomId, "team_changed",
+                    java.util.Map.of(
+                            "userId", userId,
+                            "newTeam", targetTeam,
+                            "newSlot", targetSlot,
+                            "room", roomResponseAssembler.toResponseById(roomId)));
 
             // Return a dummy DTO to indicate success (no actual swap request created)
             SwapRequestDTO dto = new SwapRequestDTO();
@@ -961,6 +985,8 @@ public class RoomService {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_STARTED, "Cannot update settings when game has started");
         }
 
+        boolean modeChanged = false;
+
         // Update mode if provided
         if (request.getMode() != null && !request.getMode().isEmpty()) {
             // Validate mode
@@ -980,6 +1006,7 @@ public class RoomService {
             }
 
             room.setMode(request.getMode());
+            modeChanged = true;
         }
 
         if (request.getMapId() != null) {
@@ -1029,12 +1056,78 @@ public class RoomService {
         }
 
         room = roomRepository.save(room);
+        if (modeChanged) {
+            normalizeRoomSlotsForMode(room);
+        }
+
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast room update via WebSocket (settings changed)
         connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
+    }
+
+    private void normalizeRoomSlotsForMode(Room room) {
+        int slotsPerTeam = Math.max(1, gameModeService.getPlayersPerTeam(room.getMode()));
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+        players.sort(Comparator
+                .comparing((RoomPlayer p) -> p.getTeam() == null ? Integer.MAX_VALUE : p.getTeam())
+                .thenComparing(p -> p.getSlot() == null ? Integer.MAX_VALUE : p.getSlot())
+                .thenComparing(RoomPlayer::getId));
+
+        boolean[][] occupied = new boolean[GameConstants.TEAM_2 + 1][slotsPerTeam];
+        List<RoomPlayer> needsMove = new java.util.ArrayList<>();
+
+        for (RoomPlayer player : players) {
+            Integer team = player.getTeam();
+            Integer slot = player.getSlot();
+            if (team != null
+                    && slot != null
+                    && isValidTeam(team)
+                    && slot >= 0
+                    && slot < slotsPerTeam
+                    && !occupied[team][slot]) {
+                occupied[team][slot] = true;
+            } else {
+                needsMove.add(player);
+            }
+        }
+
+        for (RoomPlayer player : needsMove) {
+            int preferredTeam = isValidTeam(player.getTeam()) ? player.getTeam() : GameConstants.TEAM_1;
+            int slot = findFreeSlot(occupied, preferredTeam);
+            int team = preferredTeam;
+
+            if (slot < 0) {
+                team = preferredTeam == GameConstants.TEAM_1 ? GameConstants.TEAM_2 : GameConstants.TEAM_1;
+                slot = findFreeSlot(occupied, team);
+            }
+
+            if (slot < 0) {
+                throw new BusinessException(ErrorCodes.ROOM_FULL,
+                        "Could not place all players in the selected mode.");
+            }
+
+            occupied[team][slot] = true;
+            player.setTeam(team);
+            player.setSlot(slot);
+            player.setIsReady(room.getOwnerId().equals(player.getUserId()));
+            roomPlayerRepository.save(player);
+        }
+    }
+
+    private static boolean isValidTeam(Integer team) {
+        return team != null && (team == GameConstants.TEAM_1 || team == GameConstants.TEAM_2);
+    }
+
+    private static int findFreeSlot(boolean[][] occupied, int team) {
+        for (int slot = 0; slot < occupied[team].length; slot++) {
+            if (!occupied[team][slot]) {
+                return slot;
+            }
+        }
+        return -1;
     }
 
     private String normalizeMapId(String mapId) {

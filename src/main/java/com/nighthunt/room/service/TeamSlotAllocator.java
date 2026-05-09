@@ -6,7 +6,6 @@ import com.nighthunt.room.repository.RoomPlayerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -27,23 +26,44 @@ public class TeamSlotAllocator {
      * @return int[2] where [0]=team, [1]=slot
      */
     public int[] allocate(Long roomId) {
+        return allocate(roomId, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Allocate the next available team and slot, bounded by the room mode.
+     */
+    public int[] allocate(Long roomId, int slotsPerTeam) {
+        int maxSlots = Math.max(1, slotsPerTeam);
         int team1Count = roomPlayerRepository.countByRoomIdAndTeam(roomId, GameConstants.TEAM_1);
         int team2Count = roomPlayerRepository.countByRoomIdAndTeam(roomId, GameConstants.TEAM_2);
 
         int chosenTeam = (team1Count <= team2Count) ? GameConstants.TEAM_1 : GameConstants.TEAM_2;
+        int alternateTeam = chosenTeam == GameConstants.TEAM_1 ? GameConstants.TEAM_2 : GameConstants.TEAM_1;
 
-        // Find occupied slots on the chosen team to avoid collision
-        Set<Integer> occupiedSlots = roomPlayerRepository.findByRoomIdAndTeam(roomId, chosenTeam)
+        int slot = findFreeSlot(roomId, chosenTeam, maxSlots);
+        if (slot >= 0) {
+            return new int[]{chosenTeam, slot};
+        }
+
+        slot = findFreeSlot(roomId, alternateTeam, maxSlots);
+        if (slot >= 0) {
+            return new int[]{alternateTeam, slot};
+        }
+
+        throw new IllegalStateException("No free room slots available for room " + roomId);
+    }
+
+    private int findFreeSlot(Long roomId, int team, int maxSlots) {
+        Set<Integer> occupiedSlots = roomPlayerRepository.findByRoomIdAndTeam(roomId, team)
                 .stream()
                 .map(RoomPlayer::getSlot)
                 .collect(Collectors.toSet());
 
-        // Find the first available slot index
-        int slot = 0;
-        while (occupiedSlots.contains(slot)) {
-            slot++;
+        for (int slot = 0; slot < maxSlots; slot++) {
+            if (!occupiedSlots.contains(slot)) {
+                return slot;
+            }
         }
-
-        return new int[]{chosenTeam, slot};
+        return -1;
     }
 }

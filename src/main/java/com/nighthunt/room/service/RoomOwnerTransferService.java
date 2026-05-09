@@ -56,6 +56,12 @@ public class RoomOwnerTransferService {
                 continue;
             }
 
+            if (connectionManager.isUserConnected(room.getOwnerId())) {
+                log.trace("Room {} owner {} still has an active WebSocket. Skipping ownership transfer.",
+                        room.getId(), room.getOwnerId());
+                continue;
+            }
+
             // Get owner player
             RoomPlayer ownerPlayer = roomPlayerRepository.findByRoomIdAndUserId(room.getId(), room.getOwnerId())
                     .orElse(null);

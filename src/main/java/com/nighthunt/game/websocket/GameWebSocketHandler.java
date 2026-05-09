@@ -435,7 +435,8 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                                 try {
                                     RoomResponse response = roomResponseAssembler.toResponseById(room.getId());
                                     if (response != null) {
-                                        broadcastToRoom(room.getId(), "player_left", response);
+                                        broadcastToRoom(room.getId(), "player_left",
+                                                Map.of("userId", userId, "room", response));
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to broadcast player_left for userId={} room={}: {}",
