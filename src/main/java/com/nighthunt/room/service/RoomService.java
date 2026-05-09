@@ -5,6 +5,7 @@ import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
+import com.nighthunt.gamemode.dto.GameModeDTO;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
@@ -528,12 +529,13 @@ public class RoomService {
                     "Not all players are ready");
         }
 
-        // Allow starting with any number of ready players >= 1 (solo start is valid).
-        // requiredPlayerCount is the intended max, but the host can start early.
+        // Non-dev custom rooms must be full before start. Dev modes keep the one-player fast path.
         int currentPlayerCount = players.size();
-        if (currentPlayerCount < 1) {
+        GameModeDTO mode = gameModeService.getGameModeByKey(room.getMode());
+        int requiredPlayerCount = mode.isDevMode() ? 1 : mode.getTotalPlayers();
+        if (currentPlayerCount < requiredPlayerCount) {
             throw new BusinessException(ErrorCodes.ROOM_NOT_ENOUGH_PLAYERS,
-                    "Cannot start a room with no players.");
+                    String.format("Need %d players to start %s", requiredPlayerCount, room.getMode()));
         }
 
         log.info("Game starting for room {} (code: {}, matchId: {}, mode: {}, players: {})",
