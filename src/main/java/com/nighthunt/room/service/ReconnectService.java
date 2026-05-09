@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -53,31 +54,35 @@ public class ReconnectService {
                     "Tài khoản đã đăng nhập ở nơi khác. Vui lòng đăng nhập lại.");
         }
 
-        // Find room - try from request or from match session cache
-        Room room;
-        if (roomId != null) {
-            room = roomRepository.findById(roomId)
-                    .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                            "Room not found"));
-        } else {
-            // Try to get from match session cache
+        // Unity JsonUtility cannot omit optional numeric fields, so roomId=0 means "infer it".
+        Long requestedRoomId = roomId != null && roomId > 0 ? roomId : null;
+
+        // Find room - try from request, match session cache, then the user's active room.
+        // If a requested/cached room is stale or terminal, fall through to the active-room lookup.
+        Room room = null;
+        if (requestedRoomId != null) {
+            room = roomRepository.findById(requestedRoomId)
+                    .filter(this::isReconnectable)
+                    .orElse(null);
+        }
+
+        if (room == null) {
             Object cachedSession = matchSessionCache.getMatchSession(String.valueOf(userId));
             if (cachedSession instanceof MatchSessionData) {
                 MatchSessionData sessionData = (MatchSessionData) cachedSession;
                 room = roomRepository.findById(sessionData.getRoomId())
-                        .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                                "Room not found"));
-            } else {
-                throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                        "Room not found. Please provide roomId");
+                        .filter(this::isReconnectable)
+                        .orElse(null);
             }
         }
 
-        // Check room status - allow reconnect for WAITING and IN_GAME
-        if (GameConstants.ROOM_STATUS_CLOSED.equals(room.getStatus()) || 
-            GameConstants.ROOM_STATUS_FINISHED.equals(room.getStatus())) {
+        if (room == null) {
+            room = findActiveRoomForUser(userId);
+        }
+
+        if (room == null) {
             throw new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                    "Room has been closed or finished");
+                    "Room not found. Please provide roomId");
         }
 
         // Check if player slot still exists
@@ -104,6 +109,24 @@ public class ReconnectService {
                 GameConstants.RECONNECT_TIMEOUT_SECONDS);
 
         return roomService.buildRoomResponse(room, joinToken);
+    }
+
+    private boolean isReconnectable(Room room) {
+        return room != null
+                && !GameConstants.ROOM_STATUS_CLOSED.equals(room.getStatus())
+                && !GameConstants.ROOM_STATUS_FINISHED.equals(room.getStatus());
+    }
+
+    private Room findActiveRoomForUser(Long userId) {
+        List<RoomPlayer> activeRoomPlayers = roomPlayerRepository.findActiveRoomsByUserId(userId);
+        for (RoomPlayer activeRoomPlayer : activeRoomPlayers) {
+            Room room = roomRepository.findById(activeRoomPlayer.getRoomId()).orElse(null);
+            if (isReconnectable(room)) {
+                return room;
+            }
+        }
+
+        return null;
     }
 
     // Inner class for match session data

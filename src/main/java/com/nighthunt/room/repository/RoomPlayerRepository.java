@@ -35,5 +35,14 @@ public interface RoomPlayerRepository extends JpaRepository<RoomPlayer, Long> {
               AND r.status   IN ('WAITING', 'IN_GAME')
             """)
     boolean existsUserInActiveRoom(@Param("userId") Long userId);
+
+    @Query("""
+            SELECT rp FROM RoomPlayer rp, Room r
+            WHERE rp.roomId = r.id
+              AND rp.userId  = :userId
+              AND r.status   IN ('WAITING', 'IN_GAME')
+            ORDER BY r.createdAt DESC
+            """)
+    List<RoomPlayer> findActiveRoomsByUserId(@Param("userId") Long userId);
 }
 
