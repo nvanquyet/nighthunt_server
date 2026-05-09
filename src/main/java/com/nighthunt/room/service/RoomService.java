@@ -8,6 +8,7 @@ import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.relay.model.RelaySession;
 import com.nighthunt.relay.service.RelaySessionManager;
 import com.nighthunt.party.service.PartyRoomService;
@@ -46,6 +47,7 @@ public class RoomService {
     private final RoomPlayerRepository roomPlayerRepository;
     private final UserRepository userRepository;
     private final MatchRepository matchRepository;
+    private final MatchmakingEntryRepository matchmakingEntryRepository;
     private final SwapRequestRepository swapRequestRepository;
     private final ConnectionManager connectionManager;
     private final MessageBrokerService messageBroker;
@@ -65,6 +67,7 @@ public class RoomService {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
         }
+        ensureUserNotInMatchmakingQueue(userId);
 
         // Generate match ID and join token
         String matchId = UUID.randomUUID().toString();
@@ -129,6 +132,7 @@ public class RoomService {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
         }
+        ensureUserNotInMatchmakingQueue(userId);
 
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
@@ -204,6 +208,7 @@ public class RoomService {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "You are already in an active room. Leave it first.");
         }
+        ensureUserNotInMatchmakingQueue(userId);
 
         // Find available public rooms
         List<Room> availableRooms = roomRepository.findAvailablePublicRooms(GameConstants.ROOM_STATUS_WAITING);
@@ -1067,6 +1072,15 @@ public class RoomService {
         connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
+    }
+
+    private void ensureUserNotInMatchmakingQueue(Long userId) {
+        matchmakingEntryRepository.findByUserId(userId).ifPresent(entry -> {
+            if ("SEARCHING".equals(entry.getStatus()) || "MATCHED".equals(entry.getStatus())) {
+                throw new BusinessException(ErrorCodes.MATCH_JOIN_FAILED,
+                        "Cancel matchmaking before creating or joining a custom room");
+            }
+        });
     }
 
     private void setReadyAfterPositionChange(Room room, RoomPlayer player) {

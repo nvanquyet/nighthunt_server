@@ -128,9 +128,18 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
-        // Validate: Invitee is not already in a party
-        if (partyMemberRepository.existsByUserId(inviteeUserId)) {
-            throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in a party");
+        // Invitees can receive a switch-party invite only when their current party is idle.
+        PartyMember inviteeCurrentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
+        if (inviteeCurrentMember != null) {
+            if (inviteeCurrentMember.getPartyId().equals(party.getId())) {
+                throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in this party");
+            }
+
+            Party inviteeCurrentParty = findParty(inviteeCurrentMember.getPartyId());
+            if (!"IDLE".equals(inviteeCurrentParty.getPartyStatus())) {
+                throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY,
+                        "User is busy in party state " + inviteeCurrentParty.getPartyStatus());
+            }
         }
 
         // Validate: No pending invitation exists
@@ -202,15 +211,38 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_DISBANDED, "Party has been disbanded");
         }
 
-        // Validate: User is not already in a party
-        if (partyMemberRepository.existsByUserId(inviteeUserId)) {
-            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY, "You are already in a party");
+        // Validate: Target party is idle.
+        if (!"IDLE".equals(party.getPartyStatus())) {
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
+                    "Cannot join while party is " + party.getPartyStatus());
+        }
+
+        PartyMember currentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
+        if (currentMember != null && currentMember.getPartyId().equals(party.getId())) {
+            invitation.setInvitationStatus("ACCEPTED");
+            partyInvitationRepository.save(invitation);
+            return toPartyDTO(party);
         }
 
         // Validate: Party is not full
         long memberCount = partyMemberRepository.countByPartyId(party.getId());
         if (memberCount >= party.getMaxMembers()) {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
+        }
+
+        // If the invitee is in another idle party, migrate them before joining.
+        if (currentMember != null) {
+            Party currentParty = findParty(currentMember.getPartyId());
+            if (!"IDLE".equals(currentParty.getPartyStatus())) {
+                throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
+                        "Leave or finish your current party state before accepting a new invitation");
+            }
+
+            if (currentParty.getHostUserId().equals(inviteeUserId)) {
+                disbandPartyInternal(currentParty);
+            } else {
+                removeMember(currentParty, inviteeUserId);
+            }
         }
 
         // Add user to party

@@ -63,9 +63,10 @@ public class PartyMatchmakingService {
             throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can start matchmaking");
         }
 
-        // Validate: Party is not already in queue
-        if ("IN_QUEUE".equals(party.getPartyStatus())) {
-            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, "Party is already in matchmaking queue");
+        // Validate: Party is idle before entering matchmaking
+        if (!"IDLE".equals(party.getPartyStatus())) {
+            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
+                    "Party must be idle before matchmaking (current status: " + party.getPartyStatus() + ")");
         }
 
         // Validate: Game mode is available
@@ -100,7 +101,7 @@ public class PartyMatchmakingService {
         
         // Add all members to matchmaking queue
         for (Long memberId : memberIds) {
-            matchmakingQueueService.enqueue(memberId, request.getGameMode(), request.getMapId(), null);
+            matchmakingQueueService.enqueuePartyMember(memberId, request.getGameMode(), request.getMapId(), null);
             log.info("Party member {} queued for matchmaking (party={}, mode={}, mapId={})",
                 memberId, party.getId(), request.getGameMode(), request.getMapId());
         }

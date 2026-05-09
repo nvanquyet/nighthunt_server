@@ -11,7 +11,9 @@ import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.map.service.GameMapService;
 import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
+import com.nighthunt.party.repository.PartyMemberRepository;
 import com.nighthunt.room.dto.RoomResponse;
+import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.service.RoomService;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -67,6 +69,8 @@ public class MatchmakingQueueService {
     private final UserRepository              userRepository;
     private final ConnectionManager           connectionManager;
     private final RoomService                 roomService;
+    private final RoomPlayerRepository        roomPlayerRepository;
+    private final PartyMemberRepository       partyMemberRepository;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
     private final GameMapService              gameMapService;
@@ -84,6 +88,27 @@ public class MatchmakingQueueService {
      */
     @Transactional
     public void enqueue(Long userId, String gameMode, String mapId, String platform) {
+        enqueueSolo(userId, gameMode, mapId, platform);
+    }
+
+    @Transactional
+    public void enqueueSolo(Long userId, String gameMode, String mapId, String platform) {
+        ensureUserCanEnterMatchmaking(userId);
+        if (partyMemberRepository.existsByUserId(userId)) {
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY,
+                    "Leave or disband your ranked party before joining solo matchmaking");
+        }
+
+        enqueueInternal(userId, gameMode, mapId, platform);
+    }
+
+    @Transactional
+    public void enqueuePartyMember(Long userId, String gameMode, String mapId, String platform) {
+        ensureUserCanEnterMatchmaking(userId);
+        enqueueInternal(userId, gameMode, mapId, platform);
+    }
+
+    private void enqueueInternal(Long userId, String gameMode, String mapId, String platform) {
         // Validate mode against DB — rejects modes not in the DB or disabled
         GameModeDTO mode = gameModeService.getGameModeByKey(gameMode);
         if (!"AVAILABLE".equalsIgnoreCase(mode.getModeStatus()) || !mode.isMatchmakingEnabled()) {
@@ -132,6 +157,13 @@ public class MatchmakingQueueService {
 
         entryRepository.save(entry);
         log.info("[MM] User {} (ELO={}) queued for {} map={} platform={}", userId, elo, gameMode, mapId, platform);
+    }
+
+    private void ensureUserCanEnterMatchmaking(Long userId) {
+        if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
+            throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
+                    "Leave the active room before joining matchmaking");
+        }
     }
 
     /**
@@ -346,7 +378,7 @@ public class MatchmakingQueueService {
             entryRepository.save(e);
             // Re-queue anyone who isn't the decliner and was still in-lobby
             if (!e.getUserId().equals(userId)) {
-                enqueue(e.getUserId(), prevMode, e.getMapId(), e.getPlatform());
+                enqueueInternal(e.getUserId(), prevMode, e.getMapId(), e.getPlatform());
             }
         }
 
@@ -418,7 +450,7 @@ public class MatchmakingQueueService {
             log.error("[MM] Failed to create matched room: {}", ex.getMessage(), ex);
             // Re-queue all players on failure
             for (MatchmakingEntry e : group) {
-                try { enqueue(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); } catch (Exception ignored) {}
+                try { enqueueInternal(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); } catch (Exception ignored) {}
             }
         }
     }
