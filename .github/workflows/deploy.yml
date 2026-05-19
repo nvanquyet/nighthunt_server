@@ -15,6 +15,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  PACKAGE_NAME: nighthunt-backend
   IMAGE_NAME: ${{ github.repository_owner }}/nighthunt-backend
   DEPLOY_DIR: /opt/nighthunt
   COMPOSE_PROJECT_NAME: nighthunt_server
@@ -91,7 +92,46 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
+
+      - name: Keep latest GHCR image and one backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          KEEP_TAGGED=2
+          OWNER_TYPE=$(gh api "/users/${OWNER}" --jq '.type' 2>/dev/null || echo User)
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            API="/orgs/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          else
+            API="/users/${OWNER}/packages/container/${PACKAGE_NAME}/versions"
+          fi
+
+          VERSION_FILE=$(mktemp)
+          gh api "$API" --paginate \
+            --jq '.[] | [.id, .created_at, ((.metadata.container.tags // []) | join(","))] | @tsv' \
+            > "$VERSION_FILE" || true
+
+          if [ ! -s "$VERSION_FILE" ]; then
+            echo "No GHCR package versions found for ${OWNER}/${PACKAGE_NAME}"
+            exit 0
+          fi
+
+          KEEP_IDS=$(awk -F '\t' '$3 != "" { print }' "$VERSION_FILE" | sort -k2,2r | awk -v keep="$KEEP_TAGGED" 'NR <= keep { print $1 }')
+          awk -F '\t' -v keep_ids="$KEEP_IDS" '
+            BEGIN {
+              split(keep_ids, ids, "\n")
+              for (i in ids) keep[ids[i]] = 1
+            }
+            !($1 in keep) { print $1 }
+          ' "$VERSION_FILE" | sort -u | while read -r VERSION_ID; do
+            [ -n "$VERSION_ID" ] || continue
+            echo "Deleting old GHCR package version: ${VERSION_ID}"
+            gh api --method DELETE "${API}/${VERSION_ID}" || echo "WARN: failed to delete GHCR package version ${VERSION_ID}"
+          done
 
   # ── Job 3: Deploy to VPS ────────────────────────────────────────────────────
   deploy:
