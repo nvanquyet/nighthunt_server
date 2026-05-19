@@ -120,16 +120,19 @@ jobs:
             exit 0
           fi
 
-          KEEP_IDS=$(awk -F '\t' '$3 != "" { print }' "$VERSION_FILE" | sort -k2,2r | awk -v keep="$KEEP_TAGGED" 'NR <= keep { print $1 }')
+          TAGGED_FILE=$(mktemp)
+          awk -F '\t' '$3 != "" { print }' "$VERSION_FILE" | sort -k2,2r > "$TAGGED_FILE"
+
+          KEEP_IDS=$(awk -F '\t' -v keep="$KEEP_TAGGED" 'NR <= keep { print $1 }' "$TAGGED_FILE")
           awk -F '\t' -v keep_ids="$KEEP_IDS" '
             BEGIN {
               split(keep_ids, ids, "\n")
               for (i in ids) keep[ids[i]] = 1
             }
             !($1 in keep) { print $1 }
-          ' "$VERSION_FILE" | sort -u | while read -r VERSION_ID; do
+          ' "$TAGGED_FILE" | while read -r VERSION_ID; do
             [ -n "$VERSION_ID" ] || continue
-            echo "Deleting old GHCR package version: ${VERSION_ID}"
+            echo "Deleting old GHCR tagged version: ${VERSION_ID}"
             gh api --method DELETE "${API}/${VERSION_ID}" || echo "WARN: failed to delete GHCR package version ${VERSION_ID}"
           done
 
