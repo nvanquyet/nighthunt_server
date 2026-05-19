@@ -48,13 +48,6 @@ jobs:
       - name: Run Tests
         run: ./gradlew test --no-daemon
 
-      - name: Upload JAR artifact
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: app-jar
-          path: build/libs/NightHuntServer-*.jar
-          retention-days: 3
-
   # ── Job 2: Docker Build & Push to GHCR ──────────────────────────────────────
   docker:
     name: Docker Build & Push
