@@ -141,6 +141,7 @@ jobs:
     environment: production
     permissions:
       contents: write         # Push git tag after successful deploy
+      packages: read          # Pull the GHCR image from the VPS during deploy
 
     steps:
       - name: Checkout
@@ -163,7 +164,7 @@ jobs:
       - name: SSH Deploy
         uses: appleboy/ssh-action@v1.0.0
         env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_TOKEN: ${{ github.token }}
           GH_ACTOR: ${{ github.actor }}
           DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
           COMPOSE_PROJECT_NAME: ${{ env.COMPOSE_PROJECT_NAME }}
@@ -209,6 +210,10 @@ jobs:
             fi
 
             echo "=== Login GHCR ==="
+            if [ -z "${GHCR_TOKEN:-}" ]; then
+              echo "ERROR: Missing GitHub token for GHCR login"
+              exit 1
+            fi
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
 
             echo "=== Ensure game-network exists ==="
