@@ -5,6 +5,7 @@ import lombok.Data;
 @Data
 public class SwapRequestDTO {
     private Long requestId;
+    private Long roomId;
     private Long requesterId;
     private String requesterUsername;
     private Integer requesterTeam;

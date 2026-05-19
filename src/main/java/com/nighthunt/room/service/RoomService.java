@@ -9,6 +9,7 @@ import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
+import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.relay.model.RelaySession;
 import com.nighthunt.relay.service.RelaySessionManager;
 import com.nighthunt.party.service.PartyRoomService;
@@ -56,6 +57,7 @@ public class RoomService {
     private final RelaySessionManager relaySessionManager;
     private final PartyRoomService partyRoomService;
     private final GameModeService gameModeService;
+    private final PlayerStatusService playerStatusService;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -117,6 +119,7 @@ public class RoomService {
         User owner = userRepository.findById(userId).orElse(null);
         String username = owner != null ? owner.getUsername() : "Unknown";
         connectionManager.updateUserRoom(userId, room.getId());
+        updateCurrentRoomStatus(userId, room.getId());
         connectionManager.sendToUser(userId, "player_joined",
                 java.util.Map.of("userId", userId, "username", username, "room", response));
         
@@ -193,6 +196,7 @@ public class RoomService {
         User user = userRepository.findById(userId).orElse(null);
         String username = user != null ? user.getUsername() : "Unknown";
         connectionManager.updateUserRoom(userId, room.getId());
+        updateCurrentRoomStatus(userId, room.getId());
         connectionManager.broadcastToRoom(room.getId(), "player_joined",
                 java.util.Map.of("userId", userId, "username", username, "room", response));
         
@@ -300,6 +304,7 @@ public class RoomService {
                     .build();
             roomPlayerRepository.save(rp);
             connectionManager.updateUserRoom(uid, room.getId());
+            updateCurrentRoomStatus(uid, room.getId());
         }
 
         log.info("[RankedMM] Created ranked room {} (mode={}, players={})", roomCode, gameMode, userIds.size());
@@ -420,6 +425,7 @@ public class RoomService {
         }
         
         connectionManager.updateUserRoom(userId, null);
+        updateCurrentRoomStatus(userId, null);
 
         // Handle owner transfer or room disband before broadcasting the updated room.
         if (room.getOwnerId().equals(userId)) {
@@ -460,6 +466,7 @@ public class RoomService {
         connectionManager.sendToUser(targetUserId, "you_were_kicked",
                 java.util.Map.of("roomId", roomId));
         connectionManager.updateUserRoom(targetUserId, null);
+        updateCurrentRoomStatus(targetUserId, null);
 
         // Broadcast updated room state to remaining players
         connectionManager.broadcastToRoom(roomId, "player_left",
@@ -487,6 +494,7 @@ public class RoomService {
         // Clear WS userRooms mapping for every player so they can immediately join a new room
         for (RoomPlayer p : players) {
             connectionManager.updateUserRoom(p.getUserId(), null);
+            updateCurrentRoomStatus(p.getUserId(), null);
         }
 
         // Delete all players
@@ -541,6 +549,7 @@ public class RoomService {
         String oldStatus = room.getStatus();
         room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
         roomRepository.save(room);
+        markPlayersInGame(players);
 
         // ── BE-27: Create relay session for Custom mode ──────────────────────
         // If the room is a Custom (non-ranked) lobby, spin up a Mini-Relay session
@@ -595,6 +604,7 @@ public class RoomService {
             if (GameConstants.ROOM_STATUS_WAITING.equals(room.getStatus())) {
                 room.setStatus(GameConstants.ROOM_STATUS_IN_GAME);
                 roomRepository.save(room);
+                markPlayersInGame(roomPlayerRepository.findByRoomId(room.getId()));
                 log.info("[RankedMM] Room {} (matchId={}) -> IN_GAME (match_ready sent)", room.getId(), matchId);
             }
         }, () -> log.warn("[RankedMM] markRankedRoomInGame: no room found for matchId={}", matchId));
@@ -661,6 +671,7 @@ public class RoomService {
 
             // Return a dummy DTO to indicate success (no actual swap request created)
             SwapRequestDTO dto = new SwapRequestDTO();
+            dto.setRoomId(roomId);
             dto.setRequesterId(userId);
             dto.setRequesterTeam(requester.getTeam());
             dto.setRequesterSlot(requester.getSlot());
@@ -707,6 +718,7 @@ public class RoomService {
         User requesterUser = userRepository.findById(userId).orElse(null);
         SwapRequestDTO dto = new SwapRequestDTO();
         dto.setRequestId(swapRequest.getId());
+        dto.setRoomId(roomId);
         dto.setRequesterId(userId);
         dto.setRequesterUsername(requesterUser != null ? requesterUser.getUsername() : "Unknown");
         dto.setRequesterTeam(requester.getTeam());
@@ -724,13 +736,14 @@ public class RoomService {
 
     @Transactional
     public RoomResponse acceptSwapRequest(Long userId, Long roomId, Long requestId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
-                        "Room not found"));
-
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                         "Swap request not found"));
+
+        Long actualRoomId = resolveSwapRoomId(roomId, swapRequest);
+        Room room = roomRepository.findById(actualRoomId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "Room not found"));
 
         // Verify user is the target
         if (!swapRequest.getTargetId().equals(userId)) {
@@ -745,17 +758,17 @@ public class RoomService {
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
             swapRequest.setStatus("EXPIRED");
             swapRequestRepository.save(swapRequest);
-            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "EXPIRED"));
+            connectionManager.broadcastToRoom(actualRoomId, "swap_request_status", swapStatusPayload(actualRoomId, requestId, "EXPIRED"));
             throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
                     "Swap request has expired");
         }
 
         // Get both players
-        RoomPlayer requester = roomPlayerRepository.findByRoomIdAndUserId(roomId, swapRequest.getRequesterId())
+        RoomPlayer requester = roomPlayerRepository.findByRoomIdAndUserId(actualRoomId, swapRequest.getRequesterId())
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
                         "Requester not in room"));
 
-        RoomPlayer target = roomPlayerRepository.findByRoomIdAndUserId(roomId, swapRequest.getTargetId())
+        RoomPlayer target = roomPlayerRepository.findByRoomIdAndUserId(actualRoomId, swapRequest.getTargetId())
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
                         "Target not in room"));
 
@@ -767,6 +780,7 @@ public class RoomService {
             // Positions changed, reject request
             swapRequest.setStatus("REJECTED");
             swapRequestRepository.save(swapRequest);
+            connectionManager.broadcastToRoom(actualRoomId, "swap_request_status", swapStatusPayload(actualRoomId, requestId, "REJECTED"));
             throw new BusinessException(ErrorCodes.ROOM_SLOT_OCCUPIED,
                     "Player positions have changed");
         }
@@ -842,7 +856,7 @@ public class RoomService {
         RoomResponse response = roomResponseAssembler.toResponse(room, null);
         
         // Broadcast swap accepted event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "swap_accepted", response);
+        connectionManager.broadcastToRoom(actualRoomId, "swap_accepted", response);
         
         return response;
     }
@@ -852,6 +866,7 @@ public class RoomService {
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_TARGET,
                         "Swap request not found"));
+        Long actualRoomId = resolveSwapRoomId(roomId, swapRequest);
 
         // Verify user is the target
         if (!swapRequest.getTargetId().equals(userId)) {
@@ -866,7 +881,7 @@ public class RoomService {
         if (swapRequest.getExpiresAt() != null && swapRequest.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
             swapRequest.setStatus("EXPIRED");
             swapRequestRepository.save(swapRequest);
-            connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "EXPIRED"));
+            connectionManager.broadcastToRoom(actualRoomId, "swap_request_status", swapStatusPayload(actualRoomId, requestId, "EXPIRED"));
             throw new BusinessException(ErrorCodes.ROOM_SWAP_EXPIRED,
                     "Swap request has expired");
         }
@@ -875,7 +890,7 @@ public class RoomService {
         swapRequestRepository.save(swapRequest);
         
         // Broadcast swap rejected event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "REJECTED"));
+        connectionManager.broadcastToRoom(actualRoomId, "swap_request_status", swapStatusPayload(actualRoomId, requestId, "REJECTED"));
     }
 
     /**
@@ -886,6 +901,7 @@ public class RoomService {
         SwapRequest swapRequest = swapRequestRepository.findById(requestId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_SWAP_NOT_REQUESTER,
                         "Swap request not found"));
+        Long actualRoomId = resolveSwapRoomId(roomId, swapRequest);
 
         // Verify user is the requester
         if (!swapRequest.getRequesterId().equals(userId)) {
@@ -902,7 +918,7 @@ public class RoomService {
         swapRequestRepository.save(swapRequest);
         
         // Broadcast swap cancelled event via WebSocket
-        connectionManager.broadcastToRoom(roomId, "swap_request_status", java.util.Map.of("requestId", requestId, "status", "CANCELLED"));
+        connectionManager.broadcastToRoom(actualRoomId, "swap_request_status", swapStatusPayload(actualRoomId, requestId, "CANCELLED"));
     }
 
     public List<SwapRequestDTO> getPendingSwapRequests(Long userId, Long roomId) {
@@ -914,6 +930,7 @@ public class RoomService {
                     User requester = userRepository.findById(r.getRequesterId()).orElse(null);
                     SwapRequestDTO dto = new SwapRequestDTO();
                     dto.setRequestId(r.getId());
+                    dto.setRoomId(r.getRoomId());
                     dto.setRequesterId(r.getRequesterId());
                     dto.setRequesterUsername(requester != null ? requester.getUsername() : "Unknown");
                     dto.setRequesterTeam(r.getRequesterTeam());
@@ -1080,6 +1097,56 @@ public class RoomService {
                         "Cancel matchmaking before creating or joining a custom room");
             }
         });
+    }
+
+    private void updateCurrentRoomStatus(Long userId, Long roomId) {
+        try {
+            playerStatusService.updateCurrentRoom(userId, roomId);
+        } catch (Exception e) {
+            log.warn("Failed to update current room status for user {} room {}: {}", userId, roomId, e.getMessage());
+        }
+    }
+
+    private void markPlayersInGame(List<RoomPlayer> players) {
+        if (players == null) {
+            return;
+        }
+
+        for (RoomPlayer player : players) {
+            if (player == null) {
+                continue;
+            }
+
+            try {
+                playerStatusService.setInGame(player.getUserId());
+            } catch (Exception e) {
+                log.warn("Failed to set user {} IN_GAME: {}", player.getUserId(), e.getMessage());
+            }
+        }
+    }
+
+    private Long resolveSwapRoomId(Long requestedRoomId, SwapRequest swapRequest) {
+        Long actualRoomId = swapRequest.getRoomId();
+        if (requestedRoomId == null || !requestedRoomId.equals(actualRoomId)) {
+            log.warn("Swap request {} received mismatched roomId path={} actual={}; using actual roomId.",
+                    swapRequest.getId(), requestedRoomId, actualRoomId);
+        }
+        return actualRoomId;
+    }
+
+    private java.util.Map<String, Object> swapStatusPayload(Long roomId, Long requestId, String status) {
+        java.util.Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("requestId", requestId);
+        payload.put("status", status);
+
+        try {
+            payload.put("room", roomResponseAssembler.toResponseById(roomId));
+        } catch (Exception e) {
+            log.warn("Failed to attach room payload to swap status roomId={} requestId={}: {}",
+                    roomId, requestId, e.getMessage());
+        }
+
+        return payload;
     }
 
     private void setReadyAfterPositionChange(Room room, RoomPlayer player) {

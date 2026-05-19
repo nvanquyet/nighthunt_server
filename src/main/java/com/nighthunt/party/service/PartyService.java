@@ -128,17 +128,11 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
-        // Invitees can receive a switch-party invite only when their current party is idle.
+        // Invitees can receive switch-party invites even when they already belong to another party.
         PartyMember inviteeCurrentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
         if (inviteeCurrentMember != null) {
             if (inviteeCurrentMember.getPartyId().equals(party.getId())) {
                 throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in this party");
-            }
-
-            Party inviteeCurrentParty = findParty(inviteeCurrentMember.getPartyId());
-            if (!"IDLE".equals(inviteeCurrentParty.getPartyStatus())) {
-                throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY,
-                        "User is busy in party state " + inviteeCurrentParty.getPartyStatus());
             }
         }
 
@@ -230,16 +224,11 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
-        // If the invitee is in another idle party, migrate them before joining.
+        // If the invitee is in another party, leave that party before joining.
         if (currentMember != null) {
             Party currentParty = findParty(currentMember.getPartyId());
-            if (!"IDLE".equals(currentParty.getPartyStatus())) {
-                throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
-                        "Leave or finish your current party state before accepting a new invitation");
-            }
-
             if (currentParty.getHostUserId().equals(inviteeUserId)) {
-                disbandPartyInternal(currentParty);
+                handleHostLeaving(currentParty);
             } else {
                 removeMember(currentParty, inviteeUserId);
             }
