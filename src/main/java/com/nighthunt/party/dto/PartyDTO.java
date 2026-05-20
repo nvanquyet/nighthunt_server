@@ -19,7 +19,10 @@ public class PartyDTO {
     private Long partyId;
     private Long hostUserId;
     private String hostUsername;
-    private String partyStatus;          // IDLE, IN_QUEUE, IN_ROOM, IN_GAME, DISBANDED
+    /** IDLE | IN_QUEUE | IN_ROOM | IN_GAME | DISBANDED */
+    private String partyStatus;
+    /** NONE | RANKED | CUSTOM — mutual-exclusivity context. */
+    private String partyMode;
     private Long currentRoomId;
     private Long currentMatchmakingId;
     private int maxMembers;

@@ -13,7 +13,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PartyMatchmakingRequest {
+public class PartyRankedQueueRequest {
     
     /**
      * Game mode to queue for: "2v2", "3v3", "4v4", "5v5"

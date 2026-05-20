@@ -128,12 +128,14 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
         }
 
-        // Invitees can receive switch-party invites even when they already belong to another party.
         PartyMember inviteeCurrentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
         if (inviteeCurrentMember != null) {
             if (inviteeCurrentMember.getPartyId().equals(party.getId())) {
                 throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in this party");
             }
+
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY,
+                    "User must leave their current party before joining another one");
         }
 
         // Validate: No pending invitation exists
@@ -218,20 +220,15 @@ public class PartyService {
             return toPartyDTO(party);
         }
 
+        if (currentMember != null) {
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY,
+                    "User must leave their current party before accepting a new invite");
+        }
+
         // Validate: Party is not full
         long memberCount = partyMemberRepository.countByPartyId(party.getId());
         if (memberCount >= party.getMaxMembers()) {
             throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
-        }
-
-        // If the invitee is in another party, leave that party before joining.
-        if (currentMember != null) {
-            Party currentParty = findParty(currentMember.getPartyId());
-            if (currentParty.getHostUserId().equals(inviteeUserId)) {
-                handleHostLeaving(currentParty);
-            } else {
-                removeMember(currentParty, inviteeUserId);
-            }
         }
 
         // Add user to party
@@ -559,6 +556,7 @@ public class PartyService {
                 .hostUserId(party.getHostUserId())
                 .hostUsername(host.getUsername())
                 .partyStatus(party.getPartyStatus())
+                .partyMode(party.getPartyMode())           // ← mutual-exclusivity field
                 .currentRoomId(party.getCurrentRoomId())
                 .currentMatchmakingId(party.getCurrentMatchmakingId())
                 .maxMembers(party.getMaxMembers())

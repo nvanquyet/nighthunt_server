@@ -108,7 +108,14 @@ public class ErrorCodes {
     public static final String ROOM_SWAP_CANCELLED = "ROOM_019";
 
     // Party - additional
-    public static final String PARTY_SIZE_MISMATCH = "PARTY_019";
+    public static final String PARTY_SIZE_MISMATCH    = "PARTY_019";
+    /** Party is in a custom lobby room; cannot start ranked matchmaking. */
+    public static final String PARTY_IN_CUSTOM_MODE   = "PARTY_020";
+    /** Party is in ranked matchmaking queue; cannot join a custom lobby. */
+    public static final String PARTY_IN_RANKED_QUEUE  = "PARTY_021";
+    /** Solo player already has an active SEARCHING queue entry. */
+    public static final String ALREADY_IN_QUEUE       = "MATCH_005";
+
 
     private ErrorCodes() {
     }

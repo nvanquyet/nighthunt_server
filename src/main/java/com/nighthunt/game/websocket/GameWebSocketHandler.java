@@ -3,6 +3,7 @@ package com.nighthunt.game.websocket;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.matchmaking.service.MatchmakingQueueService;
+import com.nighthunt.match.service.MatchPresenceService;
 import com.nighthunt.game.websocket.dto.*;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.dto.RoomResponse;
@@ -57,6 +58,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     private final UserRepository userRepository;
     private final PlayerStatusService playerStatusService;
     private MatchmakingQueueService matchmakingQueueService;
+    private MatchPresenceService matchPresenceService;
     private final TransactionTemplate transactionTemplate;
 
     // userId -> session
@@ -96,6 +98,12 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     @Lazy
     public void setMatchmakingQueueService(MatchmakingQueueService matchmakingQueueService) {
         this.matchmakingQueueService = matchmakingQueueService;
+    }
+
+    @Autowired
+    @Lazy
+    public void setMatchPresenceService(MatchPresenceService matchPresenceService) {
+        this.matchPresenceService = matchPresenceService;
     }
 
     // ==================== WebSocket Lifecycle ====================
@@ -152,6 +160,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         Long roomId = findCurrentRoomId(userId);
         if (roomId != null) {
             userRooms.put(userId, roomId);
+            recordTransportConnected(userId);
         }
 
         // Send connection confirmation
@@ -211,6 +220,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                 }
                 // Remove player from WAITING rooms on disconnect to free the slot.
                 // IN_GAME rooms are left intact so the player can reconnect mid-match.
+                recordTransportDisconnected(userId, "TRANSPORT_DROP");
                 cleanupWaitingRoomPlayer(userId);
             }
             log.info("WebSocket disconnected: userId={}, status={}, wasActive={}", userId, status, wasActive);
@@ -237,6 +247,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                 } catch (Exception e) {
                     log.debug("Matchmaking dequeue on transport error for userId={}: {}", userId, e.getMessage());
                 }
+                recordTransportDisconnected(userId, "TRANSPORT_ERROR");
             }
         }
     }
@@ -274,6 +285,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                 } catch (Exception e) {
                     log.error("Error marking stale userId={} offline: {}", userId, e.getMessage());
                 }
+                recordTransportDisconnected(userId, "STALE_CONNECTION");
             }
         }
         if (!stale.isEmpty()) {
@@ -343,6 +355,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     // ==================== Session-Level Events ====================
 
     public void sendForceLogout(Long userId, String reason) {
+        recordSessionTerminated(userId, "FORCE_LOGOUT");
         sendToUser(userId, "force_logout", Map.of(
                 "reason", reason != null ? reason : "Account logged in from another location",
                 "message", "You have been logged out. Please log in again."
@@ -350,6 +363,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     }
 
     public void sendSessionExpired(Long userId) {
+        recordSessionTerminated(userId, "SESSION_EXPIRED");
         sendToUser(userId, "session_expired", Map.of(
                 "message", "Session expired. Please log in again."
         ));
@@ -455,6 +469,41 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                 .findFirst()
                 .map(RoomPlayer::getRoomId)
                 .orElse(null);
+    }
+
+    private void recordTransportConnected(Long userId) {
+        if (matchPresenceService == null) {
+            return;
+        }
+        try {
+            matchPresenceService.recordTransportConnected(userId);
+        } catch (Exception e) {
+            log.warn("Failed to record WS reconnect presence for userId={}: {}", userId, e.getMessage());
+        }
+    }
+
+    private void recordTransportDisconnected(Long userId, String reason) {
+        if (matchPresenceService == null) {
+            return;
+        }
+        try {
+            matchPresenceService.recordTransportDisconnected(userId, reason);
+        } catch (Exception e) {
+            log.warn("Failed to record WS disconnect presence for userId={} reason={}: {}",
+                    userId, reason, e.getMessage());
+        }
+    }
+
+    private void recordSessionTerminated(Long userId, String reason) {
+        if (matchPresenceService == null) {
+            return;
+        }
+        try {
+            matchPresenceService.recordSessionTerminated(userId, reason);
+        } catch (Exception e) {
+            log.warn("Failed to record session termination presence for userId={} reason={}: {}",
+                    userId, reason, e.getMessage());
+        }
     }
 
     private String extractToken(String uri) {

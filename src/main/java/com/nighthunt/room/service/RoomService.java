@@ -9,10 +9,13 @@ import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.repository.MatchRepository;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
+import com.nighthunt.match.dto.MatchPresenceRequest;
+import com.nighthunt.match.dto.MatchPresenceState;
+import com.nighthunt.match.service.MatchPresenceService;
 import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.relay.model.RelaySession;
 import com.nighthunt.relay.service.RelaySessionManager;
-import com.nighthunt.party.service.PartyRoomService;
+import com.nighthunt.party.service.PartyCustomModeService;
 import com.nighthunt.room.dto.*;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
@@ -55,9 +58,10 @@ public class RoomService {
     private final RoomResponseAssembler roomResponseAssembler;
     private final TeamSlotAllocator teamSlotAllocator;
     private final RelaySessionManager relaySessionManager;
-    private final PartyRoomService partyRoomService;
+    private final PartyCustomModeService partyCustomModeService;
     private final GameModeService gameModeService;
     private final PlayerStatusService playerStatusService;
+    private final MatchPresenceService matchPresenceService;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -414,12 +418,22 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_PLAYER_NOT_FOUND,
                         "Player not in room"));
 
+        if (GameConstants.ROOM_STATUS_IN_GAME.equals(room.getStatus())) {
+            matchPresenceService.recordUserPresence(userId, MatchPresenceRequest.builder()
+                    .matchId(room.getMatchId())
+                    .userId(userId)
+                    .state(MatchPresenceState.ABANDONED)
+                    .reason("INTENTIONAL_LEAVE")
+                    .build());
+            return;
+        }
+
         // Remove player
         roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
         
         // Clear party room status if player is in a party
         try {
-            partyRoomService.clearPartyRoomStatus(userId);
+            partyCustomModeService.clearPartyRoomStatus(userId);
         } catch (Exception e) {
             log.warn("Failed to clear party room status for user {}: {}", userId, e.getMessage());
         }
@@ -464,7 +478,11 @@ public class RoomService {
 
         // Notify kicked player personally so client can navigate back to Home
         connectionManager.sendToUser(targetUserId, "you_were_kicked",
-                java.util.Map.of("roomId", roomId));
+                java.util.Map.of(
+                        "roomId", roomId,
+                        "kickedByUserId", ownerId,
+                        "reason", "kicked_by_host",
+                        "message", "The room owner removed you from the room."));
         connectionManager.updateUserRoom(targetUserId, null);
         updateCurrentRoomStatus(targetUserId, null);
 
@@ -504,6 +522,10 @@ public class RoomService {
             log.info("[Room] Disbanding room {} - closing relay session={}", roomId, session.getSessionToken());
             relaySessionManager.finishSession(session.getSessionToken());
         });
+
+        if (room.getMatchId() != null && !room.getMatchId().isBlank()) {
+            matchPresenceService.clearMatchPresence(room.getMatchId());
+        }
 
         // Update room status
         room.setStatus(GameConstants.ROOM_STATUS_CLOSED);

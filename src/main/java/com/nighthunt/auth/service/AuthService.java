@@ -12,6 +12,7 @@ import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.ban.service.BanService;
 import com.nighthunt.friend.service.PlayerStatusService;
+import com.nighthunt.match.service.MatchPresenceService;
 import com.nighthunt.security.port.TokenProvider;
 import com.nighthunt.session.port.SessionStore;
 import com.nighthunt.session.service.SessionService;
@@ -52,6 +53,7 @@ public class AuthService {
     private final UserActivityService       activityService;
     private final RefreshTokenRepository    refreshTokenRepository;
     private final PlayerStatusService       playerStatusService;
+    private final MatchPresenceService      matchPresenceService;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // REGISTER
@@ -139,6 +141,7 @@ public class AuthService {
                 // This avoids the disruptive double-login UX during development rebuilds
                 // while still enforcing single-device policy.
                 try {
+                    recordSessionTerminated(user.getId(), "FORCE_LOGOUT");
                     connectionManager.sendToUser(user.getId(), "force_logout", java.util.Map.of(
                             "reason", "Account logged in from another location",
                             "message", "Your session has been taken over by a new login."));
@@ -279,6 +282,7 @@ public class AuthService {
             if (!currentSessionId.equals(request.getSessionId())) {
                 sessionStore.setForceLogout(userIdStr, true);
                 try {
+                    recordSessionTerminated(userId, "FORCE_LOGOUT");
                     connectionManager.sendToUser(userId, "force_logout", java.util.Map.of(
                             "reason", "Account logged in from another location",
                             "message", "You have been logged out. Please log in again."));
@@ -291,14 +295,17 @@ public class AuthService {
         }
 
         if (currentSessionId == null) {
+            recordSessionTerminated(userId, "SESSION_EXPIRED");
             throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
                     "Session expired or invalid. Please login again.");
         }
         if (!currentSessionId.equals(request.getSessionId())) {
+            recordSessionTerminated(userId, "SESSION_EXPIRED");
             throw new BusinessException(ErrorCodes.AUTH_SESSION_EXPIRED,
                     "Session is invalid or has expired.");
         }
         if (sessionStore.isForceLogout(userIdStr)) {
+            recordSessionTerminated(userId, "FORCE_LOGOUT");
             throw new BusinessException(ErrorCodes.AUTH_FORCE_LOGOUT,
                     "Account is already logged in elsewhere. Please log in again.");
         }
@@ -327,6 +334,7 @@ public class AuthService {
     @Transactional
     public void logout(Long userId) {
         String userIdStr = String.valueOf(userId);
+        recordSessionTerminated(userId, "LOGOUT");
         sessionStore.deleteSession(userIdStr);
         sessionStore.deleteForceLogout(userIdStr);
 
@@ -367,6 +375,7 @@ public class AuthService {
         userRepository.save(user);
 
         // Invalidate all sessions and all refresh tokens
+        recordSessionTerminated(userId, "FORCE_LOGOUT");
         sessionService.invalidateAllUserSessions(userId);
         refreshTokenRepository.revokeAllByUserId(userId);
 
@@ -409,5 +418,17 @@ public class AuthService {
             log.warn("Error getting client IP: {}", e.getMessage());
         }
         return "unknown";
+    }
+
+    private void recordSessionTerminated(Long userId, String reason) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            matchPresenceService.recordSessionTerminated(userId, reason);
+        } catch (Exception e) {
+            log.warn("[Auth] Failed to record match presence termination for userId={} reason={}: {}",
+                    userId, reason, e.getMessage());
+        }
     }
 }

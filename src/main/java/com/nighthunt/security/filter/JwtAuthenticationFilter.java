@@ -4,6 +4,7 @@ import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.common.constants.GameConstants;
+import com.nighthunt.match.service.MatchPresenceService;
 import com.nighthunt.security.port.TokenProvider;
 import com.nighthunt.session.port.SessionStore;
 import jakarta.servlet.FilterChain;
@@ -12,6 +13,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -30,7 +33,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final TokenProvider tokenProvider;
     private final SessionStore sessionStore;
     private final ConnectionManager connectionManager;
+    private MatchPresenceService matchPresenceService;
     private static final String SESSION_HEADER = "X-Session-Id";
+
+    @Autowired
+    @Lazy
+    public void setMatchPresenceService(MatchPresenceService matchPresenceService) {
+        this.matchPresenceService = matchPresenceService;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -53,6 +63,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 if (sessionStore.isForceLogout(String.valueOf(userId))) {
                     // Send force_logout event via WebSocket
                     try {
+                        recordSessionTerminated(userId, "FORCE_LOGOUT");
                         connectionManager.sendToUser(userId, "force_logout", java.util.Map.of(
                                 "reason", "Account logged in from another location",
                                 "message", "You have been logged out. Please log in again."
@@ -70,6 +81,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     log.warn("Session not found in Redis for user {} - session expired or never existed", userId);
                     // Send session_expired event via WebSocket
                     try {
+                        recordSessionTerminated(userId, "SESSION_EXPIRED");
                         connectionManager.sendToUser(userId, "session_expired", java.util.Map.of(
                                 "message", "Session expired. Please log in again."
                         ));
@@ -84,6 +96,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                             userId, currentSessionId, clientSessionId);
                     // Send session_expired event via WebSocket
                     try {
+                        recordSessionTerminated(userId, "SESSION_EXPIRED");
                         connectionManager.sendToUser(userId, "session_expired", java.util.Map.of(
                                 "message", "Session expired. Please log in again."
                         ));
@@ -128,6 +141,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
     }
 
+    private void recordSessionTerminated(Long userId, String reason) {
+        if (matchPresenceService == null || userId == null) {
+            return;
+        }
+        try {
+            matchPresenceService.recordSessionTerminated(userId, reason);
+        } catch (Exception e) {
+            log.warn("Failed to record match presence termination for userId={} reason={}: {}",
+                    userId, reason, e.getMessage());
+        }
+    }
+
     private String getTokenFromRequest(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
@@ -136,4 +161,3 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return null;
     }
 }
-

@@ -29,7 +29,7 @@ import java.util.List;
  */
 @Slf4j
 @Service
-public class PartyRoomService {
+public class PartyCustomModeService {
 
     private final PartyRepository partyRepository;
     private final PartyMemberRepository partyMemberRepository;
@@ -38,7 +38,7 @@ public class PartyRoomService {
     private final PlayerStatusService playerStatusService;
     private final MessageBrokerService messageBrokerService;
 
-    public PartyRoomService(
+    public PartyCustomModeService(
             PartyRepository partyRepository,
             PartyMemberRepository partyMemberRepository,
             @Lazy RoomService roomService,
@@ -81,6 +81,13 @@ public class PartyRoomService {
                 "Party must be idle to join room (current status: " + party.getPartyStatus() + ")");
         }
 
+        // Mutual-exclusivity guard: partyMode=RANKED means party is actively searching for a
+        // ranked match. They must cancel matchmaking before joining a custom lobby.
+        if ("RANKED".equals(party.getPartyMode())) {
+            throw new BusinessException(ErrorCodes.PARTY_IN_RANKED_QUEUE,
+                    "Party is in ranked matchmaking queue. Cancel matchmaking before joining a custom lobby.");
+        }
+
         // Get all party members
         List<Long> memberIds = partyMemberRepository.findUserIdsByPartyId(party.getId());
         int partySize = memberIds.size();
@@ -106,8 +113,9 @@ public class PartyRoomService {
             }
         }
 
-        // Update party status to IN_ROOM
+        // Update party status to IN_ROOM and set CUSTOM mode
         party.setPartyStatus("IN_ROOM");
+        party.setPartyMode("CUSTOM");   // lock context to CUSTOM
         party.setCurrentRoomId(roomId);
         partyRepository.save(party);
         
@@ -174,9 +182,10 @@ public class PartyRoomService {
                 String oldStatus = party.getPartyStatus();
                 party.setCurrentRoomId(null);
                 party.setPartyStatus("IDLE");
+                party.setPartyMode("NONE");   // release CUSTOM context lock
                 partyRepository.save(party);
                 messageBrokerService.publishPartyStatusChanged(party.getId(), oldStatus, "IDLE");
-                log.info("Party {} reset to IDLE — no members remain in room {}", party.getId(), currentRoomId);
+                log.info("Party {} reset to IDLE (mode=NONE) — no members remain in room {}", party.getId(), currentRoomId);
             } else {
                 log.debug("Party {} still has members in room {} — keeping IN_ROOM status", party.getId(), currentRoomId);
             }

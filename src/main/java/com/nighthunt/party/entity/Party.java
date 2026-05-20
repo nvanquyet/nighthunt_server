@@ -40,12 +40,14 @@ public class Party {
     private Long hostUserId;
 
     /**
-     * Party status:
-     * - IDLE: In main menu, not in queue/room/game
-     * - IN_QUEUE: Searching for match in matchmaking queue
-     * - IN_ROOM: In custom lobby (host joined a room)
-     * - IN_GAME: Playing a match (game started)
+     * Party status (lifecycle state):
+     * - IDLE:      In main menu, no active context
+     * - IN_QUEUE:  Searching for ranked match (partyMode=RANKED)
+     * - IN_ROOM:   In custom lobby (partyMode=CUSTOM)
+     * - IN_GAME:   Playing a match
      * - DISBANDED: Party deleted (soft delete marker)
+     *
+     * See also: {@link #partyMode} for mutual-exclusivity enforcement.
      */
     @Column(name = "party_status", nullable = false, length = 20)
     @Builder.Default
@@ -59,11 +61,34 @@ public class Party {
     private Long currentRoomId;
 
     /**
-     * Current matchmaking ID if party is in queue.
-     * Reserved for future use (matchmaking integration).
+     * Current matchmaking entry ID if party is in ranked queue.
+     * Reserved for future FK relationship.
      */
     @Column(name = "current_matchmaking_id")
     private Long currentMatchmakingId;
+
+    /**
+     * Party mode — tracks the CONTEXT of the current activity.
+     * Enforces mutual exclusivity: RANKED and CUSTOM cannot coexist.
+     *
+     * <ul>
+     *   <li>{@code NONE}   — party is idle, no active context</li>
+     *   <li>{@code RANKED} — party entered ranked matchmaking queue</li>
+     *   <li>{@code CUSTOM} — party joined a custom lobby room</li>
+     * </ul>
+     *
+     * <p>Transitions:
+     * <pre>
+     *   NONE  →(queueParty)→     RANKED
+     *   NONE  →(joinRoom)→       CUSTOM
+     *   RANKED →(cancelQueue)→   NONE
+     *   RANKED →(matchReady)→    RANKED (stays, match is ranked)
+     *   CUSTOM →(leaveRoom)→     NONE  (when last member leaves)
+     * </pre>
+     */
+    @Column(name = "party_mode", nullable = false, length = 10)
+    @Builder.Default
+    private String partyMode = "NONE";
 
     /**
      * Maximum party size (configurable).

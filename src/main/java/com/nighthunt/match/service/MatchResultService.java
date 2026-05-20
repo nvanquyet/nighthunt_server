@@ -1,15 +1,20 @@
 package com.nighthunt.match.service;
 
+import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.elo.service.EloService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
+import com.nighthunt.friend.service.PlayerStatusService;
+import com.nighthunt.match.adapter.RedisMatchPresenceCache;
 import com.nighthunt.match.dto.MatchEndRequest;
 import com.nighthunt.match.dto.MatchEndResponse;
 import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.entity.MatchPlayerResult;
 import com.nighthunt.match.repository.MatchPlayerResultRepository;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.room.repository.RoomRepository;
+import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.relay.service.RelaySessionManager;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -47,6 +52,10 @@ public class MatchResultService {
     private final EloService                   eloService;
     private final RelaySessionManager          relaySessionManager;
     private final ConnectionManager            connectionManager;
+    private final RoomRepository               roomRepository;
+    private final RoomResponseAssembler        roomResponseAssembler;
+    private final RedisMatchPresenceCache      matchPresenceCache;
+    private final PlayerStatusService          playerStatusService;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
     @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
@@ -55,6 +64,7 @@ public class MatchResultService {
     @Value("${coins.reward.custom.win:20}")    private long coinsCustomWin;
     @Value("${coins.reward.custom.draw:10}")   private long coinsCustomDraw;
     @Value("${coins.reward.custom.loss:5}")    private long coinsCustomLoss;
+    @Value("${match.afk.elo-penalty:50}")      private int afkEloPenalty;
 
     @Transactional
     public MatchEndResponse processMatchEnd(MatchEndRequest req, boolean isRanked) {
@@ -104,6 +114,7 @@ public class MatchResultService {
 
             int eloBefore = user.getElo();
             int eloChange = 0;
+            boolean abandoned = isAbandoned(req.getMatchId(), entry.getUserId());
 
             if (isRanked) {
                 // Determine opponent average ELO (for 2-team matches)
@@ -114,13 +125,29 @@ public class MatchResultService {
 
                 int delta = eloService.calculateDelta(eloBefore, opponentAvg, actualScore);
                 eloChange = eloService.applyDelta(user, delta, actualScore);
+                if (abandoned) {
+                    int afkAdjustedElo = Math.max(0, user.getElo() - afkEloPenalty);
+                    user.setElo(afkAdjustedElo);
+                    user.setTier(eloService.resolveTier(afkAdjustedElo));
+                    eloChange = afkAdjustedElo - eloBefore;
+                }
             }
 
             // Coin reward
             long coinReward = resolveCoinReward(actualScore, isRanked);
+            if (abandoned) {
+                coinReward = 0L;
+            }
             user.setCoins(user.getCoins() + coinReward);
 
             userRepository.save(user);
+            try {
+                playerStatusService.setBackToOnline(entry.getUserId());
+                playerStatusService.updateCurrentRoom(entry.getUserId(), null);
+            } catch (Exception e) {
+                log.warn("[MatchEnd] Failed to reset player status for user {}: {}",
+                        entry.getUserId(), e.getMessage());
+            }
 
             // Persist result row
             int placement;
@@ -166,9 +193,20 @@ public class MatchResultService {
         match.setFinishedAt(LocalDateTime.now());
         matchRepository.save(match);
 
+        roomRepository.findById(match.getRoomId()).ifPresent(room -> {
+            room.setStatus(GameConstants.ROOM_STATUS_FINISHED);
+            roomRepository.save(room);
+            connectionManager.broadcastToRoom(room.getId(), "room_status_changed",
+                    java.util.Map.of(
+                            "newStatus", GameConstants.ROOM_STATUS_FINISHED,
+                            "room", roomResponseAssembler.toResponseById(room.getId())));
+        });
+
         // 5. Close relay session
         relaySessionManager.getByRoomId(match.getRoomId())
                 .ifPresent(s -> relaySessionManager.finishSession(s.getSessionToken()));
+
+        clearPresenceCache(req.getMatchId(), req.getPlayerResults());
 
         // 6. Broadcast match_ended WS event to all participants
         MatchEndResponse response = MatchEndResponse.builder()
@@ -189,6 +227,18 @@ public class MatchResultService {
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
+
+    private boolean isAbandoned(String matchId, Long userId) {
+        return matchPresenceCache.get(matchId, userId)
+                .map(snapshot -> snapshot.isAbandoned())
+                .orElse(false);
+    }
+
+    private void clearPresenceCache(String matchId, List<MatchEndRequest.PlayerResultEntry> results) {
+        for (MatchEndRequest.PlayerResultEntry entry : results) {
+            matchPresenceCache.delete(matchId, entry.getUserId());
+        }
+    }
 
     private long resolveCoinReward(double actualScore, boolean isRanked) {
         if (isRanked) {

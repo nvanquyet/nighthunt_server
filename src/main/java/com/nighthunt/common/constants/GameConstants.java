@@ -24,11 +24,14 @@ public class GameConstants {
     // Session
     public static final int SESSION_TIMEOUT_SECONDS = 3600; // 1 hour
     public static final int RECONNECT_TIMEOUT_SECONDS = 60; // 1 minute
+    public static final int MATCH_ABANDON_GRACE_SECONDS = 60; // Hold slot after in-match disconnect
+    public static final int MATCH_PRESENCE_CACHE_TTL_SECONDS = 21600; // 6 hours
 
     // Redis keys
     public static final String REDIS_KEY_SESSION_PREFIX = "session:";
     public static final String REDIS_KEY_ROOM_STATE_PREFIX = "room_state:";
     public static final String REDIS_KEY_MATCH_SESSION_PREFIX = "match_session:";
+    public static final String REDIS_KEY_MATCH_PRESENCE_PREFIX = "match_presence:";
     public static final String REDIS_KEY_FORCE_LOGOUT_PREFIX = "force_logout:";
 
     private GameConstants() {

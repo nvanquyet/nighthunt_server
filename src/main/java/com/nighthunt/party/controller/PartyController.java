@@ -5,9 +5,9 @@ import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.party.dto.InviteToPartyRequest;
 import com.nighthunt.party.dto.PartyDTO;
 import com.nighthunt.party.dto.PartyInvitationDTO;
-import com.nighthunt.party.dto.PartyMatchmakingRequest;
-import com.nighthunt.party.service.PartyMatchmakingService;
-import com.nighthunt.party.service.PartyRoomService;
+import com.nighthunt.party.dto.PartyRankedQueueRequest;
+import com.nighthunt.party.service.PartyRankedModeService;
+import com.nighthunt.party.service.PartyCustomModeService;
 import com.nighthunt.party.service.PartyService;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.security.util.SecurityUtils;
@@ -30,8 +30,8 @@ import java.util.List;
 public class PartyController {
 
     private final PartyService partyService;
-    private final PartyMatchmakingService partyMatchmakingService;
-    private final PartyRoomService partyRoomService;
+    private final PartyRankedModeService partyRankedModeService;
+    private final PartyCustomModeService partyCustomModeService;
 
     // ──────────────────────────────────────────────────────────────────────────
     // PARTY CREATION
@@ -230,11 +230,11 @@ public class PartyController {
      * Response: Success message
      */
     @PostMapping("/queue")
-    public ApiResponse<Void> queueParty(@Valid @RequestBody PartyMatchmakingRequest request) {
+    public ApiResponse<Void> queueParty(@Valid @RequestBody PartyRankedQueueRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
-        partyMatchmakingService.queueParty(userId, request);
+        partyRankedModeService.queueParty(userId, request);
         return ApiResponse.okMessage("Party queued for matchmaking");
     }
 
@@ -250,7 +250,7 @@ public class PartyController {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
-        partyMatchmakingService.cancelQueue(userId);
+        partyRankedModeService.cancelQueue(userId);
         return ApiResponse.okMessage("Party queue cancelled");
     }
 
@@ -271,7 +271,7 @@ public class PartyController {
         Long userId = SecurityUtils.getCurrentUserId();
         if (userId == null) return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
         
-        return ApiResponse.ok(partyRoomService.joinRoomWithParty(
+        return ApiResponse.ok(partyCustomModeService.joinRoomWithParty(
             userId, 
             request.getRoomCode(), 
             request.getPassword()

@@ -4,6 +4,9 @@ import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.match.adapter.RedisMatchSessionCache;
+import com.nighthunt.match.dto.MatchPresenceRequest;
+import com.nighthunt.match.dto.MatchPresenceState;
+import com.nighthunt.match.service.MatchPresenceService;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.room.entity.Room;
 import com.nighthunt.room.entity.RoomPlayer;
@@ -30,6 +33,7 @@ public class ReconnectService {
     private final SessionStore sessionStore;
     private final RedisMatchSessionCache matchSessionCache;
     private final RoomService roomService;
+    private final MatchPresenceService matchPresenceService;
 
     @Transactional
     public RoomResponse reconnect(String accessToken, String sessionId, Long roomId) {
@@ -93,6 +97,15 @@ public class ReconnectService {
         // Update last seen
         player.setLastSeenAt(LocalDateTime.now());
         roomPlayerRepository.save(player);
+
+        if (room.getMatchId() != null && !room.getMatchId().isBlank()) {
+            matchPresenceService.recordUserPresence(userId, MatchPresenceRequest.builder()
+                    .matchId(room.getMatchId())
+                    .userId(userId)
+                    .state(MatchPresenceState.CONNECTED)
+                    .reason("RECONNECTED")
+                    .build());
+        }
 
         // Generate new join token
         String joinToken = UUID.randomUUID().toString();

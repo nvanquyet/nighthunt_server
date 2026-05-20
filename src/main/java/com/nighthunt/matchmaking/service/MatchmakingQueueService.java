@@ -12,6 +12,7 @@ import com.nighthunt.map.service.GameMapService;
 import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.party.repository.PartyMemberRepository;
+import com.nighthunt.party.repository.PartyRepository;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.service.RoomService;
@@ -71,6 +72,7 @@ public class MatchmakingQueueService {
     private final RoomService                 roomService;
     private final RoomPlayerRepository        roomPlayerRepository;
     private final PartyMemberRepository       partyMemberRepository;
+    private final PartyRepository             partyRepository;
     private final DedicatedServerService      dsService;
     private final GameModeService             gameModeService;
     private final GameMapService              gameMapService;
@@ -160,10 +162,21 @@ public class MatchmakingQueueService {
     }
 
     private void ensureUserCanEnterMatchmaking(Long userId) {
+        // Guard 1: user must not be in an active room (IN_GAME or WAITING)
         if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
                     "Leave the active room before joining matchmaking");
         }
+        // Guard 2: user's party must not be in CUSTOM mode (in a custom lobby)
+        // This catches the case where the user is a party member whose party joined a room.
+        partyMemberRepository.findByUserId(userId).ifPresent(pm -> {
+            com.nighthunt.party.entity.Party party =
+                    partyRepository.findById(pm.getPartyId()).orElse(null);
+            if (party != null && "CUSTOM".equals(party.getPartyMode())) {
+                throw new BusinessException(ErrorCodes.PARTY_IN_CUSTOM_MODE,
+                        "Leave the custom lobby before joining ranked matchmaking");
+            }
+        });
     }
 
     /**
@@ -177,6 +190,35 @@ public class MatchmakingQueueService {
             log.info("[MM] User {} dequeued", userId);
         });
     }
+
+    /**
+     * Return the current queue status for a user.
+     * Used by the client on reconnect to sync local UI state with server reality.
+     * Returns null if the user has no active (SEARCHING or MATCHED) queue entry.
+     */
+    public QueueStatusDTO getQueueStatus(Long userId) {
+        return entryRepository.findByUserId(userId)
+                .filter(e -> "SEARCHING".equals(e.getStatus()) || "MATCHED".equals(e.getStatus()))
+                .map(e -> {
+                    long waitSeconds = java.time.Duration.between(e.getQueuedAt(),
+                            LocalDateTime.now()).getSeconds();
+                    return new QueueStatusDTO(
+                            e.getStatus(),
+                            e.getGameMode(),
+                            e.getLobbyToken(),
+                            e.getQueuedAt(),
+                            waitSeconds);
+                })
+                .orElse(null);
+    }
+
+    /** Snapshot of a user's active queue entry, returned to the client. */
+    public record QueueStatusDTO(
+            String status,
+            String gameMode,
+            String lobbyToken,
+            LocalDateTime queuedAt,
+            long waitSeconds) {}
 
     /**
      * Scheduled: try to form matches from SEARCHING entries.
@@ -196,6 +238,39 @@ public class MatchmakingQueueService {
             if (candidates.size() < minRequired) continue;
 
             tryFormMatches(candidates, mode);
+        }
+    }
+
+    /**
+     * Scheduled: cancel SEARCHING entries older than STALE_QUEUE_TIMEOUT_MINUTES.
+     * Handles clients that crashed/force-quit after queuing before WS close fired.
+     * Notifies the user via WS if they have since reconnected.
+     */
+    private static final int STALE_QUEUE_TIMEOUT_MINUTES = 15;
+
+    @Scheduled(fixedDelay = 60_000)
+    @Transactional
+    public void sweepStaleQueueEntries() {
+        LocalDateTime cutoff = LocalDateTime.now()
+                .minus(STALE_QUEUE_TIMEOUT_MINUTES, java.time.temporal.ChronoUnit.MINUTES);
+        List<MatchmakingEntry> stale = entryRepository.findSearchingQueuedBefore(cutoff);
+        if (stale.isEmpty()) return;
+
+        log.info("[MM] Sweeping {} stale SEARCHING entries older than {} min", stale.size(), STALE_QUEUE_TIMEOUT_MINUTES);
+        for (MatchmakingEntry e : stale) {
+            e.setStatus("CANCELLED");
+            entryRepository.save(e);
+            try {
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("lobbyToken", e.getLobbyToken() != null ? e.getLobbyToken() : "");
+                payload.put("reason", "Queue timed out after " + STALE_QUEUE_TIMEOUT_MINUTES
+                        + " minutes without finding a match. Please try again.");
+                connectionManager.sendToUser(e.getUserId(), "match_cancelled", payload);
+            } catch (Exception ex) {
+                log.debug("[MM] Could not WS-notify userId={} of stale cancel: {}", e.getUserId(), ex.getMessage());
+            }
+            log.info("[MM] Stale queue entry cancelled: userId={} mode={} queuedAt={}",
+                    e.getUserId(), e.getGameMode(), e.getQueuedAt());
         }
     }
 

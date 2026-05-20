@@ -45,6 +45,20 @@ public class MatchmakingQueueController {
     }
 
     /**
+     * Get the caller's current queue status.
+     * Returns {@code { "status": null }} when the user is not in any active queue entry.
+     * Returns entry details (status, gameMode, lobbyToken, waitSeconds) when SEARCHING or MATCHED.
+     * The Unity client calls this on WS reconnect to sync local UI state with server reality.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/status")
+    public ResponseEntity<ApiResponse<MatchmakingQueueService.QueueStatusDTO>> getQueueStatus() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        MatchmakingQueueService.QueueStatusDTO dto = queueService.getQueueStatus(userId);
+        return ResponseEntity.ok(ApiResponse.ok(dto)); // dto may be null → { data: null }
+    }
+
+    /**
      * Leave the ranked matchmaking queue.
      */
     @PreAuthorize("isAuthenticated()")

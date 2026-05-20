@@ -5,7 +5,7 @@ import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.matchmaking.service.MatchmakingQueueService;
 import com.nighthunt.messaging.service.MessageBrokerService;
-import com.nighthunt.party.dto.PartyMatchmakingRequest;
+import com.nighthunt.party.dto.PartyRankedQueueRequest;
 import com.nighthunt.party.entity.Party;
 import com.nighthunt.party.entity.PartyMember;
 import com.nighthunt.party.repository.PartyMemberRepository;
@@ -18,23 +18,23 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * Party Matchmaking Service - Handles party queue for matchmaking.
- * 
- * Features:
- * 1. Party Queue: All party members queue together
- * 2. Fill Option: Allow random players to fill empty slots
- * 3. Validation: Party size must match game mode requirements
- * 
- * Example workflows:
- * - 2 players in party queue for 2v2 (allowFill=false) → Waits for another 2-player party
- * - 2 players in party queue for 2v2 (allowFill=true) → Can match with 2 solo players
- * - 3 players in party queue for 4v4 (allowFill=true) → Needs 1 solo player to fill
- * - 4 players in party queue for 4v4 (allowFill=false) → Full team, waits for enemy team
+ * PartyRankedModeService — Manages the lifecycle of a party entering ranked matchmaking.
+ *
+ * <p>A party in RANKED mode ({@code partyMode = "RANKED"}) cannot simultaneously join a
+ * custom lobby. Use {@link PartyCustomModeService} for custom-room operations.
+ *
+ * <p>Workflows:
+ * <ul>
+ *   <li>2 players in party → queue for 1v1 (allowFill=false) → waits for another pair</li>
+ *   <li>2 players in party → queue for 2v2 (allowFill=true) → fills remaining with randoms</li>
+ *   <li>3 players in party → queue for 4v4 (allowFill=true) → needs 1 solo fill</li>
+ *   <li>4 players in party → queue for 4v4 (allowFill=false) → full team, waits for enemy</li>
+ * </ul>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class PartyMatchmakingService {
+public class PartyRankedModeService {
 
     private final PartyRepository partyRepository;
     private final PartyMemberRepository partyMemberRepository;
@@ -51,7 +51,7 @@ public class PartyMatchmakingService {
      * All party members are added to matchmaking queue together.
      */
     @Transactional
-    public void queueParty(Long hostUserId, PartyMatchmakingRequest request) {
+    public void queueParty(Long hostUserId, PartyRankedQueueRequest request) {
         // Find host's party
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
@@ -63,7 +63,14 @@ public class PartyMatchmakingService {
             throw new BusinessException(ErrorCodes.PARTY_NOT_HOST, "Only host can start matchmaking");
         }
 
-        // Validate: Party is idle before entering matchmaking
+        // Guard 1 — Mutual-exclusivity: partyMode=CUSTOM means party is in a custom lobby.
+        // Check this FIRST so the user gets a clear message, not the generic "must be IDLE".
+        if ("CUSTOM".equals(party.getPartyMode())) {
+            throw new BusinessException(ErrorCodes.PARTY_IN_CUSTOM_MODE,
+                    "Party is in a custom lobby. Leave the room before starting ranked matchmaking.");
+        }
+
+        // Guard 2 — Status must be IDLE (covers IN_QUEUE / IN_GAME / DISBANDED edge cases)
         if (!"IDLE".equals(party.getPartyStatus())) {
             throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
                     "Party must be idle before matchmaking (current status: " + party.getPartyStatus() + ")");
@@ -95,8 +102,9 @@ public class PartyMatchmakingService {
                     playersPerTeam, request.getGameMode()));
         }
 
-        // Update party status
+        // Update party status + mode
         party.setPartyStatus("IN_QUEUE");
+        party.setPartyMode("RANKED");   // lock context to RANKED
         partyRepository.save(party);
         
         // Add all members to matchmaking queue
@@ -135,8 +143,9 @@ public class PartyMatchmakingService {
             log.info("Party member {} removed from matchmaking queue", memberId);
         }
 
-        // Update party status back to IDLE
+        // Update party status back to IDLE and clear mode
         party.setPartyStatus("IDLE");
+        party.setPartyMode("NONE");   // release context lock
         partyRepository.save(party);
         
         // Publish party status change event
