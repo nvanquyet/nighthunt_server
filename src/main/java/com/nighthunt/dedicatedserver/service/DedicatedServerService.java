@@ -1,5 +1,6 @@
 package com.nighthunt.dedicatedserver.service;
 
+import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.dedicatedserver.dto.*;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
@@ -523,6 +524,8 @@ public class DedicatedServerService {
 
         for (DedicatedServer server : staleServers) {
             log.warn("[DS-Svc] Cleaning stale starting server: {}", server.getServerId());
+            // Thông báo cho player trước khi dừng container
+            cancelMatchForDeadServer(server, "Server boot timeout — match could not start");
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
@@ -539,11 +542,45 @@ public class DedicatedServerService {
 
         for (DedicatedServer server : deadServers) {
             log.warn("[DS-Svc] Cleaning dead server (no heartbeat): {}", server.getServerId());
+            // Thông báo cho player trước khi dừng container
+            cancelMatchForDeadServer(server, "Server crashed — match was cancelled");
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
         }
+    }
+
+    /**
+     * Tìm room gắn với matchId của DS vừa chết/treo, đóng room và broadcast match_cancelled
+     * tới tất cả player. Phải gọi TRƯỚC khi đổi status DS sang "stopped".
+     */
+    private void cancelMatchForDeadServer(DedicatedServer server, String reason) {
+        String matchId = server.getMatchId();
+        if (matchId == null || matchId.isBlank()) return;
+
+        roomRepository.findByMatchId(matchId).ifPresent(room -> {
+            String roomStatus = room.getStatus();
+            if (!GameConstants.ROOM_STATUS_IN_GAME.equals(roomStatus)
+                    && !GameConstants.ROOM_STATUS_WAITING.equals(roomStatus)) {
+                return; // Room đã closed/finished — không cần làm gì
+            }
+
+            room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+            roomRepository.save(room);
+
+            List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("reason",  reason);
+            payload.put("matchId", matchId);
+
+            for (RoomPlayer rp : players) {
+                connectionManager.sendToUser(rp.getUserId(), "match_cancelled", payload);
+            }
+
+            log.warn("[DS-Svc] Cancelled match {} (room={} had {} players) — reason: {}",
+                    matchId, room.getId(), players.size(), reason);
+        });
     }
 
     /** Mỗi 3 phút: thu hồi DS đã ready nhưng không có player nào trong > 5 phút (bị bỏ hoang). */

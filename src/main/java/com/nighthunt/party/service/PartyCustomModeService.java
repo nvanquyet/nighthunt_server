@@ -99,18 +99,13 @@ public class PartyCustomModeService {
         // TODO: Check if room has enough slots for all members
         // For now, we'll try to add all members and fail if room is full
 
-        // Add remaining party members
+        // Add remaining party members.
+        // Exceptions are intentionally NOT caught: any failure rolls back the entire transaction
+        // so the host is also removed from the room, leaving a clean state.
         for (Long memberId : memberIds) {
             if (memberId.equals(hostUserId)) continue; // Skip host (already joined)
-            
-            try {
-                roomService.joinRoomByCode(memberId, roomCode, password);
-                log.info("Party member {} joined room {} with party", memberId, roomId);
-            } catch (BusinessException e) {
-                // If any member fails to join, we have a problem
-                // For now, log error but continue (they can join manually)
-                log.warn("Party member {} failed to join room {}: {}", memberId, roomId, e.getMessage());
-            }
+            roomService.joinRoomByCode(memberId, roomCode, password);
+            log.info("[PartyCustomMode] Member {} joined room {} with party", memberId, roomId);
         }
 
         // Update party status to IN_ROOM and set CUSTOM mode

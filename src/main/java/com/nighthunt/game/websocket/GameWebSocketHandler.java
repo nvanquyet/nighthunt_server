@@ -1,6 +1,7 @@
 package com.nighthunt.game.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.matchmaking.service.MatchmakingQueueService;
 import com.nighthunt.match.service.MatchPresenceService;
@@ -170,10 +171,14 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
                 "message", "Game WebSocket connected"
         ));
 
-        // Push latest room state for reconnection recovery
+        // Push latest room state for reconnection recovery.
+        // Guard: skip terminal rooms — a CLOSED/FINISHED room push on connect is what
+        // caused the client to adopt stale room state and block matchmaking (ROOM_014).
         if (roomId != null) {
             RoomResponse roomResponse = roomResponseAssembler.toResponseById(roomId);
-            if (roomResponse != null) {
+            if (roomResponse != null
+                    && !GameConstants.ROOM_STATUS_CLOSED.equals(roomResponse.getStatus())
+                    && !GameConstants.ROOM_STATUS_FINISHED.equals(roomResponse.getStatus())) {
                 sendToUser(userId, "room_updated", roomResponse);
             }
         }
@@ -465,7 +470,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     }
 
     private Long findCurrentRoomId(Long userId) {
-        return roomPlayerRepository.findByUserId(userId).stream()
+        // Only return an active (WAITING / IN_GAME) room — never a CLOSED or FINISHED one.
+        // Using findByUserId would incorrectly return terminal rooms and cause the client to
+        // adopt a stale room state on WebSocket reconnect.
+        return roomPlayerRepository.findActiveRoomsByUserId(userId).stream()
                 .findFirst()
                 .map(RoomPlayer::getRoomId)
                 .orElse(null);

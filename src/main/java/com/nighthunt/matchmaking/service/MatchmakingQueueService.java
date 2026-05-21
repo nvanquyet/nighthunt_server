@@ -355,13 +355,12 @@ public class MatchmakingQueueService {
     }
 
     /**
-     * Mark entries as MATCHED and notify players via WebSocket.
-     * Resolves mapId: anchor's map wins; if null, leave null (DS allocator may randomize).
+     * Mark entries as MATCHED and start the match immediately (auto-accept).
+     * Bước xác nhận thủ công (match_found → /accept) đã bị loại bỏ:
+     * tất cả entries được pre-accept ngay khi match hình thành, DS được cấp phát
+     * và {@code match_ready} được broadcast trực tiếp — không cần client gọi /accept.
      *
-     * Dev mode fast-path: when {@code mode.isDevMode()} the entire lobby/accept phase
-     * is skipped.  The DS container is started immediately, and the single player
-     * receives a {@code match_ready} event right away — no {@code match_found} or
-     * {@code /accept} call required.
+     * Resolves mapId: anchor's map wins; if null, leave null (DS allocator may randomize).
      */
     private void formMatch(List<MatchmakingEntry> group, GameModeDTO mode) {
         // Prefer first non-null mapId in group (anchor is first)
@@ -374,42 +373,21 @@ public class MatchmakingQueueService {
 
         String lobbyToken = UUID.randomUUID().toString();
 
-        // ── Dev mode: skip accept phase, start DS immediately ────────────────
-        if (mode.isDevMode()) {
-            for (MatchmakingEntry entry : group) {
-                entry.setStatus("MATCHED");
-                entry.setLobbyToken(lobbyToken);
-                entry.setAcceptStatus("ACCEPTED"); // pre-accept
-                entry.setMapId(resolvedMapId);
-                entryRepository.save(entry);
-            }
-            log.info("[MM][DEV] devMode=true — skipping accept phase, starting DS immediately. players={}",
-                    group.stream().map(MatchmakingEntry::getUserId).toList());
-            createMatchedRoom(group);
-            return;
-        }
-
-        // ── Normal ranked flow: send match_found, wait for all-accept ────────
+        // Auto-accept: không gửi match_found, không đợi player xác nhận.
+        // createMatchedRoom() sẽ gửi match_ready trực tiếp với DS info.
         for (MatchmakingEntry entry : group) {
             entry.setStatus("MATCHED");
             entry.setLobbyToken(lobbyToken);
-            entry.setAcceptStatus("PENDING");
+            entry.setAcceptStatus("ACCEPTED");
             entry.setMapId(resolvedMapId);
             entryRepository.save(entry);
-            log.info("[MM] Matched user {} into group token={} map={}", entry.getUserId(), lobbyToken, resolvedMapId);
         }
 
-        List<Long> playerIds = group.stream().map(MatchmakingEntry::getUserId).toList();
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("event",      "match_found");
-        payload.put("lobbyToken", lobbyToken);
-        payload.put("gameMode",   mode.getModeKey());
-        payload.put("playerIds",  playerIds);
+        log.info("[MM] {} match formed (auto-accept), lobbyToken={}, players={}",
+                mode.getModeKey(), lobbyToken,
+                group.stream().map(MatchmakingEntry::getUserId).toList());
 
-        for (MatchmakingEntry entry : group) {
-            connectionManager.sendToUser(entry.getUserId(), "match_found", payload);
-        }
-        log.info("[MM] Formed {} match, lobbyToken={}, players={}", mode.getModeKey(), lobbyToken, playerIds);
+        createMatchedRoom(group);
     }
 
     // ── Accept / Decline ─────────────────────────────────────────────────────
