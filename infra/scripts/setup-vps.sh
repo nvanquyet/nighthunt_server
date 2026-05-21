@@ -189,15 +189,15 @@ if command -v ufw &>/dev/null; then
   ufw default deny incoming
   ufw default allow outgoing
   # SSH — phải allow trước để không bị lock out
-  ufw allow 22/tcp   comment 'SSH'
+  ufw allow 22/tcp
   # HTTP + HTTPS — nginx
-  ufw allow 80/tcp   comment 'HTTP (Let'\''s Encrypt ACME)'
-  ufw allow 443/tcp  comment 'HTTPS (nginx)'
+  ufw allow 80/tcp
+  ufw allow 443/tcp
   # UDP relay — cross-network custom game sessions (relay_server.py)
-  ufw allow 7777:7900/udp comment 'NightHunt relay UDP game sessions'
+  ufw allow 7777:7900/udp
   # UDP DS game ports — dedicated server containers
-  ufw allow 9000:9100/udp comment 'NightHunt DS game ports'
-  # Internal ports — KEEP CLOSED externally
+  ufw allow 9000:9100/udp
+  # Internal ports — KEEP CLOSED externally:
   # 8080 (backend), 3306 (mysql), 6379 (redis), 3000 (dashboard), 7776 (relay mgmt)
   ufw --force enable
   echo "    [OK] Firewall configured"
