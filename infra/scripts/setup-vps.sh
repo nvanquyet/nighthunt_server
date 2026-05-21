@@ -32,12 +32,33 @@ else
 fi
 
 # ── 2. Cài Docker Compose plugin ─────────────────────────────────────────────
-if ! docker compose version &>/dev/null; then
+# docker compose v2 plugin can be installed in user-local path (~/.docker/cli-plugins)
+# or system-wide (/usr/local/lib/docker/cli-plugins or /usr/libexec/docker/cli-plugins).
+# When running as root via sudo, the user-local path is not on PATH, so we check all
+# known locations explicitly.
+_compose_ok() {
+  docker compose version &>/dev/null && return 0
+  for _p in /usr/local/lib/docker/cli-plugins/docker-compose \
+             /usr/libexec/docker/cli-plugins/docker-compose \
+             /usr/lib/docker/cli-plugins/docker-compose; do
+    [ -x "$_p" ] && return 0
+  done
+  return 1
+}
+if ! _compose_ok; then
   echo "==> Cài Docker Compose plugin..."
-  apt-get update -qq && apt-get install -y docker-compose-plugin
-  echo "    [OK] Docker Compose installed"
+  # Install compose v2 plugin to the system-wide CLI plugins directory
+  COMPOSE_DIR="/usr/local/lib/docker/cli-plugins"
+  mkdir -p "$COMPOSE_DIR"
+  COMPOSE_VERSION=$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest \
+    | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+  COMPOSE_VERSION="${COMPOSE_VERSION:-v2.35.0}"
+  curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+    -o "${COMPOSE_DIR}/docker-compose"
+  chmod +x "${COMPOSE_DIR}/docker-compose"
+  echo "    [OK] Docker Compose ${COMPOSE_VERSION} installed (system-wide)"
 else
-  echo "==> Docker Compose đã có: $(docker compose version)"
+  echo "==> Docker Compose đã có: $(docker compose version 2>/dev/null || echo 'v2 plugin')"
 fi
 
 # ── 3. Tạo thư mục deploy ────────────────────────────────────────────────────
