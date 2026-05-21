@@ -98,7 +98,8 @@ public class ReconnectService {
         player.setLastSeenAt(LocalDateTime.now());
         roomPlayerRepository.save(player);
 
-        if (room.getMatchId() != null && !room.getMatchId().isBlank()) {
+        if (room.getMatchId() != null && !room.getMatchId().isBlank()
+                && "IN_GAME".equals(room.getStatus())) {
             matchPresenceService.recordUserPresence(userId, MatchPresenceRequest.builder()
                     .matchId(room.getMatchId())
                     .userId(userId)
