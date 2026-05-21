@@ -93,3 +93,5 @@ src/main/resources/certs/
 client_unity_only_read/nighthunt_client/
 .gitnexus
 .gradle-home/
+relay/tests/__pycache__/
+relay/__pycache__/

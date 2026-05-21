@@ -1,0 +1,345 @@
+"""
+Tests for relay_server.py
+
+Run (from repo root):
+    python -m pytest relay/tests/test_relay_server.py -v
+
+Requires:
+    pip install aiohttp pytest pytest-asyncio
+
+conftest.py adds relay/ to sys.path so `import relay_server` works.
+"""
+import asyncio
+import pytest
+import pytest_asyncio
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# conftest.py adds relay/ to sys.path
+import relay_server
+from relay_server import (
+    RelaySession,
+    RelayManager,
+    handle_create,
+    handle_close,
+    handle_set_host,
+    handle_list,
+    handle_health,
+)
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def make_app(port_start: int = 17777, port_end: int = 17800) -> web.Application:
+    """
+    Build a test aiohttp app with an isolated RelayManager.
+
+    `create_datagram_endpoint` is patched so no real UDP sockets are opened;
+    each created session gets a mock transport so close_session works cleanly.
+    """
+    loop = asyncio.get_event_loop()
+    manager = RelayManager(port_start, port_end, loop)
+    app = web.Application()
+    app["manager"] = manager
+    app.router.add_post("/session/create",   handle_create)
+    app.router.add_post("/session/close",    handle_close)
+    app.router.add_post("/session/set-host", handle_set_host)
+    app.router.add_get( "/session/list",     handle_list)
+    app.router.add_get( "/health",           handle_health)
+    return app
+
+
+def _mock_datagram_endpoint():
+    """Return a context manager that patches loop.create_datagram_endpoint."""
+    mock_transport = MagicMock()
+    mock_transport.close = MagicMock()
+
+    async def _fake_endpoint(protocol_factory, **kwargs):
+        proto = protocol_factory()
+        proto.transport = mock_transport
+        return mock_transport, proto
+
+    return patch.object(
+        asyncio.get_event_loop(), "create_datagram_endpoint", side_effect=_fake_endpoint
+    )
+
+
+# ── RelaySession unit tests ───────────────────────────────────────────────────
+
+class TestRelaySession:
+
+    def test_touch_updates_last_pkt(self):
+        s = RelaySession("token-abc123", 17777)
+        before = s.last_pkt
+        time.sleep(0.01)
+        s.touch()
+        assert s.last_pkt > before
+
+    def test_is_idle_false_for_fresh_session(self):
+        s = RelaySession("token-fresh", 17777)
+        assert s.is_idle() is False
+
+    def test_register_endpoint_first_becomes_host(self):
+        s = RelaySession("tok12345678", 17777)
+        addr = ("1.2.3.4", 9000)
+        s.register_endpoint(addr)
+        assert s.host_addr == addr
+        assert addr in s.all_known
+        assert len(s.clients) == 0  # Host not in clients dict
+
+    def test_register_endpoint_second_becomes_client(self):
+        s = RelaySession("tok12345678", 17777)
+        host = ("1.2.3.4", 9000)
+        client = ("5.6.7.8", 9001)
+        s.register_endpoint(host)
+        s.register_endpoint(client)
+        assert s.host_addr == host
+        assert client in s.clients
+        assert client in s.all_known
+
+    def test_register_endpoint_host_reregisters_does_not_add_to_clients(self):
+        s = RelaySession("tok12345678", 17777)
+        host = ("1.2.3.4", 9000)
+        s.register_endpoint(host)
+        s.register_endpoint(host)  # Same host, second time
+        assert len(s.clients) == 0
+
+    def test_client_count(self):
+        s = RelaySession("tok12345678", 17777)
+        s.register_endpoint(("h", 1))
+        s.register_endpoint(("c1", 2))
+        s.register_endpoint(("c2", 3))
+        assert s.client_count() == 2
+
+
+# ── RelayManager unit tests ───────────────────────────────────────────────────
+
+class TestRelayManager:
+
+    def test_alloc_port_sequential(self):
+        loop = asyncio.new_event_loop()
+        mgr = RelayManager(20000, 20005, loop)
+        assert mgr._alloc_port() == 20000
+        assert mgr._alloc_port() == 20001
+
+    def test_alloc_port_returns_none_when_exhausted(self):
+        loop = asyncio.new_event_loop()
+        mgr = RelayManager(20000, 20000, loop)
+        mgr._alloc_port()  # consume only port
+        assert mgr._alloc_port() is None
+
+    def test_free_port_returns_port_to_pool(self):
+        loop = asyncio.new_event_loop()
+        mgr = RelayManager(20000, 20001, loop)
+        mgr._alloc_port()  # 20000
+        mgr._alloc_port()  # 20001
+        mgr._free_port(20000)
+        assert 20000 in mgr._free_ports
+
+    def test_free_ports_remain_sorted(self):
+        loop = asyncio.new_event_loop()
+        mgr = RelayManager(20000, 20003, loop)
+        for _ in range(4):
+            mgr._alloc_port()
+        mgr._free_port(20002)
+        mgr._free_port(20000)
+        assert mgr._free_ports == sorted(mgr._free_ports)
+
+
+# ── HTTP API integration tests ────────────────────────────────────────────────
+
+@pytest.fixture
+def event_loop():
+    """Use a single event loop per test module."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.mark.asyncio
+class TestHttpApi:
+
+    @pytest_asyncio.fixture
+    async def client(self):
+        app = make_app(17777, 17850)
+        manager: RelayManager = app["manager"]
+
+        # Patch create_datagram_endpoint on the manager's loop so no real
+        # UDP sockets are opened during HTTP API tests.
+        mock_transport = MagicMock()
+        mock_transport.close = MagicMock()
+
+        async def _fake_endpoint(protocol_factory, **kwargs):
+            proto = protocol_factory()
+            proto.transport = mock_transport
+            return mock_transport, proto
+
+        manager.loop.create_datagram_endpoint = _fake_endpoint  # type: ignore
+
+        server = TestServer(app)
+        test_client = TestClient(server)
+        await test_client.start_server()
+        yield test_client
+        await test_client.close()
+
+    # ── GET /health ──────────────────────────────────────────────────────────
+
+    async def test_health_returns_ok(self, client):
+        resp = await client.get("/health")
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["status"] == "ok"
+        assert "sessions" in body
+        assert "free_ports" in body
+
+    async def test_health_shows_correct_free_port_count(self, client):
+        resp = await client.get("/health")
+        body = await resp.json()
+        # Port range 17777-17850 = 74 ports
+        assert body["free_ports"] == 74
+
+    # ── POST /session/create ─────────────────────────────────────────────────
+
+    async def test_create_session_returns_port(self, client):
+        resp = await client.post("/session/create",
+                                 json={"token": "abcdefgh-1234-5678-90ab-cdef01234567"})
+        assert resp.status == 200
+        body = await resp.json()
+        assert "port" in body
+        assert body["port"] >= 17777
+        assert body["token"] == "abcdefgh-1234-5678-90ab-cdef01234567"
+
+    async def test_create_session_idempotent(self, client):
+        token = "idempotent-token-123456789"
+        resp1 = await client.post("/session/create", json={"token": token})
+        resp2 = await client.post("/session/create", json={"token": token})
+        body1 = await resp1.json()
+        body2 = await resp2.json()
+        assert body1["port"] == body2["port"]
+
+    async def test_create_session_token_too_short(self, client):
+        resp = await client.post("/session/create", json={"token": "short"})
+        assert resp.status == 400
+        body = await resp.json()
+        assert "error" in body
+
+    async def test_create_session_invalid_json(self, client):
+        resp = await client.post("/session/create",
+                                 data="not-json",
+                                 headers={"Content-Type": "application/json"})
+        assert resp.status == 400
+
+    async def test_create_session_missing_token(self, client):
+        resp = await client.post("/session/create", json={})
+        assert resp.status == 400
+
+    # ── POST /session/close ──────────────────────────────────────────────────
+
+    async def test_close_existing_session(self, client):
+        token = "close-test-token-0000000001"
+        await client.post("/session/create", json={"token": token})
+
+        resp = await client.post("/session/close", json={"token": token})
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["ok"] is True
+
+        # Verify the session is gone from the list
+        list_resp = await client.get("/session/list")
+        sessions = await list_resp.json()
+        tokens_present = [s["token"] for s in sessions]
+        assert not any(token[:8] in t for t in tokens_present)
+
+    async def test_close_nonexistent_session_returns_ok(self, client):
+        """Closing a nonexistent session should be a no-op (idempotent)."""
+        resp = await client.post("/session/close", json={"token": "ghost-token-000000"})
+        assert resp.status == 200
+        assert (await resp.json())["ok"] is True
+
+    # ── POST /session/set-host ───────────────────────────────────────────────
+
+    async def test_set_host_updates_host_addr(self, client):
+        token = "sethost-token-000000000001"
+        await client.post("/session/create", json={"token": token})
+
+        resp = await client.post("/session/set-host",
+                                 json={"token": token, "host_addr": "203.0.113.5:9876"})
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["ok"] is True
+        assert body["host_set"] is True
+
+    async def test_set_host_unknown_token_returns_404(self, client):
+        resp = await client.post("/session/set-host",
+                                 json={"token": "unknown-token-000000000", "host_addr": "1.2.3.4:8000"})
+        assert resp.status == 404
+
+    async def test_set_host_malformed_addr_returns_400(self, client):
+        token = "sethost-bad-addr-000000001"
+        await client.post("/session/create", json={"token": token})
+
+        resp = await client.post("/session/set-host",
+                                 json={"token": token, "host_addr": "not-an-addr"})
+        assert resp.status == 400
+
+    async def test_set_host_missing_token_returns_400(self, client):
+        resp = await client.post("/session/set-host", json={})
+        assert resp.status == 400
+
+    # ── GET /session/list ────────────────────────────────────────────────────
+
+    async def test_list_is_empty_on_start(self, client):
+        resp = await client.get("/session/list")
+        assert resp.status == 200
+        assert await resp.json() == []
+
+    async def test_list_shows_created_session(self, client):
+        token = "listtoken-00000000000001"
+        await client.post("/session/create", json={"token": token})
+
+        resp = await client.get("/session/list")
+        sessions = await resp.json()
+        assert len(sessions) >= 1
+        assert any(s["token"].startswith(token[:8]) for s in sessions)
+
+    async def test_list_shows_client_count(self, client):
+        token = "listtoken-count-00000001"
+        await client.post("/session/create", json={"token": token})
+
+        resp = await client.get("/session/list")
+        sessions = await resp.json()
+        session = next(s for s in sessions if s["token"].startswith(token[:8]))
+        assert session["clients"] == 0
+        assert session["has_host"] is False
+
+    # ── Port exhaustion ──────────────────────────────────────────────────────
+
+    async def test_no_free_ports_returns_503(self):
+        """A manager with only 1 port should return 503 after one session."""
+        app = make_app(port_start=19999, port_end=19999)
+        manager: RelayManager = app["manager"]
+
+        mock_transport = MagicMock()
+        mock_transport.close = MagicMock()
+
+        async def _fake_endpoint(protocol_factory, **kwargs):
+            proto = protocol_factory()
+            proto.transport = mock_transport
+            return mock_transport, proto
+
+        manager.loop.create_datagram_endpoint = _fake_endpoint  # type: ignore
+
+        server = TestServer(app)
+        test_client = TestClient(server)
+        await test_client.start_server()
+        try:
+            token1 = "firsttoken-000000000001"
+            await test_client.post("/session/create", json={"token": token1})
+
+            token2 = "secondtoken-00000000002"
+            resp = await test_client.post("/session/create", json={"token": token2})
+            assert resp.status == 503
+        finally:
+            await test_client.close()

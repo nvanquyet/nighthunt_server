@@ -106,11 +106,13 @@ DS_DOCKER_ENABLED=true
 DS_IMAGE_REF=ghcr.io/nvanquyet/nighthunt-ds:latest
 ADMIN_SECRET=CHANGE_ME_DS_ADMIN_SECRET
 # DS → Backend URL
-# IMPORTANT: Java reads ds.docker.backend-internal-url = env DS_DOCKER_BACKEND_INTERNAL_URL
-# Unity has "Disallow Downloads Over HTTP" ON — must use HTTPS.
+# IMPORTANT: Java reads DS_BACKEND_INTERNAL_URL
+# Unity has "Disallow Downloads Over HTTP" ON — must use HTTPS via nginx.
+DS_BACKEND_INTERNAL_URL=https://\${VPS_IP}
 DS_DOCKER_BACKEND_INTERNAL_URL=https://\${VPS_IP}
-DS_PORT_START=7777
-DS_PORT_END=7900
+# DS port pool: must NOT overlap with relay (7777-7900)
+DS_PORT_START=9000
+DS_PORT_END=9100
 DS_MAX_PLAYERS=16
 DS_MAX_MEMORY_MB=512
 
@@ -145,9 +147,36 @@ else
   echo "==> .env.production đã tồn tại — bỏ qua"
 fi
 
-# ── 6. Tạo SSH key cho GitHub Actions deploy ─────────────────────────────────
+# ── 6. Cấu hình Firewall (ufw) ──────────────────────────────────────────────
+if command -v ufw &>/dev/null; then
+  echo "==> Cấu hình firewall (ufw)..."
+  ufw --force reset
+  ufw default deny incoming
+  ufw default allow outgoing
+  # SSH — phải allow trước để không bị lock out
+  ufw allow 22/tcp   comment 'SSH'
+  # HTTP + HTTPS — nginx
+  ufw allow 80/tcp   comment 'HTTP (Let'\''s Encrypt ACME)'
+  ufw allow 443/tcp  comment 'HTTPS (nginx)'
+  # UDP relay — cross-network custom game sessions (relay_server.py)
+  ufw allow 7777:7900/udp comment 'NightHunt relay UDP game sessions'
+  # UDP DS game ports — dedicated server containers
+  ufw allow 9000:9100/udp comment 'NightHunt DS game ports'
+  # Internal ports — KEEP CLOSED externally
+  # 8080 (backend), 3306 (mysql), 6379 (redis), 3000 (dashboard), 7776 (relay mgmt)
+  ufw --force enable
+  echo "    [OK] Firewall configured"
+  ufw status verbose
+else
+  echo "==> ufw không có, bỏ qua — hãy tự cấu hình firewall:"
+  echo "    Allow 80/tcp, 443/tcp, 22/tcp"
+  echo "    Allow 7777-7900/udp  (relay)"
+  echo "    Allow 9000-9100/udp  (DS game ports)"
+  echo "    Block 8080, 3306, 6379, 3000, 7776"
+fi
+
+# ── 7. Tạo SSH key cho GitHub Actions deploy ─────────────────────────────────
 SSH_KEY_FILE="/root/.ssh/nighthunt_deploy"
-if [ ! -f "$SSH_KEY_FILE" ]; then
   echo "==> Tạo SSH deploy key..."
   ssh-keygen -t ed25519 -C "github-actions-deploy" -f "$SSH_KEY_FILE" -N ""
   cat "${SSH_KEY_FILE}.pub" >> /root/.ssh/authorized_keys
@@ -165,7 +194,7 @@ else
   echo "    Private key: $SSH_KEY_FILE"
 fi
 
-# ── 7. Tạo SSL cert (self-signed cho dev/testing) ───────────────────────────
+# ── 8. Tạo SSL cert (self-signed cho dev/testing) ───────────────────────────
 CERT_DIR="${DEPLOY_DIR}/certs"
 if [ ! -f "${CERT_DIR}/keystore.p12" ]; then
   echo "==> Tạo self-signed SSL cert..."

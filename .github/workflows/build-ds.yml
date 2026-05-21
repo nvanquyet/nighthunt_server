@@ -143,31 +143,74 @@ jobs:
 
             IMAGE_REF="${{ steps.vars.outputs.image_ref }}"
             VERSION="${{ steps.vars.outputs.version }}"
-            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" /opt/nighthunt/.env.production | cut -d= -f2)
+            DEPLOY_DIR="/opt/nighthunt"
+            ADMIN_SECRET=$(grep "^ADMIN_SECRET=" "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r')
+            BACKEND_PORT=$(grep "^SERVER_PORT=" "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r')
+            BACKEND_PORT="${BACKEND_PORT:-8080}"
+            # Always use localhost:port for VPS-local calls — no DNS, no nginx hop.
+            BACKEND_LOCAL="http://localhost:${BACKEND_PORT}"
 
-            echo "=== [1/4] Login to GHCR ==="
-            echo "$GHCR_TOKEN" | docker login ghcr.io \
-              -u "$GH_ACTOR" --password-stdin
+            echo "=== [1/5] Login to GHCR ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
 
-            echo "=== [2/4] Pull new DS image: ${IMAGE_REF} ==="
+            echo "=== [2/5] Pull new DS image: ${IMAGE_REF} ==="
             docker pull "${IMAGE_REF}"
             echo "Pull done ✓"
 
-            echo "=== [3/4] Update DS_IMAGE_REF in .env.production ==="
-            sed -i "s|^DS_IMAGE_REF=.*|DS_IMAGE_REF=${IMAGE_REF}|" \
-              /opt/nighthunt/.env.production
-            grep '^DS_IMAGE_REF=' /opt/nighthunt/.env.production
+            echo "=== [3/5] Update DS_IMAGE_REF in .env.production ==="
+            sed -i "s|^DS_IMAGE_REF=.*|DS_IMAGE_REF=${IMAGE_REF}|" "$DEPLOY_DIR/.env.production"
+            grep '^DS_IMAGE_REF=' "$DEPLOY_DIR/.env.production"
 
-            echo "=== [4/4] Notify backend Admin API ==="
-            RESP=$(curl -sf -X POST http://localhost:8080/api/admin/ds/update-image \
-              -H "Content-Type: application/json" \
-              -H "X-Admin-Secret: ${ADMIN_SECRET}" \
-              -d "{\"imageRef\":\"${IMAGE_REF}\",\"version\":\"${VERSION}\"}" \
-              || echo '{"success":false,"message":"curl failed"}')
-            echo "Backend response: ${RESP}"
-            echo "${RESP}" | grep -q '"success":true' \
-              && echo "✅ Backend updated to ${IMAGE_REF}" \
-              || { echo "⚠️  Unexpected backend response: ${RESP}"; exit 1; }
+            echo "=== [4/5] Wait for backend to be healthy (max 90s) ==="
+            # deploy.yml may be restarting the backend concurrently on a [ds_build] push.
+            # Retry until /actuator/health returns UP, then proceed to notify.
+            BACKEND_UP=false
+            for i in $(seq 1 18); do
+              STATUS=$(curl -s --max-time 3 "${BACKEND_LOCAL}/api/actuator/health" \
+                | grep -o '"status":"[A-Z]*"' | head -1 || true)
+              if [ "$STATUS" = '"status":"UP"' ]; then
+                echo "Backend UP after ${i}×5s ✓"
+                BACKEND_UP=true
+                break
+              fi
+              echo "  Attempt $i/18 — backend not ready ($STATUS), waiting 5s..."
+              sleep 5
+            done
+            if [ "$BACKEND_UP" != "true" ]; then
+              echo "⚠️  Backend did not become healthy in 90s — skipping in-memory notify"
+              echo "    DS_IMAGE_REF already updated in .env.production ✓"
+              echo "    Backend will pick up the new image on next restart."
+              exit 0
+            fi
+
+            echo "=== [5/5] Notify backend Admin API (with retry) ==="
+            # Update in-memory currentImageRef so the NEXT DS spawn uses the new image immediately.
+            # Fall back gracefully if the API is temporarily unavailable.
+            MAX_TRIES=3
+            for attempt in $(seq 1 $MAX_TRIES); do
+              HTTP_CODE=$(curl -s -o /tmp/ds_notify_resp.json -w "%{http_code}" \
+                --max-time 10 \
+                -X POST "${BACKEND_LOCAL}/api/admin/ds/update-image" \
+                -H "Content-Type: application/json" \
+                -H "X-Admin-Secret: ${ADMIN_SECRET}" \
+                -d "{\"imageRef\":\"${IMAGE_REF}\",\"version\":\"${VERSION}\"}" \
+                || echo "000")
+              RESP=$(cat /tmp/ds_notify_resp.json 2>/dev/null || echo "{}")
+              echo "Attempt $attempt — HTTP ${HTTP_CODE}: ${RESP}"
+              if [ "${HTTP_CODE}" = "200" ] && echo "${RESP}" | grep -q '"success":true'; then
+                echo "✅ Backend in-memory image ref updated → ${IMAGE_REF}"
+                break
+              fi
+              if [ "$attempt" -lt "$MAX_TRIES" ]; then
+                echo "  Retrying in 5s..."
+                sleep 5
+              else
+                echo "⚠️  Backend notify failed after ${MAX_TRIES} attempts."
+                echo "    DS_IMAGE_REF already persisted in .env.production ✓"
+                echo "    Backend will use the new image on next restart."
+                # Non-fatal: .env.production is already updated. Do not exit 1.
+              fi
+            done
 
       - name: Push DS git tag
         run: |
