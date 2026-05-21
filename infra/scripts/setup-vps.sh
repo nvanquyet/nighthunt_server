@@ -46,9 +46,23 @@ mkdir -p "$DEPLOY_DIR/certs"
 echo "    [OK] $DEPLOY_DIR"
 
 # ── 4. Copy docker-compose.yml từ repo ──────────────────────────────────────
-echo "==> Download docker-compose.yml..."
-curl -fsSL "${RAW_URL}/docker-compose.yml" -o "${DEPLOY_DIR}/docker-compose.yml"
-echo "    [OK] docker-compose.yml"
+echo "==> Copy docker-compose.yml..."
+# Detect if running from inside the cloned repo (local / VPS with git clone).
+# Falls back to authenticated GitHub download when piped via curl | bash.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." 2>/dev/null && pwd)" || REPO_ROOT=""
+if [ -f "${REPO_ROOT}/docker-compose.yml" ]; then
+  cp "${REPO_ROOT}/docker-compose.yml" "${DEPLOY_DIR}/docker-compose.yml"
+  echo "    [OK] docker-compose.yml (local copy)"
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  curl -fsSL -H "Authorization: token ${GITHUB_TOKEN}" \
+    "${RAW_URL}/docker-compose.yml" -o "${DEPLOY_DIR}/docker-compose.yml"
+  echo "    [OK] docker-compose.yml (downloaded)"
+else
+  echo "    [WARN] Cannot find docker-compose.yml locally and GITHUB_TOKEN not set."
+  echo "           Copy it manually: scp docker-compose.yml ${DEPLOY_DIR}/"
+  echo "           Or re-run with: GITHUB_TOKEN=<pat> bash setup-vps.sh"
+fi
 
 # ── 5. Tạo .env.production nếu chưa có ──────────────────────────────────────
 ENV_FILE="${DEPLOY_DIR}/.env.production"
