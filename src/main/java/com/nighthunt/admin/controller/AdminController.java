@@ -468,6 +468,114 @@ public class AdminController {
         return ResponseEntity.ok(pageResponse(content, matchPage));
     }
 
+    // ── Force Cleanup ─────────────────────────────────────────────────────────
+
+    /**
+     * POST /admin/cleanup-stale-data
+     *
+     * One-shot cleanup: closes all rooms/matches with no live players/sessions.
+     * Safe to run in production — does NOT delete users or match history.
+     * Requires X-Admin-Secret + X-Root-Admin: true headers.
+     */
+    @PostMapping("/cleanup-stale-data")
+    @org.springframework.transaction.annotation.Transactional
+    public ResponseEntity<Map<String, Object>> cleanupStaleData(
+            @RequestHeader(value = "X-Admin-Secret", required = false) String secret,
+            @RequestHeader(value = "X-Root-Admin",   required = false) String rootFlag) {
+
+        checkSecret(secret);
+        if (!"true".equalsIgnoreCase(rootFlag)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Root admin access required");
+        }
+
+        log.warn("[Admin] Force cleanup-stale-data triggered");
+
+        int roomsClosed      = 0;
+        int playersEvicted   = 0;
+        int matchesFixed     = 0;
+        int redisKeysRemoved = 0;
+
+        // ── 1. Close WAITING/IN_GAME rooms where NO player has an active session ──
+        List<Room> activeRooms = new ArrayList<>(roomRepository.findByStatus(GameConstants.ROOM_STATUS_WAITING));
+        activeRooms.addAll(roomRepository.findByStatus(GameConstants.ROOM_STATUS_IN_GAME));
+
+        for (Room room : activeRooms) {
+            List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+
+            if (players.isEmpty()) {
+                room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+                roomRepository.save(room);
+                roomsClosed++;
+                continue;
+            }
+
+            boolean anyOnline = players.stream()
+                    .anyMatch(rp -> isUserOnline(rp.getUserId()));
+
+            if (!anyOnline) {
+                log.warn("[Cleanup] Closing room {} (code={}, status={}) — {} players, none online",
+                        room.getId(), room.getRoomCode(), room.getStatus(), players.size());
+                room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+                roomRepository.save(room);
+                playersEvicted += players.size();
+                roomPlayerRepository.deleteAll(players);
+                roomsClosed++;
+
+                // Clear Redis room-state key
+                String roomStateKey = GameConstants.REDIS_KEY_ROOM_STATE_PREFIX + room.getId();
+                try {
+                    if (Boolean.TRUE.equals(redisTemplate.delete(roomStateKey))) redisKeysRemoved++;
+                } catch (Exception ignored) {}
+            }
+        }
+
+        // ── 2. Fix matches stuck in LOBBY or IN_GAME ──────────────────────────
+        List<Match> staleMatches = new ArrayList<>(matchRepository.findByStatus(GameConstants.MATCH_STATUS_LOBBY));
+        staleMatches.addAll(matchRepository.findByStatus(GameConstants.MATCH_STATUS_IN_GAME));
+
+        for (Match match : staleMatches) {
+            boolean roomActive = roomRepository.findById(match.getRoomId())
+                    .map(r -> GameConstants.ROOM_STATUS_WAITING.equals(r.getStatus())
+                            || GameConstants.ROOM_STATUS_IN_GAME.equals(r.getStatus()))
+                    .orElse(false);
+
+            if (!roomActive) {
+                log.warn("[Cleanup] Force-finishing stale match {} (status={})",
+                        match.getMatchId(), match.getStatus());
+                match.setStatus(GameConstants.MATCH_STATUS_FINISHED);
+                match.setEndReason("ABANDONED_CLEANUP");
+                if (match.getFinishedAt() == null) match.setFinishedAt(LocalDateTime.now());
+                matchRepository.save(match);
+
+                // Clear Redis match-session and match-presence keys
+                try {
+                    String msKey = GameConstants.REDIS_KEY_MATCH_SESSION_PREFIX + match.getMatchId();
+                    String mpKey = GameConstants.REDIS_KEY_MATCH_PRESENCE_PREFIX + match.getMatchId();
+                    if (Boolean.TRUE.equals(redisTemplate.delete(msKey))) redisKeysRemoved++;
+                    if (Boolean.TRUE.equals(redisTemplate.delete(mpKey))) redisKeysRemoved++;
+                } catch (Exception ignored) {}
+
+                matchesFixed++;
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success",        true);
+        result.put("roomsClosed",    roomsClosed);
+        result.put("playersEvicted", playersEvicted);
+        result.put("matchesFixed",   matchesFixed);
+        result.put("redisKeysRemoved", redisKeysRemoved);
+        result.put("executedAt",     LocalDateTime.now().toString());
+        log.warn("[Admin] Force cleanup done: rooms={}, players={}, matches={}, redis={}",
+                roomsClosed, playersEvicted, matchesFixed, redisKeysRemoved);
+
+        activityService.log(null, "admin", UserActivityLog.BAN,
+                String.format("Force cleanup: rooms=%d players=%d matches=%d redis=%d",
+                        roomsClosed, playersEvicted, matchesFixed, redisKeysRemoved), null);
+
+        return ResponseEntity.ok(result);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, Object> userToMap(User u) {
