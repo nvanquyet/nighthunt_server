@@ -304,9 +304,8 @@ public class WebSocketEventSubscriber {
         // Party status changed (IDLE → QUEUING → IN_MATCH etc.)
         messageBroker.subscribe(MessageTopics.PARTY_STATUS_CHANGED, this::handlePartyStatusChanged);
 
-        // Party invitation expired
-        messageBroker.subscribe(MessageTopics.PARTY_INVITATION_EXPIRED, this::handlePartyInvitationExpired);
-        
+        // NOTE: PARTY_INVITATION_EXPIRED is already subscribed above — do NOT add it again here.
+
         log.info("Subscribed to party system events");
     }
 
