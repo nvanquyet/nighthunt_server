@@ -576,6 +576,106 @@ public class AdminController {
         return ResponseEntity.ok(result);
     }
 
+    // ── DB Stats (for database monitor page) ──────────────────────────────────
+
+    /**
+     * GET /admin/db-stats
+     * Returns aggregated counts for the database monitor dashboard page.
+     */
+    @GetMapping("/db-stats")
+    public ResponseEntity<Map<String, Object>> getDbStats(
+            @RequestHeader(value = "X-Admin-Secret", required = false) String secret) {
+        checkSecret(secret);
+
+        // Rooms by status
+        Map<String, Long> roomsByStatus = new LinkedHashMap<>();
+        for (Object[] row : roomRepository.countGroupedByStatus()) {
+            roomsByStatus.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
+        }
+
+        // Matches by status
+        Map<String, Long> matchesByStatus = new LinkedHashMap<>();
+        for (Match m : matchRepository.findAll()) {
+            matchesByStatus.merge(m.getStatus(), 1L, Long::sum);
+        }
+
+        // Stale rooms: WAITING/IN_GAME with zero room_players
+        long staleRooms = 0;
+        List<Room> activeRooms = new ArrayList<>(roomRepository.findByStatus(GameConstants.ROOM_STATUS_WAITING));
+        activeRooms.addAll(roomRepository.findByStatus(GameConstants.ROOM_STATUS_IN_GAME));
+        for (Room r : activeRooms) {
+            if (roomPlayerRepository.countByRoomId(r.getId()) == 0) staleRooms++;
+        }
+
+        // Rooms with players but no one online
+        long ghostRooms = 0;
+        for (Room r : activeRooms) {
+            List<com.nighthunt.room.entity.RoomPlayer> players = roomPlayerRepository.findByRoomId(r.getId());
+            if (!players.isEmpty() && players.stream().noneMatch(rp -> isUserOnline(rp.getUserId()))) {
+                ghostRooms++;
+            }
+        }
+
+        // Stuck matches: LOBBY or IN_GAME > 2 hours
+        LocalDateTime twoHoursAgo = LocalDateTime.now().minusHours(2);
+        long stuckMatches = matchRepository.findByStatus(GameConstants.MATCH_STATUS_LOBBY).stream()
+                .filter(m -> m.getCreatedAt() != null && m.getCreatedAt().isBefore(twoHoursAgo)).count()
+                + matchRepository.findByStatus(GameConstants.MATCH_STATUS_IN_GAME).stream()
+                .filter(m -> m.getCreatedAt() != null && m.getCreatedAt().isBefore(twoHoursAgo)).count();
+
+        // Online sessions
+        long onlineSessions = countOnlineUsers();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("roomsByStatus",   roomsByStatus);
+        result.put("matchesByStatus", matchesByStatus);
+        result.put("staleRooms",      staleRooms);
+        result.put("ghostRooms",      ghostRooms);
+        result.put("stuckMatches",    stuckMatches);
+        result.put("onlineSessions",  onlineSessions);
+        result.put("totalRoomPlayers", roomPlayerRepository.count());
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * GET /admin/rooms/all?status=&page=&size=
+     * Paginated room browser — all statuses, sorted newest first.
+     */
+    @GetMapping("/rooms/all")
+    public ResponseEntity<Map<String, Object>> getAllRooms(
+            @RequestHeader(value = "X-Admin-Secret", required = false) String secret,
+            @RequestParam(defaultValue = "0")    int    page,
+            @RequestParam(defaultValue = "20")   int    size,
+            @RequestParam(required = false)      String status) {
+        checkSecret(secret);
+
+        org.springframework.data.domain.Pageable pageable =
+                org.springframework.data.domain.PageRequest.of(page, size);
+        org.springframework.data.domain.Page<Room> roomPage =
+                roomRepository.findFiltered(status != null && !status.isEmpty() ? status : null, pageable);
+
+        List<Map<String, Object>> content = roomPage.getContent().stream().map(room -> {
+            int playerCount = roomPlayerRepository.countByRoomId(room.getId());
+            boolean anyOnline = playerCount > 0 && roomPlayerRepository.findByRoomId(room.getId())
+                    .stream().anyMatch(rp -> isUserOnline(rp.getUserId()));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id",          room.getId());
+            m.put("roomCode",    room.getRoomCode());
+            m.put("status",      room.getStatus());
+            m.put("mode",        room.getMode());
+            m.put("isPublic",    room.getIsPublic());
+            m.put("ownerId",     room.getOwnerId());
+            m.put("ownerName",   userRepository.findById(room.getOwnerId())
+                    .map(u -> u.getUsername()).orElse("?"));
+            m.put("playerCount", playerCount);
+            m.put("anyOnline",   anyOnline);
+            m.put("createdAt",   room.getCreatedAt());
+            return m;
+        }).collect(Collectors.toList());
+
+        return ResponseEntity.ok(pageResponse(content, roomPage));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, Object> userToMap(User u) {
