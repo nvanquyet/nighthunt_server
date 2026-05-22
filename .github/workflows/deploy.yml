@@ -266,6 +266,10 @@ jobs:
               exit 1
             fi
 
+            echo "=== Build/start dashboard in compose project: $COMPOSE_PROJECT_NAME ==="
+            remove_if_wrong_project nighthunt-dashboard
+            compose up -d --no-deps --build dashboard
+
             echo "=== Ensure nginx reverse proxy is in compose project: $COMPOSE_PROJECT_NAME ==="
             remove_if_wrong_project nighthunt-nginx
             compose up -d --no-deps nginx

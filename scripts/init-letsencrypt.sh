@@ -78,12 +78,14 @@ if [ "$STAGING" = "1" ]; then
     warn "STAGING mode — certificate won't be trusted by browsers (for testing only)"
 fi
 
-info "Requesting Let's Encrypt certificate for ${DOMAIN} and www.${DOMAIN}..."
+info "Requesting Let's Encrypt certificate for ${DOMAIN}, www.${DOMAIN} and dashboard.${DOMAIN}..."
 $COMPOSE run --rm --entrypoint "certbot certonly --webroot \
     -w /var/www/certbot \
     $STAGING_FLAG \
     -d ${DOMAIN} \
     -d www.${DOMAIN} \
+    -d dashboard.${DOMAIN} \
+    -d db.${DOMAIN} \
     --email ${EMAIL} \
     --rsa-key-size 4096 \
     --agree-tos \
