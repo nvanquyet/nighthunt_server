@@ -139,11 +139,63 @@ async function loadMapsConfig() {
         <button class="btn btn-xs" onclick="$('zone-editor-panel').style.display='none'" style="background:transparent;color:var(--text-muted,#888)">&#10005; Close</button>
       </div>
       <div class="card-body">
-        <p class="text-xs text-muted mb-sm">Edit the full <code>SafeZoneMatchConfig</code> JSON. DS fetches this on boot via <code>GET /api/maps/{mapId}/zone-config</code>.</p>
-        <textarea id="zone-config-json" class="form-control" rows="18" style="font-family:monospace;font-size:12px;resize:vertical"></textarea>
-        <div style="margin-top:8px;display:flex;gap:8px">
-          <button class="btn btn-success btn-sm" onclick="saveZoneConfig()">&#128190; Save Zone Config</button>
-          <button class="btn btn-xs" onclick="formatZoneJson()" style="background:var(--bg-card,#1e293b);color:var(--text-muted,#888);border:1px solid var(--border,#334)">&#128472; Format JSON</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px">
+            <div class="text-xs" style="color:var(--text-muted,#888);margin-bottom:8px;font-weight:600;text-transform:uppercase">&#127760; Zone Shape</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="form-group"><label class="form-label text-xs">Initial Radius</label><input type="number" id="zc-initialRadius" step="1" min="0" class="form-control sm" style="width:100%"></div>
+              <div class="form-group"><label class="form-label text-xs">Final Min Radius</label><input type="number" id="zc-finalZoneMinRadius" step="1" min="0" class="form-control sm" style="width:100%"></div>
+            </div>
+          </div>
+          <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px">
+            <div class="text-xs" style="color:var(--text-muted,#888);margin-bottom:8px;font-weight:600;text-transform:uppercase">&#127919; Center Mode</div>
+            <div class="form-group" style="margin-bottom:8px"><label class="form-label text-xs">Mode</label>
+              <select id="zc-centerMode" class="form-control sm" style="width:100%">
+                <option value="PureRandom">PureRandom — PUBG-style (random within prev zone)</option>
+                <option value="CenterBiased">CenterBiased — biased toward map center</option>
+                <option value="Fixed">Fixed — no movement (1v1 arenas)</option>
+              </select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="form-group"><label class="form-label text-xs">Max Shift <span class="text-muted">(0–1)</span></label><input type="number" id="zc-maxCenterShiftPercent" step="0.05" min="0" max="1" class="form-control sm" style="width:100%"></div>
+              <div class="form-group"><label class="form-label text-xs">Min Shift <span class="text-muted">(0–1)</span></label><input type="number" id="zc-minCenterShiftPercent" step="0.05" min="0" max="1" class="form-control sm" style="width:100%"></div>
+            </div>
+          </div>
+          <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px">
+            <div class="text-xs" style="color:var(--text-muted,#888);margin-bottom:8px;font-weight:600;text-transform:uppercase">&#128055; Respawn</div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="zc-beaconAllowedInFinalZone">
+              <span class="text-sm">Beacon Allowed in Final Zone</span>
+            </label>
+          </div>
+          <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px">
+            <div class="text-xs" style="color:var(--text-muted,#888);margin-bottom:8px;font-weight:600;text-transform:uppercase">&#127942; Scoring</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="form-group"><label class="form-label text-xs">Survival pts/s</label><input type="number" id="zc-baseSurvivalPtsPerSecond" step="0.1" min="0" class="form-control sm" style="width:100%"></div>
+              <div class="form-group"><label class="form-label text-xs">Capture zone pts/s</label><input type="number" id="zc-captureZoneScorePerSecond" step="0.5" min="0" class="form-control sm" style="width:100%"></div>
+              <div class="form-group"><label class="form-label text-xs">Kill score</label><input type="number" id="zc-killScore" step="1" min="0" class="form-control sm" style="width:100%"></div>
+              <div class="form-group"><label class="form-label text-xs">Boss kill score</label><input type="number" id="zc-bossKillScore" step="1" min="0" class="form-control sm" style="width:100%"></div>
+              <div class="form-group" style="grid-column:span 2"><label class="form-label text-xs">Kill steal % — final zone <span class="text-muted">(0–1)</span></label><input type="number" id="zc-killScoreStealPercent" step="0.01" min="0" max="1" class="form-control sm" style="width:100%"></div>
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <span class="text-xs" style="color:var(--text-muted,#888);font-weight:600;text-transform:uppercase">&#127384; Phases</span>
+            <button class="btn btn-xs btn-success" onclick="addZonePhase()">&#10133; Add Phase</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Start R</th><th>End R</th><th>Wait (s)</th><th>Shrink (s)</th>
+                <th>DMG/s</th><th>Tick (s)</th><th class="col-center">Score Bonus</th><th>Bonus Mult</th><th>Min R Override</th><th></th>
+              </tr></thead>
+              <tbody id="zc-phases-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <button class="btn btn-success" onclick="saveZoneConfig()">&#128190; Save Zone Config</button>
         </div>
       </div>
     </div>
@@ -213,47 +265,113 @@ async function addMap() {
 
 /* ── Zone Config Editor ─────────────────────────────────────────────────── */
 let _zoneEditorMapId = null;
+let _zonePhases      = [];
+
+function _zcEl(id)          { return document.getElementById(id); }
+function _zcNum(id, def=0)  { const v = parseFloat(_zcEl(id)?.value); return isNaN(v) ? def : v; }
+function _zcBool(id)        { return !!_zcEl(id)?.checked; }
+function _zcStr(id, def='') { return _zcEl(id)?.value ?? def; }
 
 async function openZoneEditor(mapId) {
   _zoneEditorMapId = mapId;
-  $('zone-editor-mapid').textContent = mapId;
-  $('zone-config-json').value = 'Loading…';
+  _zcEl('zone-editor-mapid').textContent = mapId;
   $('zone-editor-panel').style.display = '';
   $('zone-editor-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let cfg = {};
   try {
     const resp = await fetch(`/api/maps/${encodeURIComponent(mapId)}/zone-config`, {
       headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nh_token') || '') }
     });
-    if (resp.status === 204 || resp.status === 404) {
-      $('zone-config-json').value = '{}';
-    } else {
-      const json = await resp.json();
-      $('zone-config-json').value = JSON.stringify(json, null, 2);
-    }
-  } catch (e) {
-    $('zone-config-json').value = '{}';
-  }
+    if (resp.ok && resp.status !== 204) cfg = await resp.json();
+  } catch (_) {}
+
+  _zcEl('zc-initialRadius').value           = cfg.initialRadius           ?? 400;
+  _zcEl('zc-finalZoneMinRadius').value       = cfg.finalZoneMinRadius       ?? 25;
+  _zcEl('zc-centerMode').value              = cfg.centerMode              || 'PureRandom';
+  _zcEl('zc-maxCenterShiftPercent').value   = cfg.maxCenterShiftPercent   ?? 0.6;
+  _zcEl('zc-minCenterShiftPercent').value   = cfg.minCenterShiftPercent   ?? 0.1;
+  _zcEl('zc-beaconAllowedInFinalZone').checked = cfg.beaconAllowedInFinalZone ?? false;
+  _zcEl('zc-baseSurvivalPtsPerSecond').value  = cfg.baseSurvivalPtsPerSecond  ?? 1;
+  _zcEl('zc-captureZoneScorePerSecond').value = cfg.captureZoneScorePerSecond ?? 20;
+  _zcEl('zc-killScore').value               = cfg.killScore               ?? 100;
+  _zcEl('zc-bossKillScore').value           = cfg.bossKillScore           ?? 300;
+  _zcEl('zc-killScoreStealPercent').value   = cfg.killScoreStealPercent   ?? 0.15;
+
+  _zonePhases = (cfg.phases || []).map(p => ({ ...p }));
+  _renderZonePhases();
+}
+
+function _renderZonePhases() {
+  const tbody = _zcEl('zc-phases-body');
+  if (!tbody) return;
+  tbody.innerHTML = _zonePhases.map((p, i) => `
+    <tr>
+      <td><span class="badge badge-muted">${i}</span></td>
+      <td><input type="number" id="zcp-sr-${i}"  value="${p.startRadius  ?? 0}"  step="1"    min="0" class="form-control sm" style="width:68px"></td>
+      <td><input type="number" id="zcp-er-${i}"  value="${p.endRadius    ?? 0}"  step="1"    min="0" class="form-control sm" style="width:68px"></td>
+      <td><input type="number" id="zcp-wbs-${i}" value="${p.waitBeforeShrink ?? 60}" step="5" min="0" class="form-control sm" style="width:62px"></td>
+      <td><input type="number" id="zcp-sd-${i}"  value="${p.shrinkDuration ?? 90}" step="5"  min="0" class="form-control sm" style="width:62px"></td>
+      <td><input type="number" id="zcp-dps-${i}" value="${p.damagePerSecond ?? 5}" step="0.5" min="0" class="form-control sm" style="width:58px"></td>
+      <td><input type="number" id="zcp-dt-${i}"  value="${p.damageTick   ?? 1}"  step="0.5" min="0" class="form-control sm" style="width:52px"></td>
+      <td class="col-center"><input type="checkbox" id="zcp-sbz-${i}" ${p.isScoreBonusZone ? 'checked' : ''}></td>
+      <td><input type="number" id="zcp-bm-${i}"  value="${p.zoneBonusMultiplier ?? 1.5}" step="0.1" min="1" class="form-control sm" style="width:58px"></td>
+      <td><input type="number" id="zcp-mro-${i}" value="${p.minRadiusOverride ?? 0}" step="1" min="0" class="form-control sm" style="width:68px" title="0 = use global finalZoneMinRadius"></td>
+      <td><button class="btn btn-xs" style="background:#dc2626;color:#fff" onclick="removeZonePhase(${i})">&#10005;</button></td>
+    </tr>`).join('');
+}
+
+function addZonePhase() {
+  const last = _zonePhases[_zonePhases.length - 1];
+  _zonePhases.push({
+    zoneIndex: _zonePhases.length,
+    startRadius: last ? (last.endRadius ?? 50) : 100,
+    endRadius:   last ? Math.max(5, (last.endRadius ?? 50) - 25) : 50,
+    waitBeforeShrink: 60, shrinkDuration: 90,
+    damagePerSecond: 5, damageTick: 1,
+    isScoreBonusZone: false, zoneBonusMultiplier: 1.5, minRadiusOverride: 0
+  });
+  _renderZonePhases();
+}
+
+function removeZonePhase(idx) {
+  _zonePhases.splice(idx, 1);
+  _zonePhases.forEach((p, i) => { p.zoneIndex = i; });
+  _renderZonePhases();
 }
 
 async function saveZoneConfig() {
   if (!_zoneEditorMapId) return;
-  let parsed;
+  const phases = _zonePhases.map((_, i) => ({
+    zoneIndex:         i,
+    startRadius:       _zcNum(`zcp-sr-${i}`),
+    endRadius:         _zcNum(`zcp-er-${i}`),
+    waitBeforeShrink:  _zcNum(`zcp-wbs-${i}`, 60),
+    shrinkDuration:    _zcNum(`zcp-sd-${i}`, 90),
+    damagePerSecond:   _zcNum(`zcp-dps-${i}`, 5),
+    damageTick:        _zcNum(`zcp-dt-${i}`, 1),
+    isScoreBonusZone:  _zcBool(`zcp-sbz-${i}`),
+    zoneBonusMultiplier: _zcNum(`zcp-bm-${i}`, 1.5),
+    minRadiusOverride: _zcNum(`zcp-mro-${i}`)
+  }));
+  const payload = {
+    initialRadius:            _zcNum('zc-initialRadius', 400),
+    finalZoneMinRadius:       _zcNum('zc-finalZoneMinRadius', 25),
+    centerMode:               _zcStr('zc-centerMode', 'PureRandom'),
+    maxCenterShiftPercent:    _zcNum('zc-maxCenterShiftPercent', 0.6),
+    minCenterShiftPercent:    _zcNum('zc-minCenterShiftPercent', 0.1),
+    beaconAllowedInFinalZone: _zcBool('zc-beaconAllowedInFinalZone'),
+    baseSurvivalPtsPerSecond: _zcNum('zc-baseSurvivalPtsPerSecond', 1),
+    captureZoneScorePerSecond:_zcNum('zc-captureZoneScorePerSecond', 20),
+    killScore:                _zcNum('zc-killScore', 100),
+    bossKillScore:            _zcNum('zc-bossKillScore', 300),
+    killScoreStealPercent:    _zcNum('zc-killScoreStealPercent', 0.15),
+    phases
+  };
   try {
-    parsed = JSON.parse($('zone-config-json').value);
-  } catch (e) {
-    showAlert('Invalid JSON: ' + e.message, 'error'); return;
-  }
-  try {
-    await api('PATCH', `/api/admin/config/maps/${_zoneEditorMapId}/zone`, parsed);
+    await api('PATCH', `/api/admin/config/maps/${_zoneEditorMapId}/zone`, payload);
     showAlert(`Zone config for "${_zoneEditorMapId}" saved`, 'success');
   } catch (e) { showAlert(e.message, 'error'); }
-}
-
-function formatZoneJson() {
-  try {
-    const parsed = JSON.parse($('zone-config-json').value);
-    $('zone-config-json').value = JSON.stringify(parsed, null, 2);
-  } catch (e) { showAlert('Invalid JSON: ' + e.message, 'error'); }
 }
 
 /* ── Runtime Config ─────────────────────────────────────────────────────── */
