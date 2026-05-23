@@ -139,6 +139,15 @@ async function loadMapsConfig() {
         <button class="btn btn-xs" onclick="$('zone-editor-panel').style.display='none'" style="background:transparent;color:var(--text-muted,#888)">&#10005; Close</button>
       </div>
       <div class="card-body">
+        <div style="background:var(--bg-darker,#0f172a);border-left:3px solid var(--accent-blue,#2563eb);border-radius:4px;padding:10px 12px;margin-bottom:12px;font-size:11.5px;color:var(--text-muted,#888);line-height:1.75">
+          <strong style="color:var(--text-main,#e2e8f0)">Cách hoạt động:</strong> Mỗi <strong>Phase = 1 vòng zone</strong>. Phase 0 = zone lớn nhất (đầu game), tăng dần. <strong>Radius đầu → cuối</strong> = bán kính thu nhỏ. <strong>Chờ</strong> = giây trước khi bắt đầu thu. <strong>Thu nhỏ</strong> = giây zone thu xong. Damage chỉ áp cho người <em>ngoài</em> zone. Khi save, tự động sắp xếp lại theo Radius lớn → nhỏ.<br>
+          <strong style="color:var(--text-main,#e2e8f0)">CenterMode:</strong> <em>PureRandom</em> = tâm zone mới random trong vùng zone cũ (PUBG-style). <em>CenterBiased</em> = nghiêng về tâm map. <em>Fixed</em> = tâm cố định (1v1 arena). <strong>maxShift/minShift</strong> = khoảng % bán kính zone hiện tại mà tâm zone tiếp theo được phép dịch chuyển (0.6 = tối đa 60% radius).
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <span class="text-xs" style="color:var(--text-muted,#888);font-weight:600">Preset nhanh:</span>
+          <button class="btn btn-xs" style="background:var(--accent-blue,#2563eb);color:#fff" onclick="_loadZonePreset('standard5')">&#127918; Standard 5-zone (4v4)</button>
+          <button class="btn btn-xs" style="background:#7c3aed;color:#fff" onclick="_loadZonePreset('small3')">&#9876; Small 3-zone (1v1)</button>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div style="background:var(--bg-darker,#0f172a);border:1px solid var(--border,#334);border-radius:6px;padding:12px">
             <div class="text-xs" style="color:var(--text-muted,#888);margin-bottom:8px;font-weight:600;text-transform:uppercase">&#127760; Zone Shape</div>
@@ -187,8 +196,17 @@ async function loadMapsConfig() {
           <div class="table-wrap">
             <table>
               <thead><tr>
-                <th>#</th><th>Start R</th><th>End R</th><th>Wait (s)</th><th>Shrink (s)</th>
-                <th>DMG/s</th><th>Tick (s)</th><th class="col-center">Score Bonus</th><th>Bonus Mult</th><th>Min R Override</th><th></th>
+                <th title="Phase 0 = zone lớn nhất (đầu game). Tự sort khi save.">#</th>
+                <th title="Bán kính zone lúc bắt đầu phase (world-units)">Radius đầu</th>
+                <th title="Bán kính sau khi thu nhỏ xong">Radius cuối</th>
+                <th title="Giây chờ ở kích thước đầu trước khi thu nhỏ">Chờ (s)</th>
+                <th title="Giây để zone thu nhỏ từ Radius đầu → Radius cuối">Thu nhỏ (s)</th>
+                <th title="Damage/giây cho người ngoài zone. 0 = không damage">DMG/s</th>
+                <th title="Áp dụng damage mỗi N giây">Tick (s)</th>
+                <th class="col-center" title="Người trong zone nhận hệ số điểm bonus">Score Bonus</th>
+                <th title="Hệ số nhân điểm survival khi trong zone (chỉ dùng khi Score Bonus = ✓)">Bonus ×</th>
+                <th title="Override bán kính min cho phase này. 0 = dùng finalZoneMinRadius toàn cục">Min R</th>
+                <th></th>
               </tr></thead>
               <tbody id="zc-phases-body"></tbody>
             </table>
@@ -322,13 +340,15 @@ function _renderZonePhases() {
 }
 
 function addZonePhase() {
-  const last = _zonePhases[_zonePhases.length - 1];
+  // New phase defaults to outer zone (larger radius) — auto-sorted to front on save
+  const maxStart = _zonePhases.reduce((m, p) => Math.max(m, p.startRadius ?? 0), 0);
+  const newStart = maxStart > 0 ? Math.round(maxStart * 1.5) : 400;
+  const newEnd   = maxStart > 0 ? maxStart : 200;
   _zonePhases.push({
     zoneIndex: _zonePhases.length,
-    startRadius: last ? (last.endRadius ?? 50) : 100,
-    endRadius:   last ? Math.max(5, (last.endRadius ?? 50) - 25) : 50,
-    waitBeforeShrink: 60, shrinkDuration: 90,
-    damagePerSecond: 5, damageTick: 1,
+    startRadius: newStart, endRadius: newEnd,
+    waitBeforeShrink: 120, shrinkDuration: 180,
+    damagePerSecond: 0, damageTick: 1,
     isScoreBonusZone: false, zoneBonusMultiplier: 1.5, minRadiusOverride: 0
   });
   _renderZonePhases();
@@ -340,10 +360,53 @@ function removeZonePhase(idx) {
   _renderZonePhases();
 }
 
+const _ZONE_PRESETS = {
+  standard5: {
+    initialRadius: 400, finalZoneMinRadius: 10, centerMode: 'PureRandom',
+    maxCenterShiftPercent: 0.6, minCenterShiftPercent: 0.1, beaconAllowedInFinalZone: false,
+    baseSurvivalPtsPerSecond: 1, captureZoneScorePerSecond: 20, killScore: 100, bossKillScore: 300, killScoreStealPercent: 0.15,
+    phases: [
+      { startRadius:400, endRadius:200, waitBeforeShrink:120, shrinkDuration:180, damagePerSecond:0,  damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:0 },
+      { startRadius:200, endRadius:100, waitBeforeShrink:90,  shrinkDuration:120, damagePerSecond:3,  damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:0 },
+      { startRadius:100, endRadius:50,  waitBeforeShrink:60,  shrinkDuration:90,  damagePerSecond:8,  damageTick:1, isScoreBonusZone:true,  zoneBonusMultiplier:2.0, minRadiusOverride:0 },
+      { startRadius:50,  endRadius:25,  waitBeforeShrink:45,  shrinkDuration:60,  damagePerSecond:15, damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:0 },
+      { startRadius:25,  endRadius:10,  waitBeforeShrink:30,  shrinkDuration:30,  damagePerSecond:25, damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:10 }
+    ]
+  },
+  small3: {
+    initialRadius: 200, finalZoneMinRadius: 10, centerMode: 'Fixed',
+    maxCenterShiftPercent: 0.3, minCenterShiftPercent: 0.05, beaconAllowedInFinalZone: false,
+    baseSurvivalPtsPerSecond: 2, captureZoneScorePerSecond: 30, killScore: 150, bossKillScore: 400, killScoreStealPercent: 0.2,
+    phases: [
+      { startRadius:200, endRadius:100, waitBeforeShrink:60, shrinkDuration:90, damagePerSecond:5,  damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:0 },
+      { startRadius:100, endRadius:50,  waitBeforeShrink:45, shrinkDuration:60, damagePerSecond:10, damageTick:1, isScoreBonusZone:true,  zoneBonusMultiplier:2.0, minRadiusOverride:0 },
+      { startRadius:50,  endRadius:10,  waitBeforeShrink:30, shrinkDuration:30, damagePerSecond:20, damageTick:1, isScoreBonusZone:false, zoneBonusMultiplier:1.5, minRadiusOverride:10 }
+    ]
+  }
+};
+
+function _loadZonePreset(name) {
+  const cfg = _ZONE_PRESETS[name];
+  if (!cfg) return;
+  _zcEl('zc-initialRadius').value            = cfg.initialRadius;
+  _zcEl('zc-finalZoneMinRadius').value        = cfg.finalZoneMinRadius;
+  _zcEl('zc-centerMode').value               = cfg.centerMode;
+  _zcEl('zc-maxCenterShiftPercent').value    = cfg.maxCenterShiftPercent;
+  _zcEl('zc-minCenterShiftPercent').value    = cfg.minCenterShiftPercent;
+  _zcEl('zc-beaconAllowedInFinalZone').checked = cfg.beaconAllowedInFinalZone;
+  _zcEl('zc-baseSurvivalPtsPerSecond').value  = cfg.baseSurvivalPtsPerSecond;
+  _zcEl('zc-captureZoneScorePerSecond').value = cfg.captureZoneScorePerSecond;
+  _zcEl('zc-killScore').value                = cfg.killScore;
+  _zcEl('zc-bossKillScore').value            = cfg.bossKillScore;
+  _zcEl('zc-killScoreStealPercent').value    = cfg.killScoreStealPercent;
+  _zonePhases = cfg.phases.map((p, i) => ({ ...p, zoneIndex: i }));
+  _renderZonePhases();
+}
+
 async function saveZoneConfig() {
   if (!_zoneEditorMapId) return;
-  const phases = _zonePhases.map((_, i) => ({
-    zoneIndex:         i,
+  // Collect from inputs → sort largest radius first (phase 0 = outermost) → re-number
+  const _raw = _zonePhases.map((_, i) => ({
     startRadius:       _zcNum(`zcp-sr-${i}`),
     endRadius:         _zcNum(`zcp-er-${i}`),
     waitBeforeShrink:  _zcNum(`zcp-wbs-${i}`, 60),
@@ -354,6 +417,8 @@ async function saveZoneConfig() {
     zoneBonusMultiplier: _zcNum(`zcp-bm-${i}`, 1.5),
     minRadiusOverride: _zcNum(`zcp-mro-${i}`)
   }));
+  _raw.sort((a, b) => b.startRadius - a.startRadius);
+  const phases = _raw.map((p, i) => ({ zoneIndex: i, ...p }));
   const payload = {
     initialRadius:            _zcNum('zc-initialRadius', 400),
     finalZoneMinRadius:       _zcNum('zc-finalZoneMinRadius', 25),
