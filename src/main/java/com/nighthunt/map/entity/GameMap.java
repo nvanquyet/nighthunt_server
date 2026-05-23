@@ -42,6 +42,20 @@ public class GameMap {
     @Column(name = "supported_modes", columnDefinition = "JSON")
     private String supportedModesJson;
 
+    /**
+     * JSON blob matching SafeZoneMatchConfig on the Unity client.
+     * NULL = DS uses SafeZoneMatchConfig.Default().
+     */
+    @Column(name = "zone_config", columnDefinition = "JSON")
+    private String zoneConfigJson;
+
+    /**
+     * JSON int array of total-player counts this map supports, e.g. [4,6,10].
+     * NULL = no player-count filter.
+     */
+    @Column(name = "supported_player_counts", columnDefinition = "JSON")
+    private String supportedPlayerCountsJson;
+
     @Column(name = "is_locked", nullable = false)
     @Builder.Default
     private boolean isLocked = false;

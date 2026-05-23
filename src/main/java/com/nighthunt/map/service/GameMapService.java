@@ -1,6 +1,7 @@
 package com.nighthunt.map.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
@@ -58,6 +59,36 @@ public class GameMapService {
                 .orElse("GameMap_01");
     }
 
+    /**
+     * Returns the raw zone_config JSON node for the given mapId.
+     * Returns null if map not found or zone_config is not set.
+     * Client (ServerBootstrap) parses this into SafeZoneMatchConfig.
+     */
+    @Transactional(readOnly = true)
+    public JsonNode getZoneConfig(String mapId) {
+        return mapRepository.findByMapId(mapId)
+                .map(m -> parseJsonNode(m.getZoneConfigJson()))
+                .orElse(null);
+    }
+
+    /**
+     * Admin: update the zone_config JSON blob for a specific map.
+     * The payload must be a valid SafeZoneMatchConfig JSON object.
+     */
+    @Transactional
+    public GameMapDTO setZoneConfig(String mapId, JsonNode zoneConfigNode) {
+        GameMap map = mapRepository.findByMapId(mapId).orElseThrow(() ->
+                new BusinessException(ErrorCodes.ROOM_NOT_FOUND, "Map not found: " + mapId));
+        try {
+            map.setZoneConfigJson(objectMapper.writeValueAsString(zoneConfigNode));
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCodes.INVALID_REQUEST, "Invalid zone config JSON");
+        }
+        log.info("[AdminConfig] setZoneConfig {} → {} bytes", mapId,
+                map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0);
+        return toDTO(mapRepository.save(map));
+    }
+
     // ── Admin API ─────────────────────────────────────────────────────────────
 
     /** Return ALL maps (including inactive) for admin management view. */
@@ -86,6 +117,13 @@ public class GameMapService {
                 map.setSupportedModesJson(objectMapper.writeValueAsString(req.supportedModes));
             } catch (Exception e) {
                 log.warn("[AdminConfig] failed to serialize supportedModes: {}", req.supportedModes);
+            }
+        }
+        if (req.supportedPlayerCounts != null) {
+            try {
+                map.setSupportedPlayerCountsJson(objectMapper.writeValueAsString(req.supportedPlayerCounts));
+            } catch (Exception e) {
+                log.warn("[AdminConfig] failed to serialize supportedPlayerCounts: {}", req.supportedPlayerCounts);
             }
         }
         log.info("[AdminConfig] patchMap {} → {}", mapId, req);
@@ -134,7 +172,8 @@ public class GameMapService {
         public String        description;
         public String        sceneName;
         public Integer       displayOrder;
-        public java.util.List<String> supportedModes;
+        public java.util.List<String>  supportedModes;
+        public java.util.List<Integer> supportedPlayerCounts;
     }
 
     /** Request DTO for addMap — mapId, displayName, sceneName required. */
@@ -152,13 +191,17 @@ public class GameMapService {
     // ── Conversion ────────────────────────────────────────────────────────────
 
     private GameMapDTO toDTO(GameMap map) {
-        List<String> modes = parseSupportedModes(map.getSupportedModesJson());
+        List<String>  modes    = parseSupportedModes(map.getSupportedModesJson());
+        List<Integer> counts   = parseSupportedPlayerCounts(map.getSupportedPlayerCountsJson());
+        JsonNode      zoneNode = parseJsonNode(map.getZoneConfigJson());
         return GameMapDTO.builder()
                 .mapId(map.getMapId())
                 .displayName(map.getDisplayName())
                 .description(map.getDescription())
                 .sceneName(map.getSceneName())
                 .supportedModes(modes)
+                .zoneConfig(zoneNode)
+                .supportedPlayerCounts(counts)
                 .isLocked(map.isLocked())
                 .displayOrder(map.getDisplayOrder())
                 .build();
@@ -171,6 +214,26 @@ public class GameMapService {
         } catch (Exception e) {
             log.warn("[GameMapService] Failed to parse supportedModesJson: {}", json);
             return Collections.emptyList();
+        }
+    }
+
+    private List<Integer> parseSupportedPlayerCounts(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<Integer>>() {});
+        } catch (Exception e) {
+            log.warn("[GameMapService] Failed to parse supportedPlayerCountsJson: {}", json);
+            return Collections.emptyList();
+        }
+    }
+
+    private JsonNode parseJsonNode(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.warn("[GameMapService] Failed to parse JSON node: {}", json);
+            return null;
         }
     }
 }

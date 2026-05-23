@@ -1,5 +1,6 @@
 package com.nighthunt.admin.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.nighthunt.common.ApiResponse;
 import com.nighthunt.config.gameconfig.GameConfig;
 import com.nighthunt.config.gameconfig.RuntimeConfigService;
@@ -147,6 +148,34 @@ public class AdminGameConfigController {
             @RequestBody GameMapService.AddGameMapRequest body) {
         checkSecret(secret);
         return ApiResponse.ok(gameMapService.addMap(body));
+    }
+
+    /**
+     * PATCH /api/admin/config/maps/{mapId}/zone
+     * Replace the SafeZoneMatchConfig JSON for a specific map.
+     *
+     * Body: full SafeZoneMatchConfig JSON object.
+     * Example:
+     * <pre>
+     * {
+     *   "initialRadius": 400.0,
+     *   "finalZoneMinRadius": 25.0,
+     *   "centerMode": "PureRandom",
+     *   "phases": [
+     *     {"zoneIndex":0,"startRadius":400,"endRadius":200,"waitBeforeShrink":60,"shrinkDuration":90,...},
+     *     ...
+     *   ]
+     * }
+     * </pre>
+     * DS reads this via GET /api/maps/{mapId}/zone-config on boot.
+     */
+    @PatchMapping("/maps/{mapId}/zone")
+    public ApiResponse<GameMapDTO> setZoneConfig(
+            @RequestHeader(value = "X-Admin-Secret", required = false) String secret,
+            @PathVariable String mapId,
+            @RequestBody JsonNode body) {
+        checkSecret(secret);
+        return ApiResponse.ok(gameMapService.setZoneConfig(mapId, body));
     }
 
     // ════════════════════════════════════════════════════════════════════════

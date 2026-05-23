@@ -30,6 +30,18 @@ public class GameMapDTO {
     /** Null = all modes. Non-null = array of modeKey strings the map supports. */
     private List<String> supportedModes;
 
+    /**
+     * Raw SafeZoneMatchConfig JSON blob. Null = client uses Default().
+     * DS fetches this via GET /api/maps/{mapId}/zone-config.
+     */
+    private Object zoneConfig;
+
+    /**
+     * Total-player counts this map supports, e.g. [4, 6, 10].
+     * Null = no player-count filter.
+     */
+    private List<Integer> supportedPlayerCounts;
+
     @JsonProperty("isLocked")
     private boolean isLocked;
     private int     displayOrder;
