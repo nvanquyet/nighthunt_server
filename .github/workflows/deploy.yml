@@ -192,17 +192,16 @@ jobs:
 
             remove_if_wrong_project() {
               CONTAINER_NAME="$1"
-              # --filter name= does substring match, so catches old prefixed names like
-              # "abc123_nighthunt-mysql" in addition to exact "nighthunt-mysql"
-              while IFS= read -r CID; do
-                [ -z "$CID" ] && continue
+              # --filter name= does substring/regex match, catches old prefixed names too
+              # Use for-loop (POSIX-compatible) instead of process substitution
+              for CID in $(docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" 2>/dev/null); do
                 CURRENT_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CID" 2>/dev/null || true)
                 ACTUAL_NAME=$(docker inspect -f '{{.Name}}' "$CID" 2>/dev/null | sed 's|^/||' || true)
                 if [ -n "$CURRENT_PROJECT" ] && [ "$CURRENT_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
                   echo "=== Remove $ACTUAL_NAME (project: $CURRENT_PROJECT) ==="
                   docker rm -f "$CID"
                 fi
-              done < <(docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" 2>/dev/null || true)
+              done
             }
 
             mkdir -p "$DEPLOY_DIR"
@@ -229,8 +228,9 @@ jobs:
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
             echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
-            remove_if_wrong_project nighthunt-mysql
-            remove_if_wrong_project nighthunt-redis
+            # compose rm -sf stops & removes any old containers for these services
+            # (handles containers with stale/prefixed names from old deployments)
+            compose rm -sf mysql redis 2>/dev/null || true
             compose up -d mysql redis
 
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
