@@ -299,7 +299,7 @@ async function openZoneEditor(mapId) {
   let cfg = {};
   try {
     const resp = await fetch(`/api/maps/${encodeURIComponent(mapId)}/zone-config`, {
-      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nh_token') || '') }
+      headers: { 'Authorization': 'Bearer ' + (TOKEN || sessionStorage.getItem('nh_token') || '') }
     });
     if (resp.ok && resp.status !== 204) cfg = await resp.json();
   } catch (_) {}
