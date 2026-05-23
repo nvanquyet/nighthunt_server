@@ -206,6 +206,9 @@ public class GameModeService {
 
         if (req.modeStatus       != null) gm.setModeStatus(req.modeStatus);
         if (req.matchmakingEnabled!= null) gm.setMatchmakingEnabled(req.matchmakingEnabled);
+        if (req.allowFill        != null) gm.setAllowFill(req.allowFill);
+        if (req.minElo           != null) gm.setMinElo(req.minElo);
+        if (req.maxElo           != null) gm.setMaxElo(req.maxElo);
         if (req.isDevMode        != null) gm.setDevMode(req.isDevMode);
         if (req.isActive         != null) gm.setActive(req.isActive);
         if (req.displayOrder     != null) gm.setDisplayOrder(req.displayOrder);
@@ -220,6 +223,9 @@ public class GameModeService {
     public static class PatchGameModeRequest {
         public String  modeStatus;
         public Boolean matchmakingEnabled;
+        public Boolean allowFill;
+        public Integer minElo;
+        public Integer maxElo;
         public Boolean isDevMode;
         public Boolean isActive;
         public Integer displayOrder;
@@ -229,6 +235,8 @@ public class GameModeService {
         @Override public String toString() {
             return "PatchGameModeRequest{status=" + modeStatus
                     + ",matchmakingEnabled=" + matchmakingEnabled
+                    + ",allowFill=" + allowFill
+                    + ",minElo=" + minElo + ",maxElo=" + maxElo
                     + ",isDevMode=" + isDevMode
                     + ",isActive=" + isActive + "}";
         }

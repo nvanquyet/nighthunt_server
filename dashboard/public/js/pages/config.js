@@ -44,14 +44,18 @@ async function loadModesConfig() {
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Key</th><th>Display Name</th><th>Players</th><th>ELO Range</th>
-            <th>Status</th><th class="col-center">Matchmaking</th><th class="col-center">Dev Mode</th><th class="col-center">Active</th><th>Actions</th>
+            <th>Key</th><th>Display Name</th><th>Description</th><th>Players/Team</th>
+            <th>ELO Min</th><th>ELO Max</th><th>Fill</th>
+            <th>Status</th><th class="col-center">Matchmaking</th><th class="col-center">Dev</th><th class="col-center">Active</th><th>Actions</th>
           </tr></thead>
           <tbody>${modes.map(m => `<tr id="mode-row-${m.modeKey}">
             <td><code class="text-cyan">${m.modeKey}</code></td>
-            <td>${m.displayName}</td>
-            <td class="text-sm">${m.playersPerTeam}v${m.playersPerTeam} (${m.totalPlayers} total)</td>
-            <td class="text-xs text-muted">${m.minElo}–${m.maxElo}</td>
+            <td><input type="text" id="mname-${m.modeKey}" value="${m.displayName || ''}" class="form-control sm" style="width:110px"></td>
+            <td><input type="text" id="mdesc-${m.modeKey}" value="${m.description || ''}" class="form-control sm" style="width:140px"></td>
+            <td class="text-sm text-center">${m.playersPerTeam}</td>
+            <td><input type="number" id="minelo-${m.modeKey}" value="${m.minElo ?? 0}" class="form-control sm" style="width:70px"></td>
+            <td><input type="number" id="maxelo-${m.modeKey}" value="${m.maxElo ?? 9999}" class="form-control sm" style="width:70px"></td>
+            <td class="col-center"><input type="checkbox" ${m.allowFill ? 'checked' : ''} id="mfill-${m.modeKey}"></td>
             <td>
               <select class="form-control sm" id="mstatus-${m.modeKey}">
                 ${['AVAILABLE', 'COMING_SOON', 'DISABLED'].map(s => `<option value="${s}" ${m.modeStatus === s ? 'selected' : ''}>${s}</option>`).join('')}
@@ -70,12 +74,24 @@ async function loadModesConfig() {
 }
 
 async function saveModeConfig(key) {
+  const minElo = parseInt($('minelo-' + key).value);
+  const maxElo = parseInt($('maxelo-' + key).value);
+  if (isNaN(minElo) || isNaN(maxElo) || minElo < 0 || maxElo < minElo) {
+    showAlert('ELO values invalid: min must be ≥ 0 and max must be ≥ min', 'error'); return;
+  }
   const patch = {
-    modeStatus: $('mstatus-' + key).value,
-    matchmakingEnabled: $('mmatch-' + key).checked,
-    isDevMode: $('mdev-' + key).checked,
-    isActive: $('mact-' + key).checked
+    displayName:       $('mname-'  + key).value.trim() || undefined,
+    description:       $('mdesc-'  + key).value.trim() || undefined,
+    modeStatus:        $('mstatus-'+ key).value,
+    matchmakingEnabled:$('mmatch-' + key).checked,
+    allowFill:         $('mfill-'  + key).checked,
+    minElo,
+    maxElo,
+    isDevMode:         $('mdev-'   + key).checked,
+    isActive:          $('mact-'   + key).checked
   };
+  if (!patch.displayName) delete patch.displayName;
+  if (!patch.description) delete patch.description;
   try {
     await api('PATCH', `/api/admin/config/modes/${key}`, patch);
     showAlert(`Mode "${key}" saved`, 'success');
