@@ -149,6 +149,10 @@ app.put   ('/api/admin/*', requireToken, proxyAdmin);
 app.patch ('/api/admin/*', requireToken, proxyAdmin);
 app.delete('/api/admin/*', requireToken, proxyAdmin);
 
+// Proxy public game data endpoints (maps, modes) — needed for zone-config reads etc.
+app.get('/api/maps/*',  requireToken, proxyAdmin);
+app.get('/api/modes/*', requireToken, proxyAdmin);
+
 // ── Legacy backend stats ──────────────────────────────────────────────────────
 app.get('/api/backend/stats', requireToken, async (req, res) => {
     try {
