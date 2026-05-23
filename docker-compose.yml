@@ -30,9 +30,13 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    mem_limit: 512m
     networks:
       - nighthunt-network
-    command: --default-authentication-plugin=mysql_native_password
+    command: >-
+      --default-authentication-plugin=mysql_native_password
+      --innodb-buffer-pool-size=256M
+      --innodb-log-file-size=64M
 
   redis:
     image: redis:7-alpine
@@ -54,6 +58,7 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    mem_limit: 128m
     networks:
       - nighthunt-network
 
@@ -74,6 +79,7 @@ services:
       mysql:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 128m
     networks:
       - nighthunt-network
 
@@ -132,6 +138,8 @@ services:
       # Logging
       LOG_PATH: /app/logs
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      # JVM heap cap — prevents OOM on 8 GB VPS running multiple containers
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx640m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     volumes:
@@ -155,6 +163,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    mem_limit: 960m
     networks:
       - nighthunt-network
       - game-network
@@ -179,6 +188,7 @@ services:
       backend:
         condition: service_started
     restart: unless-stopped
+    mem_limit: 64m
     networks:
       - nighthunt-network
 
@@ -193,6 +203,7 @@ services:
       - certbot_www:/var/www/certbot
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
     restart: unless-stopped
+    mem_limit: 64m
     networks:
       - nighthunt-network
 
@@ -222,6 +233,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+    mem_limit: 128m
     networks:
       - nighthunt-network
 
@@ -246,6 +258,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    mem_limit: 256m
     networks:
       - nighthunt-network
 
