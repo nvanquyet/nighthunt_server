@@ -223,9 +223,12 @@ jobs:
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
             echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
+            remove_if_wrong_project nighthunt-mysql
+            remove_if_wrong_project nighthunt-redis
             compose up -d mysql redis
 
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
+            remove_if_wrong_project nighthunt-relay
             compose up -d --build nighthunt-relay
 
             remove_if_wrong_project nighthunt-backend
