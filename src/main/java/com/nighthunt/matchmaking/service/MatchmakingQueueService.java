@@ -2,6 +2,7 @@ package com.nighthunt.matchmaking.service;
 
 import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
+import com.nighthunt.config.gameconfig.RuntimeConfigService;
 import com.nighthunt.dedicatedserver.dto.ServerAllocateResponse;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
 import com.nighthunt.friend.service.PlayerStatusService;
@@ -20,7 +21,6 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,23 +48,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MatchmakingQueueService {
 
-    // ── Config ────────────────────────────────────────────────────────────────
-    /** Initial ELO window half-width (±X around player's ELO). */
-    @Value("${matchmaking.elo.initial-range:100}")
-    private int initialEloRange;
-
-    /** Expand the window by this much (each side) on each expansion tick. */
-    @Value("${matchmaking.elo.expand-step:50}")
-    private int expandStep;
-
-    /** Expand every N seconds. */
-    @Value("${matchmaking.elo.expand-interval-seconds:15}")
-    private int expandIntervalSeconds;
-
-    /** Maximum total range (±N from player ELO). */
-    @Value("${matchmaking.elo.max-range:500}")
-    private int maxEloRange;
-
     // ── Dependencies ─────────────────────────────────────────────────────────
     private final MatchmakingEntryRepository entryRepository;
     private final UserRepository              userRepository;
@@ -77,6 +60,7 @@ public class MatchmakingQueueService {
     private final GameModeService             gameModeService;
     private final GameMapService              gameMapService;
     private final PlayerStatusService         playerStatusService;
+    private final RuntimeConfigService        runtimeConfig;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -152,8 +136,8 @@ public class MatchmakingQueueService {
                 .mapId(mapId)
                 .platform(platform)
                 .queuedAt(LocalDateTime.now())
-                .searchMinElo(Math.max(0, elo - initialEloRange))
-                .searchMaxElo(elo + initialEloRange)
+                .searchMinElo(Math.max(0, elo - runtimeConfig.getInt("matchmaking.elo.initialRange", 100)))
+                .searchMaxElo(elo + runtimeConfig.getInt("matchmaking.elo.initialRange", 100))
                 .status("SEARCHING")
                 .build();
 
@@ -281,14 +265,17 @@ public class MatchmakingQueueService {
      * {@code expandIntervalSeconds}.
      */
     private void expandWindows() {
-        LocalDateTime threshold = LocalDateTime.now().minus(expandIntervalSeconds, ChronoUnit.SECONDS);
+        int expandIntervalSec = runtimeConfig.getInt("matchmaking.elo.expandIntervalSec", 15);
+        int maxRange          = runtimeConfig.getInt("matchmaking.elo.maxRange", 500);
+        int step              = runtimeConfig.getInt("matchmaking.elo.expandStep", 50);
+        LocalDateTime threshold = LocalDateTime.now().minus(expandIntervalSec, ChronoUnit.SECONDS);
         List<MatchmakingEntry> stale = entryRepository.findSearchingQueuedBefore(threshold);
 
         for (MatchmakingEntry e : stale) {
             int currentRange = (e.getSearchMaxElo() - e.getSearchMinElo()) / 2;
-            if (currentRange < maxEloRange) {
-                e.setSearchMinElo(Math.max(0, e.getSearchMinElo() - expandStep));
-                e.setSearchMaxElo(e.getSearchMaxElo() + expandStep);
+            if (currentRange < maxRange) {
+                e.setSearchMinElo(Math.max(0, e.getSearchMinElo() - step));
+                e.setSearchMaxElo(e.getSearchMaxElo() + step);
                 entryRepository.save(e);
                 log.debug("[MM] Expanded window for user {} to [{}, {}]",
                         e.getUserId(), e.getSearchMinElo(), e.getSearchMaxElo());

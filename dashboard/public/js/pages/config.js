@@ -124,10 +124,27 @@ async function loadMapsConfig() {
             <td><input type="number" id="mord-${m.mapId}" value="${m.displayOrder || 0}" class="form-control sm" style="width:60px"></td>
             <td class="col-center"><input type="checkbox" ${m.isActive ? 'checked' : ''} id="mactive-${m.mapId}"></td>
             <td class="col-center"><input type="checkbox" ${m.isLocked ? 'checked' : ''} id="mlocked-${m.mapId}"></td>
-            <td><button class="btn btn-success btn-xs" onclick="saveMapConfig('${m.mapId}')">Save</button></td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-success btn-xs" onclick="saveMapConfig('${m.mapId}')">Save</button>
+              <button class="btn btn-xs" style="margin-left:4px;background:var(--accent-blue,#2563eb);color:#fff" onclick="openZoneEditor('${m.mapId}')">&#9881; Zone</button>
+            </td>
           </tr>`).join('')}
           </tbody>
         </table>
+      </div>
+    </div>
+    <div id="zone-editor-panel" style="display:none" class="card mb-md">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <span class="card-title">&#9881; Zone Config — <span id="zone-editor-mapid" style="font-family:monospace;color:var(--accent-cyan,#06b6d4)"></span></span>
+        <button class="btn btn-xs" onclick="$('zone-editor-panel').style.display='none'" style="background:transparent;color:var(--text-muted,#888)">&#10005; Close</button>
+      </div>
+      <div class="card-body">
+        <p class="text-xs text-muted mb-sm">Edit the full <code>SafeZoneMatchConfig</code> JSON. DS fetches this on boot via <code>GET /api/maps/{mapId}/zone-config</code>.</p>
+        <textarea id="zone-config-json" class="form-control" rows="18" style="font-family:monospace;font-size:12px;resize:vertical"></textarea>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn btn-success btn-sm" onclick="saveZoneConfig()">&#128190; Save Zone Config</button>
+          <button class="btn btn-xs" onclick="formatZoneJson()" style="background:var(--bg-card,#1e293b);color:var(--text-muted,#888);border:1px solid var(--border,#334)">&#128472; Format JSON</button>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -192,6 +209,51 @@ async function addMap() {
     showAlert(`Map "${mapId}" added`, 'success');
     loadMapsConfig();
   } catch (e) { showAlert(e.message, 'error'); }
+}
+
+/* ── Zone Config Editor ─────────────────────────────────────────────────── */
+let _zoneEditorMapId = null;
+
+async function openZoneEditor(mapId) {
+  _zoneEditorMapId = mapId;
+  $('zone-editor-mapid').textContent = mapId;
+  $('zone-config-json').value = 'Loading…';
+  $('zone-editor-panel').style.display = '';
+  $('zone-editor-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try {
+    const resp = await fetch(`/api/maps/${encodeURIComponent(mapId)}/zone-config`, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nh_token') || '') }
+    });
+    if (resp.status === 204 || resp.status === 404) {
+      $('zone-config-json').value = '{}';
+    } else {
+      const json = await resp.json();
+      $('zone-config-json').value = JSON.stringify(json, null, 2);
+    }
+  } catch (e) {
+    $('zone-config-json').value = '{}';
+  }
+}
+
+async function saveZoneConfig() {
+  if (!_zoneEditorMapId) return;
+  let parsed;
+  try {
+    parsed = JSON.parse($('zone-config-json').value);
+  } catch (e) {
+    showAlert('Invalid JSON: ' + e.message, 'error'); return;
+  }
+  try {
+    await api('PATCH', `/api/admin/config/maps/${_zoneEditorMapId}/zone`, parsed);
+    showAlert(`Zone config for "${_zoneEditorMapId}" saved`, 'success');
+  } catch (e) { showAlert(e.message, 'error'); }
+}
+
+function formatZoneJson() {
+  try {
+    const parsed = JSON.parse($('zone-config-json').value);
+    $('zone-config-json').value = JSON.stringify(parsed, null, 2);
+  } catch (e) { showAlert('Invalid JSON: ' + e.message, 'error'); }
 }
 
 /* ── Runtime Config ─────────────────────────────────────────────────────── */
