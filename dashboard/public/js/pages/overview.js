@@ -49,11 +49,19 @@ async function renderOverview() {
     if (tierChart) { tierChart.destroy(); tierChart = null; }
     const ctx = document.getElementById('tier-chart');
     if (ctx && tk.length) {
-      tierChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: { labels: tk, datasets: [{ data: tv, backgroundColor: tk.map(k => tc[k] || '#888'), borderColor: 'var(--card)', borderWidth: 3 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: 'var(--text)', font: { size: 11 } } } }, cutout: '65%' }
-      });
+      if (typeof Chart === 'undefined') {
+        ctx.parentElement.innerHTML = '<div class="text-muted text-xs text-center" style="padding:1rem">Chart.js failed to load</div>';
+      } else {
+        try {
+          tierChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: { labels: tk, datasets: [{ data: tv, backgroundColor: tk.map(k => tc[k] || '#888'), borderColor: 'var(--card)', borderWidth: 3 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: 'var(--text)', font: { size: 11 } } } }, cutout: '65%' }
+          });
+        } catch (chartErr) {
+          ctx.parentElement.innerHTML = `<div class="text-muted text-xs text-center" style="padding:1rem">${chartErr.message}</div>`;
+        }
+      }
     }
 
     const actHtml = (d.recentActivity || []).slice(0, 15).map(l => `
@@ -79,6 +87,6 @@ async function renderOverview() {
       </div>
     </div>`;
   } catch (e) {
-    $('ov-stats').innerHTML = `<div class="card card-body text-red">${e.message}</div>`;
+    $('ov-stats').innerHTML = `<div class="card" style="grid-column:1/-1"><div class="card-body text-red">&#9888; Failed to load overview: ${e.message}</div></div>`;
   }
 }
