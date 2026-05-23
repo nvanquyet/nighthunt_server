@@ -190,20 +190,6 @@ jobs:
                 "$@"
             }
 
-            remove_if_wrong_project() {
-              CONTAINER_NAME="$1"
-              # --filter name= does substring/regex match, catches old prefixed names too
-              # Use for-loop (POSIX-compatible) instead of process substitution
-              for CID in $(docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" 2>/dev/null); do
-                CURRENT_PROJECT=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CID" 2>/dev/null || true)
-                ACTUAL_NAME=$(docker inspect -f '{{.Name}}' "$CID" 2>/dev/null | sed 's|^/||' || true)
-                if [ -n "$CURRENT_PROJECT" ] && [ "$CURRENT_PROJECT" != "$COMPOSE_PROJECT_NAME" ]; then
-                  echo "=== Remove $ACTUAL_NAME (project: $CURRENT_PROJECT) ==="
-                  docker rm -f "$CID"
-                fi
-              done
-            }
-
             mkdir -p "$DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
@@ -234,10 +220,10 @@ jobs:
             compose up -d mysql redis
 
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
-            remove_if_wrong_project nighthunt-relay
+            compose rm -sf nighthunt-relay 2>/dev/null || true
             compose up -d --build nighthunt-relay
 
-            remove_if_wrong_project nighthunt-backend
+            compose rm -sf backend 2>/dev/null || true
 
             echo "=== Pull latest image ==="
             compose pull backend
@@ -276,11 +262,11 @@ jobs:
             fi
 
             echo "=== Build/start dashboard in compose project: $COMPOSE_PROJECT_NAME ==="
-            remove_if_wrong_project nighthunt-dashboard
+            compose rm -sf dashboard 2>/dev/null || true
             compose up -d --no-deps --build dashboard
 
             echo "=== Ensure nginx reverse proxy is in compose project: $COMPOSE_PROJECT_NAME ==="
-            remove_if_wrong_project nighthunt-nginx
+            compose rm -sf nginx 2>/dev/null || true
             compose up -d --no-deps nginx
 
       - name: Push git tag
