@@ -12,7 +12,6 @@ const $ = id => document.getElementById(id);
 let TOKEN        = null;
 let adminRole    = 'admin';     // 'admin' | 'root'
 let refreshTimer = null;
-let tierChart    = null;
 
 // ── JWT Helpers ──────────────────────────────────────────────────────────
 function parseJwtPayload(t) {

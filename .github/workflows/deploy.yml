@@ -269,6 +269,26 @@ jobs:
             compose rm -sf nginx 2>/dev/null || true
             compose up -d --no-deps nginx
 
+            echo "=== VPS Docker cleanup ==="
+            # Stopped containers
+            docker container prune -f 2>/dev/null || true
+            # Keep only 2 most recent backend images (latest + 1 SHA backup)
+            docker images "ghcr.io/nvanquyet/nighthunt-backend" --format "{{.CreatedAt}}\t{{.ID}}" \
+              | sort -rk1 | awk 'NR>2{print $NF}' | sort -u \
+              | xargs -r docker rmi -f 2>/dev/null && echo "Old backend images pruned" || true
+            # Keep only 2 most recent DS images (latest + 1 SHA backup)
+            docker images "ghcr.io/nvanquyet/nighthunt-ds" --format "{{.CreatedAt}}\t{{.ID}}" \
+              | sort -rk1 | awk 'NR>2{print $NF}' | sort -u \
+              | xargs -r docker rmi -f 2>/dev/null && echo "Old DS images pruned" || true
+            # Remove dangling (untagged) image layers
+            docker image prune -f 2>/dev/null || true
+            # Remove builder cache older than 48 h
+            docker builder prune --filter until=48h -f 2>/dev/null || true
+            # Remove volumes not attached to any container (preserves mysql_data, redis_data)
+            docker volume prune -f 2>/dev/null || true
+            echo "=== Disk usage after cleanup ==="
+            docker system df
+
       - name: Push git tag
         run: |
           DATE=$(date +%Y%m%d)

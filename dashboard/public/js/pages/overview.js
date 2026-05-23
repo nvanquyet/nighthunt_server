@@ -1,6 +1,54 @@
 /* ── Overview Page ─────────────────────────────────────────────────────── */
 'use strict';
 
+/* Pure-SVG donut chart — no Chart.js dependency */
+function _drawTierDonut(elId, labels, values, colors) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const total = values.reduce((s, v) => s + v, 0);
+  if (!total) {
+    el.innerHTML = '<div class="empty-state" style="width:100%"><p>No tier data</p></div>';
+    return;
+  }
+  const R = 58, CX = 72, CY = 72, SW = 22;
+  const circ = 2 * Math.PI * R;
+  let cum = 0;
+  const slices = labels.map((lbl, i) => {
+    const len = (values[i] / total) * circ;
+    const dashOffset = circ / 4 - cum;
+    cum += len;
+    const col = colors[lbl] || '#888';
+    return `<circle r="${R}" cx="${CX}" cy="${CY}" fill="none" stroke="${col}"
+      stroke-width="${SW}" stroke-linecap="butt"
+      stroke-dasharray="${len.toFixed(3)} ${(circ - len).toFixed(3)}"
+      stroke-dashoffset="${dashOffset.toFixed(3)}" style="transition:all .4s ease">
+      <title>${lbl}: ${values[i]} (${(values[i]/total*100).toFixed(1)}%)</title>
+    </circle>`;
+  }).join('');
+
+  const legend = labels.map((lbl, i) => {
+    const col = colors[lbl] || '#888';
+    const pct = (values[i] / total * 100).toFixed(0);
+    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
+      <span style="width:9px;height:9px;border-radius:50%;background:${col};flex-shrink:0"></span>
+      <span style="font-size:11px;flex:1;color:var(--muted)">${lbl}</span>
+      <span style="font-size:12px;font-weight:600;color:var(--text)">${values[i]}</span>
+      <span style="font-size:10px;color:var(--muted);width:34px;text-align:right">${pct}%</span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+  <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;justify-content:center;padding:.5rem 0">
+    <svg viewBox="0 0 144 144" width="140" height="140" style="flex-shrink:0;overflow:visible">
+      <circle r="${R}" cx="${CX}" cy="${CY}" fill="none" stroke="var(--border)" stroke-width="${SW}"/>
+      ${slices}
+      <text x="${CX}" y="${CY - 7}" text-anchor="middle" fill="var(--text)" font-size="17" font-weight="700">${total}</text>
+      <text x="${CX}" y="${CY + 11}" text-anchor="middle" fill="var(--muted)" font-size="9" letter-spacing="1">PLAYERS</text>
+    </svg>
+    <div style="flex:1;min-width:130px">${legend}</div>
+  </div>`;
+}
+
 async function renderOverview() {
   clearInterval(refreshTimer);
   $('content').innerHTML = `
@@ -43,26 +91,10 @@ async function renderOverview() {
     </div>
     <div class="card">
       <div class="card-header"><span class="card-title">&#127759; Tier Distribution</span></div>
-      <div class="card-body" style="height:260px;display:flex;align-items:center;justify-content:center"><canvas id="tier-chart"></canvas></div>
+      <div class="card-body" id="tier-chart" style="display:flex;align-items:center;justify-content:center;min-height:220px"></div>
     </div>`;
 
-    if (tierChart) { tierChart.destroy(); tierChart = null; }
-    const ctx = document.getElementById('tier-chart');
-    if (ctx && tk.length) {
-      if (typeof Chart === 'undefined') {
-        ctx.parentElement.innerHTML = '<div class="text-muted text-xs text-center" style="padding:1rem">Chart.js failed to load</div>';
-      } else {
-        try {
-          tierChart = new Chart(ctx, {
-            type: 'doughnut',
-            data: { labels: tk, datasets: [{ data: tv, backgroundColor: tk.map(k => tc[k] || '#888'), borderColor: 'var(--card)', borderWidth: 3 }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: 'var(--text)', font: { size: 11 } } } }, cutout: '65%' }
-          });
-        } catch (chartErr) {
-          ctx.parentElement.innerHTML = `<div class="text-muted text-xs text-center" style="padding:1rem">${chartErr.message}</div>`;
-        }
-      }
-    }
+    _drawTierDonut('tier-chart', tk, tv, tc);
 
     const actHtml = (d.recentActivity || []).slice(0, 15).map(l => `
     <tr>
