@@ -4,6 +4,7 @@ import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.dedicatedserver.dto.ServerAllocateResponse;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
+import com.nighthunt.config.gameconfig.RuntimeConfigService;
 import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.gamemode.dto.GameModeDTO;
@@ -65,6 +66,7 @@ class MatchmakingQueueServiceTest {
     @Mock private GameModeService            gameModeService;
     @Mock private GameMapService             gameMapService;
     @Mock private PlayerStatusService        playerStatusService;
+    @Mock private RuntimeConfigService          runtimeConfig;
 
     private MatchmakingQueueService service;
 
@@ -77,9 +79,13 @@ class MatchmakingQueueServiceTest {
         service = new MatchmakingQueueService(
                 entryRepo, userRepo, connectionManager, roomService,
                 roomPlayerRepo, partyMemberRepo, partyRepo,
-                dsService, gameModeService, gameMapService, playerStatusService);
+                dsService, gameModeService, gameMapService, playerStatusService, runtimeConfig);
 
         // Default lenient stubs — not every test uses all of these
+        lenient().when(runtimeConfig.getInt(eq("matchmaking.elo.initialRange"), anyInt())).thenReturn(100);
+        lenient().when(runtimeConfig.getInt(eq("matchmaking.elo.expandStep"), anyInt())).thenReturn(50);
+        lenient().when(runtimeConfig.getInt(eq("matchmaking.elo.expandIntervalSec"), anyInt())).thenReturn(15);
+        lenient().when(runtimeConfig.getInt(eq("matchmaking.elo.maxRange"), anyInt())).thenReturn(500);
         lenient().when(roomPlayerRepo.existsUserInActiveRoom(anyLong())).thenReturn(false);
         lenient().when(partyMemberRepo.findByUserId(anyLong())).thenReturn(Optional.empty());
     }
