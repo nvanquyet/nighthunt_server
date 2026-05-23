@@ -82,7 +82,7 @@ public class GameMapService {
         try {
             map.setZoneConfigJson(objectMapper.writeValueAsString(zoneConfigNode));
         } catch (Exception e) {
-            throw new BusinessException(ErrorCodes.INVALID_REQUEST, "Invalid zone config JSON");
+            throw new BusinessException(ErrorCodes.DS_BAD_REQUEST, "Invalid zone config JSON");
         }
         log.info("[AdminConfig] setZoneConfig {} → {} bytes", mapId,
                 map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0);
