@@ -219,6 +219,9 @@ jobs:
             compose rm -sf mysql redis 2>/dev/null || true
             compose up -d mysql redis
 
+            echo "=== Clean Docker builder cache (prevent snapshot corruption) ==="
+            docker builder prune -a -f 2>/dev/null || true
+
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
             compose rm -sf nighthunt-relay 2>/dev/null || true
             compose up -d --build nighthunt-relay
