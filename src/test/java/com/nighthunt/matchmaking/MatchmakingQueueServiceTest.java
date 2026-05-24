@@ -19,6 +19,7 @@ import com.nighthunt.party.repository.PartyRepository;
 import com.nighthunt.room.dto.RoomResponse;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomService;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -50,6 +51,7 @@ import static org.mockito.quality.Strictness.LENIENT;
  *   <li>sweepStaleQueueEntries — fresh entry is NOT cancelled</li>
  *   <li>ensureUserCanEnterMatchmaking — CUSTOM party mode blocks queue</li>
  * </ol>
+ *
  */
 @ExtendWith(MockitoExtension.class)
 @org.mockito.junit.jupiter.MockitoSettings(strictness = LENIENT)
@@ -60,6 +62,7 @@ class MatchmakingQueueServiceTest {
     @Mock private ConnectionManager          connectionManager;
     @Mock private RoomService                roomService;
     @Mock private RoomPlayerRepository       roomPlayerRepo;
+    @Mock private RoomRepository             roomRepo;
     @Mock private PartyMemberRepository      partyMemberRepo;
     @Mock private PartyRepository            partyRepo;
     @Mock private DedicatedServerService     dsService;
@@ -78,7 +81,7 @@ class MatchmakingQueueServiceTest {
     void setUp() {
         service = new MatchmakingQueueService(
                 entryRepo, userRepo, connectionManager, roomService,
-                roomPlayerRepo, partyMemberRepo, partyRepo,
+                roomPlayerRepo, roomRepo, partyMemberRepo, partyRepo,
                 dsService, gameModeService, gameMapService, playerStatusService, runtimeConfig);
 
         // Default lenient stubs — not every test uses all of these
