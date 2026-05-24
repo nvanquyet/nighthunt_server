@@ -102,6 +102,13 @@ public class User {
     @Column(name = "selected_character_id", length = 64)
     private String selectedCharacterId;
 
+    public String getSelectedCharacterId() {
+        if (selectedCharacterId == null || selectedCharacterId.isBlank()) {
+            return "character_01";
+        }
+        return selectedCharacterId;
+    }
+
     // ── Social System (Friend, Party, Status) ─────────────────────────────────
 
     /**

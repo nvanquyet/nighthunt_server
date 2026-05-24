@@ -14,8 +14,12 @@ import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.party.repository.PartyMemberRepository;
 import com.nighthunt.party.repository.PartyRepository;
+import com.nighthunt.common.constants.GameConstants;
 import com.nighthunt.room.dto.RoomResponse;
+import com.nighthunt.room.entity.Room;
+import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
+import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomService;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
@@ -54,6 +58,7 @@ public class MatchmakingQueueService {
     private final ConnectionManager           connectionManager;
     private final RoomService                 roomService;
     private final RoomPlayerRepository        roomPlayerRepository;
+    private final RoomRepository              roomRepository;
     private final PartyMemberRepository       partyMemberRepository;
     private final PartyRepository             partyRepository;
     private final DedicatedServerService      dsService;
@@ -173,6 +178,46 @@ public class MatchmakingQueueService {
             entryRepository.save(e);
             log.info("[MM] User {} dequeued", userId);
         });
+
+        // Also check if the user is in an active room associated with a ranked match
+        List<RoomPlayer> activeRoomPlayers = roomPlayerRepository.findActiveRoomsByUserId(userId);
+        for (RoomPlayer rp : activeRoomPlayers) {
+            roomRepository.findById(rp.getRoomId()).ifPresent(room -> {
+                if (room.getMatchId() != null && !room.getMatchId().isBlank()) {
+                    log.info("[MM] User {} dequeued but is in active ranked room {} (matchId={}) — disbanding room to release players",
+                            userId, room.getId(), room.getMatchId());
+
+                    // 1. Notify other players in this room that the match is cancelled
+                    List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+                    Map<String, Object> payload = new HashMap<>();
+                    payload.put("reason", "A player cancelled the queue");
+                    payload.put("matchId", room.getMatchId());
+
+                    for (RoomPlayer member : players) {
+                        try {
+                            connectionManager.sendToUser(member.getUserId(), "match_cancelled", payload);
+                            playerStatusService.setBackToOnline(member.getUserId());
+                        } catch (Exception ex) {
+                            log.debug("[MM] Failed to notify user {} of match cancellation: {}", member.getUserId(), ex.getMessage());
+                        }
+                    }
+
+                    // 2. Disband the room
+                    try {
+                        roomService.disbandRoom(room.getId(), room.getOwnerId());
+                    } catch (Exception ex) {
+                        log.error("[MM] Failed to disband room {} on dequeue: {}", room.getId(), ex.getMessage());
+                    }
+
+                    // 3. Reclaim server
+                    try {
+                        dsService.reclaimServerForMatch(room.getMatchId());
+                    } catch (Exception ex) {
+                        log.warn("[MM] Failed to reclaim server for matchId={}: {}", room.getMatchId(), ex.getMessage());
+                    }
+                }
+            });
+        }
     }
 
     /**

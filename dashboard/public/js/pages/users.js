@@ -65,7 +65,7 @@ async function loadUsers() {
       <td data-label="Joined" class="text-xs text-muted">${fmtDate(u.createdAt)}</td>
       <td data-label="Actions" style="white-space:nowrap">
         <button class="btn btn-ghost btn-xs" onclick="viewUser(${u.id})">View</button>
-        <button class="btn btn-warning btn-xs" onclick="editUserModal(${u.id},'${u.username}',${u.elo})">Edit</button>
+        <button class="btn btn-warning btn-xs" onclick="editUserModal(${u.id})">Edit</button>
         <button class="btn btn-danger btn-xs" onclick="banUserModal(${u.id},'${u.username}')">Ban</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem">No users found</td></tr>';
@@ -141,7 +141,7 @@ async function viewUser(id) {
       ${rootHtml}
     </div>
     <div class="modal-footer">
-      <button class="btn btn-warning btn-sm" onclick="editUserModal(${u.id},'${u.username}',${u.elo})">&#9998; Edit</button>
+      <button class="btn btn-warning btn-sm" onclick="editUserModal(${u.id})">&#9998; Edit</button>
       <button class="btn btn-danger btn-sm" onclick="banUserModal(${u.id},'${u.username}')">&#128683; Ban</button>
     </div>`);
   } catch (e) {
@@ -159,43 +159,124 @@ function toggleHash(dispId, btnId, hash) {
   }
 }
 
-function editUserModal(id, name, elo) {
-  showModal(`
-  <div class="modal-header">
-    <span class="modal-title">&#9998; Edit: ${name}</span>
-    <button class="modal-close" onclick="closeModal(event)">&times;</button>
-  </div>
-  <div class="modal-body">
-    <div class="form-group mb-md">
-      <label class="form-label">ELO (0 – 3000)</label>
-      <input type="number" id="edit-elo" value="${elo}" class="form-control" min="0" max="3000">
+async function editUserModal(id) {
+  showModal(`<div style="text-align:center;padding:2rem"><span class="spinner"></span></div>`);
+  try {
+    const u = await api('GET', `/api/admin/users/${id}`);
+    showModal(`
+    <div class="modal-header">
+      <span class="modal-title">&#9998; Edit Player: ${u.username}</span>
+      <button class="modal-close" onclick="closeModal(event)">&times;</button>
     </div>
-    <div class="mb-md">
-      <div class="flex justify-between text-sm mb-sm">
-        <span>ELO Slider</span>
-        <span id="elo-disp" class="text-cyan font-bold">${elo}</span>
+    <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+      <div class="form-group mb-md">
+        <label class="form-label">Username</label>
+        <input type="text" id="edit-username" value="${u.username}" class="form-control">
       </div>
-      <input type="range" min="0" max="3000" value="${elo}" class="w-full"
-        oninput="$('edit-elo').value=this.value;$('elo-disp').textContent=this.value">
+      <div class="form-group mb-md">
+        <label class="form-label">Email</label>
+        <input type="email" id="edit-email" value="${u.email || ''}" class="form-control">
+      </div>
+      <div class="form-group mb-md">
+        <label class="form-label">New Password (leave blank to keep current)</label>
+        <input type="password" id="edit-password" placeholder="Enter new password..." class="form-control">
+      </div>
+      <div class="form-row mb-md" style="display:flex;gap:0.5rem">
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Role</label>
+          <select id="edit-role" class="form-control">
+            <option value="USER" ${u.role === 'USER' ? 'selected' : ''}>User</option>
+            <option value="SUPPORT" ${u.role === 'SUPPORT' ? 'selected' : ''}>Support</option>
+            <option value="MODERATOR" ${u.role === 'MODERATOR' ? 'selected' : ''}>Moderator</option>
+            <option value="ADMIN" ${u.role === 'ADMIN' ? 'selected' : ''}>Admin</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Coins</label>
+          <input type="number" id="edit-coins" value="${u.coins || 0}" class="form-control" min="0">
+        </div>
+      </div>
+      <div class="form-group mb-md">
+        <label class="form-label">Selected Character ID</label>
+        <input type="text" id="edit-char-id" value="${u.selectedCharacterId || ''}" class="form-control" placeholder="e.g. character_01">
+      </div>
+      <div class="form-row mb-md" style="display:flex;gap:0.5rem">
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Wins</label>
+          <input type="number" id="edit-wins" value="${u.totalWins || 0}" class="form-control" min="0">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Losses</label>
+          <input type="number" id="edit-losses" value="${u.totalLosses || 0}" class="form-control" min="0">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Draws</label>
+          <input type="number" id="edit-draws" value="${u.totalDraws || 0}" class="form-control" min="0">
+        </div>
+      </div>
+      <div class="form-group mb-md">
+        <label class="form-label">ELO (0 – 3000)</label>
+        <input type="number" id="edit-elo" value="${u.elo}" class="form-control" min="0" max="3000">
+      </div>
+      <div class="mb-md">
+        <div class="flex justify-between text-sm mb-sm">
+          <span>ELO Slider</span>
+          <span id="elo-disp" class="text-cyan font-bold">${u.elo}</span>
+        </div>
+        <input type="range" min="0" max="3000" value="${u.elo}" class="w-full"
+          oninput="$('edit-elo').value=this.value;$('elo-disp').textContent=this.value">
+      </div>
     </div>
-  </div>
-  <div class="modal-footer">
-    <button class="btn btn-ghost btn-sm" onclick="closeModal(event)">Cancel</button>
-    <button class="btn btn-success btn-sm" onclick="saveUser(${id})">Save Changes</button>
-  </div>`);
-  $('edit-elo')?.addEventListener('input', function () {
-    document.querySelector('input[type=range]').value = this.value;
-    $('elo-disp').textContent = this.value;
-  });
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal(event)">Cancel</button>
+      <button class="btn btn-success btn-sm" onclick="saveUser(${u.id})">Save Changes</button>
+    </div>`);
+    $('edit-elo')?.addEventListener('input', function () {
+      document.querySelector('input[type=range]').value = this.value;
+      $('elo-disp').textContent = this.value;
+    });
+  } catch (e) {
+    showModal(`<div class="modal-body text-red">${e.message}</div>`);
+  }
 }
 
 async function saveUser(id) {
+  const username = $('edit-username').value;
+  const email = $('edit-email').value;
+  const password = $('edit-password').value;
+  const role = $('edit-role').value;
+  const coins = parseInt($('edit-coins').value);
+  const selectedCharacterId = $('edit-char-id').value;
+  const totalWins = parseInt($('edit-wins').value);
+  const totalLosses = parseInt($('edit-losses').value);
+  const totalDraws = parseInt($('edit-draws').value);
   const elo = parseInt($('edit-elo').value);
-  if (isNaN(elo)) return;
+
+  if (isNaN(elo) || isNaN(coins) || isNaN(totalWins) || isNaN(totalLosses) || isNaN(totalDraws)) {
+    showAlert('Please enter valid numeric values', 'error');
+    return;
+  }
+
+  const payload = {
+    username,
+    email,
+    role,
+    coins,
+    selectedCharacterId,
+    totalWins,
+    totalLosses,
+    totalDraws,
+    elo
+  };
+
+  if (password && password.trim() !== '') {
+    payload.password = password;
+  }
+
   try {
-    await api('PUT', `/api/admin/users/${id}`, { elo });
+    await api('PUT', `/api/admin/users/${id}`, payload);
     $('modal-bg').classList.remove('open');
-    showAlert('User updated', 'success');
+    showAlert('User updated successfully', 'success');
     loadUsers();
   } catch (e) { showAlert(e.message, 'error'); }
 }

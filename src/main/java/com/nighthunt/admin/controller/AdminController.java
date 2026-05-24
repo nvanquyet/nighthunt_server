@@ -27,6 +27,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -59,6 +60,7 @@ public class AdminController {
     private final EloService                  eloService;
     private final UserActivityService         activityService;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final PasswordEncoder             passwordEncoder;
 
     // ── Security ──────────────────────────────────────────────────────────────
 
@@ -275,6 +277,54 @@ public class AdminController {
 
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (body.containsKey("username")) {
+            String username = (String) body.get("username");
+            if (username != null && !username.isBlank()) {
+                userRepository.findByUsername(username).ifPresent(u -> {
+                    if (!u.getId().equals(id)) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Username already taken");
+                    }
+                });
+                user.setUsername(username);
+            }
+        }
+
+        if (body.containsKey("email")) {
+            String email = (String) body.get("email");
+            if (email != null && !email.isBlank()) {
+                userRepository.findByEmail(email).ifPresent(u -> {
+                    if (!u.getId().equals(id)) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email already taken");
+                    }
+                });
+                user.setEmail(email);
+            }
+        }
+
+        if (body.containsKey("password")) {
+            String password = (String) body.get("password");
+            if (password != null && !password.isBlank()) {
+                user.setPasswordHash(passwordEncoder.encode(password));
+            }
+        }
+
+        if (body.containsKey("role")) {
+            String roleStr = (String) body.get("role");
+            try {
+                user.setRole(com.nighthunt.rbac.enums.UserRole.valueOf(roleStr));
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid role: " + roleStr);
+            }
+        }
+
+        if (body.containsKey("selectedCharacterId")) {
+            user.setSelectedCharacterId((String) body.get("selectedCharacterId"));
+        }
+
+        if (body.containsKey("coins")) {
+            user.setCoins(((Number) body.get("coins")).longValue());
+        }
 
         if (body.containsKey("elo")) {
             int newElo = ((Number) body.get("elo")).intValue();
@@ -685,6 +735,9 @@ public class AdminController {
         m.put("email",        u.getEmail());
         m.put("elo",          u.getElo());
         m.put("tier",         u.getTier());
+        m.put("role",         u.getRole() != null ? u.getRole().name() : "USER");
+        m.put("selectedCharacterId", u.getSelectedCharacterId());
+        m.put("coins",        u.getCoins());
         m.put("totalWins",    u.getTotalWins());
         m.put("totalLosses",  u.getTotalLosses());
         m.put("totalDraws",   u.getTotalDraws());
