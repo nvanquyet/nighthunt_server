@@ -58,9 +58,10 @@ public class RuntimeConfigService {
     public GameConfig setValue(String key, String newValue) {
         GameConfig cfg = repo.findById(key).orElseThrow(() ->
                 new BusinessException(ErrorCodes.ROOM_NOT_FOUND, "Config key not found: " + key));
+        String oldValue = cfg.getConfigValue();
         cfg.setConfigValue(newValue);
         GameConfig saved = repo.save(cfg);
-        log.info("[RuntimeConfig] {} = {} (was: {})", key, newValue, cfg.getConfigValue());
+        log.info("[RuntimeConfig] {} = {} (was: {})", key, newValue, oldValue);
         return saved;
     }
 }

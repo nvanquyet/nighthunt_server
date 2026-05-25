@@ -44,5 +44,7 @@ public class GameMapDTO {
 
     @JsonProperty("isLocked")
     private boolean isLocked;
+    @JsonProperty("isActive")
+    private boolean isActive;
     private int     displayOrder;
 }

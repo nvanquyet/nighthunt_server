@@ -203,6 +203,7 @@ public class GameMapService {
                 .zoneConfig(zoneNode)
                 .supportedPlayerCounts(counts)
                 .isLocked(map.isLocked())
+                .isActive(map.isActive())
                 .displayOrder(map.getDisplayOrder())
                 .build();
     }
