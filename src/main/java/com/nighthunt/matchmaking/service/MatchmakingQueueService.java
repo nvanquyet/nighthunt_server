@@ -436,6 +436,15 @@ public class MatchmakingQueueService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                         "No pending match found for lobbyToken: " + lobbyToken));
 
+        // Guard: auto-accept flow already set all entries to ACCEPTED and called createMatchedRoom().
+        // A second /accept call arriving late (e.g., manual API call or client retry) must be a no-op
+        // to prevent a duplicate ranked room + DS allocation.
+        if ("ACCEPTED".equals(entry.getAcceptStatus())) {
+            log.info("[MM] accept(): userId={} lobbyToken={} is already ACCEPTED (auto-accept flow) — skipping duplicate createMatchedRoom",
+                    userId, lobbyToken);
+            return;
+        }
+
         entry.setAcceptStatus("ACCEPTED");
         entryRepository.save(entry);
         log.info("[MM] User {} accepted match lobbyToken={}", userId, lobbyToken);

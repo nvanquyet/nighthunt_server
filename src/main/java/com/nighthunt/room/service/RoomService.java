@@ -32,13 +32,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 @Slf4j
 @Service
@@ -63,6 +62,8 @@ public class RoomService {
     private final PlayerStatusService playerStatusService;
     private final MatchPresenceService matchPresenceService;
     private final SecureRandom random = new SecureRandom();
+    // BCrypt(10) — same work-factor as DedicatedServerService
+    private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
@@ -85,7 +86,11 @@ public class RoomService {
             roomCode = RoomCodeGenerator.generate();
         } while (roomRepository.findByRoomCode(roomCode).isPresent());
 
-        // Create room
+        // Create room — hash password before persisting (never store plain text)
+        String hashedPassword = null;
+        if (request.getPassword() != null && !request.getPassword().isBlank()) {
+            hashedPassword = bcrypt.encode(request.getPassword());
+        }
         Room room = Room.builder()
                 .roomCode(roomCode)
                 .mode(request.getMode())
@@ -93,7 +98,7 @@ public class RoomService {
                 .status(GameConstants.ROOM_STATUS_WAITING)
                 .isPublic(request.getIsPublic() != null ? request.getIsPublic() : true)
                 .isLocked(request.getIsLocked() != null ? request.getIsLocked() : false)
-                .password(request.getPassword()) // Optional password
+                .password(hashedPassword)
                 .ownerId(userId)
                 .matchId(matchId)
                 .build();
@@ -145,12 +150,9 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
 
-        // Check password if room has one
+        // Verify password using BCrypt (passwords are stored hashed, never plain text)
         if (room.getPassword() != null && !room.getPassword().isEmpty()) {
-            if (password == null || password.isEmpty()
-                    || !MessageDigest.isEqual(
-                    room.getPassword().getBytes(StandardCharsets.UTF_8),
-                    password.getBytes(StandardCharsets.UTF_8))) {
+            if (password == null || password.isEmpty() || !bcrypt.matches(password, room.getPassword())) {
                 throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
                         "Room password is required or incorrect");
             }
@@ -419,12 +421,20 @@ public class RoomService {
                         "Player not in room"));
 
         if (GameConstants.ROOM_STATUS_IN_GAME.equals(room.getStatus())) {
+            // Record abandonment for penalty tracking
             matchPresenceService.recordUserPresence(userId, MatchPresenceRequest.builder()
                     .matchId(room.getMatchId())
                     .userId(userId)
                     .state(MatchPresenceState.ABANDONED)
                     .reason("INTENTIONAL_LEAVE")
                     .build());
+            // Remove from room so existsUserInActiveRoom() returns false immediately.
+            // This allows the player to join a new room without waiting for match_ended.
+            // The DS still tracks the player via FishNet; this only affects lobby DB state.
+            roomPlayerRepository.deleteByRoomIdAndUserId(roomId, userId);
+            connectionManager.updateUserRoom(userId, null);
+            updateCurrentRoomStatus(userId, null);
+            log.info("[Room] User {} left IN_GAME room {} — abandonment recorded, room row removed", userId, roomId);
             return;
         }
 
@@ -1068,7 +1078,7 @@ public class RoomService {
         if (request.getIsLocked() != null) {
             room.setIsLocked(request.getIsLocked());
             
-            // Update password
+            // Update password (always store hashed, never plain text)
             if (request.getIsLocked()) {
                 // Lock room - set password if provided, otherwise keep current
                 if (request.getPassword() != null) {
@@ -1077,11 +1087,11 @@ public class RoomService {
                         room.setIsLocked(false);
                         room.setPassword(null);
                     } else {
-                        // Set new password
-                        room.setPassword(request.getPassword());
+                        // Hash before storing
+                        room.setPassword(bcrypt.encode(request.getPassword()));
                     }
                 }
-                // If password is null and isLocked is true, keep current password
+                // If password is null and isLocked is true, keep current hashed password
             } else {
                 // Unlock room - remove password
                 room.setPassword(null);
@@ -1093,8 +1103,8 @@ public class RoomService {
                 room.setPassword(null);
                 room.setIsLocked(false);
             } else {
-                // Set password and lock
-                room.setPassword(request.getPassword());
+                // Hash before storing and lock
+                room.setPassword(bcrypt.encode(request.getPassword()));
                 room.setIsLocked(true);
             }
         }

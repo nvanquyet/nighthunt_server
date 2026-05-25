@@ -68,8 +68,9 @@ public class MatchResultService {
 
     @Transactional
     public MatchEndResponse processMatchEnd(MatchEndRequest req, boolean isRanked) {
-        // 1. Validate match
-        Match match = matchRepository.findByMatchId(req.getMatchId())
+        // 1. Validate match — use SELECT FOR UPDATE so concurrent end-calls for the same
+        //    matchId are serialized at DB level, preventing double ELO/coin writes.
+        Match match = matchRepository.findByMatchIdForUpdate(req.getMatchId())
                 .orElseThrow(() -> new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                         "Match not found: " + req.getMatchId()));
 
