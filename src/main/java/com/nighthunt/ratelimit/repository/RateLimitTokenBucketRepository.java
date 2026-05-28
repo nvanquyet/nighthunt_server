@@ -13,7 +13,7 @@ import java.util.Optional;
 @Repository
 public interface RateLimitTokenBucketRepository extends JpaRepository<RateLimitTokenBucket, Long> {
     
-    Optional<RateLimitTokenBucket> findByRuleIdAndIdentifier(Long ruleId, String identifier);
+    Optional<RateLimitTokenBucket> findFirstByRuleIdAndIdentifier(Long ruleId, String identifier);
     
     @Modifying
     @Query("DELETE FROM RateLimitTokenBucket t WHERE t.lastRefillAt < :cutoffTime")

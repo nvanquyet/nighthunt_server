@@ -13,7 +13,7 @@ import java.util.Optional;
 @Repository
 public interface RateLimitTrackingRepository extends JpaRepository<RateLimitTracking, Long> {
     
-    Optional<RateLimitTracking> findByRuleIdAndIdentifier(Long ruleId, String identifier);
+    Optional<RateLimitTracking> findFirstByRuleIdAndIdentifierOrderByWindowEndDesc(Long ruleId, String identifier);
     
     @Modifying
     @Query("DELETE FROM RateLimitTracking r WHERE r.windowEnd < :cutoffTime")

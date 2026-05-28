@@ -70,7 +70,7 @@ public class RateLimitService {
         LocalDateTime windowEnd = now.plusSeconds(rule.getWindowSeconds());
         
         Optional<RateLimitTracking> tracking = rateLimitTrackingRepository
-                .findByRuleIdAndIdentifier(rule.getId(), identifier);
+                .findFirstByRuleIdAndIdentifierOrderByWindowEndDesc(rule.getId(), identifier);
         
         if (tracking.isPresent()) {
             RateLimitTracking track = tracking.get();
@@ -127,7 +127,7 @@ public class RateLimitService {
         LocalDateTime now = LocalDateTime.now();
         
         Optional<RateLimitTokenBucket> bucketOpt = rateLimitTokenBucketRepository
-                .findByRuleIdAndIdentifier(rule.getId(), identifier);
+                .findFirstByRuleIdAndIdentifier(rule.getId(), identifier);
         
         RateLimitTokenBucket bucket;
         
