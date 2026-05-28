@@ -121,11 +121,22 @@ public class RequestQueueInterceptor implements HandlerInterceptor {
      */
     private boolean shouldSkipQueue(String endpoint) {
         // Skip queue for health checks, static resources, WebSocket, etc.
-        return endpoint.startsWith("/actuator") ||
+        if (endpoint.startsWith("/actuator") ||
                endpoint.startsWith("/dashboard") ||
                endpoint.startsWith("/ws/") ||
                endpoint.startsWith("/static") ||
-               endpoint.equals("/health");
+               endpoint.equals("/health")) {
+            return true;
+        }
+        // Auth endpoints need synchronous response (JWT token, credentials).
+        // Queueing them returns 202 with no token, breaking all downstream calls.
+        if (endpoint.startsWith("/auth/login") ||
+               endpoint.startsWith("/auth/register") ||
+               endpoint.startsWith("/auth/refresh-token") ||
+               endpoint.startsWith("/auth/auto-login")) {
+            return true;
+        }
+        return false;
     }
     
     /**
