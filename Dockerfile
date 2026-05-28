@@ -11,6 +11,10 @@ FROM gradle:8.5-jdk17 AS build
 WORKDIR /app
 COPY build.gradle settings.gradle ./
 COPY gradle ./gradle
+# Cache dependency download as a separate layer.
+# This layer is only invalidated when build.gradle or settings.gradle changes,
+# not on every src/ change — shaves 2-3 min off incremental builds.
+RUN gradle dependencies --no-daemon || true
 COPY src ./src
 RUN gradle build -x test --no-daemon
 

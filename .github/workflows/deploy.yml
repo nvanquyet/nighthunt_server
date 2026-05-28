@@ -92,7 +92,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=min
+          cache-to: type=gha,mode=max
 
       - name: Keep latest GHCR image and one backup
         env:
@@ -219,8 +219,8 @@ jobs:
             compose rm -sf mysql redis 2>/dev/null || true
             compose up -d mysql redis
 
-            echo "=== Clean Docker builder cache (prevent snapshot corruption) ==="
-            docker builder prune -a -f 2>/dev/null || true
+            echo "=== Prune stale builder cache (>24 h old only) ==="
+            docker builder prune --filter until=24h -f 2>/dev/null || true
 
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
             compose rm -sf nighthunt-relay 2>/dev/null || true
@@ -239,7 +239,8 @@ jobs:
             DB_USER=$(grep ^DB_USERNAME "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             DB_PASS=$(grep ^DB_PASSWORD "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             DB_NAME=$(grep ^MYSQL_DATABASE "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
-            docker exec nighthunt-mysql mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e \
+            MYSQL_PWD="$DB_PASS" docker exec -e MYSQL_PWD="$DB_PASS" nighthunt-mysql \
+              mysql -u"$DB_USER" "$DB_NAME" -e \
               "UPDATE dedicated_server SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
               2>/dev/null && echo "Stale DS records cleaned." || echo "WARN: DB cleanup failed (non-fatal)"
 
@@ -268,9 +269,30 @@ jobs:
             compose rm -sf dashboard 2>/dev/null || true
             compose up -d --no-deps --build dashboard
 
+            echo "=== Health check: dashboard (20s timeout) ==="
+            DASH_UP=false
+            for i in $(seq 1 4); do
+              sleep 5
+              if curl -sf "http://localhost:3000/health" >/dev/null 2>&1; then
+                echo "Dashboard UP"
+                DASH_UP=true
+                break
+              fi
+              echo "Waiting for dashboard... ($i/4)"
+            done
+            if [ "$DASH_UP" != "true" ]; then
+              echo "ERROR: Dashboard health check failed"
+              compose logs dashboard --tail=40
+              exit 1
+            fi
+
             echo "=== Ensure nginx reverse proxy is in compose project: $COMPOSE_PROJECT_NAME ==="
             compose rm -sf nginx 2>/dev/null || true
             compose up -d --no-deps nginx
+
+            echo "=== Verify nginx is up ==="
+            sleep 3
+            compose ps nginx | grep -q "Up" || { echo "ERROR: nginx container not running"; compose logs nginx --tail=30; exit 1; }
 
             echo "=== VPS Docker cleanup ==="
             # Stopped containers
@@ -285,8 +307,8 @@ jobs:
               | xargs -r docker rmi -f 2>/dev/null && echo "Old DS images pruned" || true
             # Remove dangling (untagged) image layers
             docker image prune -f 2>/dev/null || true
-            # Remove builder cache older than 48 h
-            docker builder prune --filter until=48h -f 2>/dev/null || true
+            # Remove builder cache older than 24 h (stale build layers from relay/dashboard)
+            docker builder prune --filter until=24h -f 2>/dev/null || true
             # Remove volumes not attached to any container (preserves mysql_data, redis_data)
             docker volume prune -f 2>/dev/null || true
             echo "=== Disk usage after cleanup ==="
@@ -334,18 +356,18 @@ jobs:
             [ -n "${ADMIN_SECRET}" ] || (echo "❌ ADMIN_SECRET not found in .env.production" && exit 1)
             [ -n "${DS_IMAGE}"     ] || (echo "❌ DS_IMAGE_REF not found in .env.production"  && exit 1)
 
-            echo "=== [1/4] Backend health ==="
+            echo "=== [1/5] Backend health ==="
             STATUS=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1)
             [ "$STATUS" = '"status":"UP"' ] || (echo "❌ Backend not healthy: $STATUS" && exit 1)
             echo "✅ Backend UP"
 
-            echo "=== [2/4] DB & Redis health components ==="
+            echo "=== [2/5] DB & Redis health components ==="
             HEALTH=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health")
             echo "${HEALTH}" | grep -o '"db":{[^}]*}' || true
             echo "${HEALTH}" | grep -o '"redis":{[^}]*}' || true
             echo "✅ Components checked"
 
-            echo "=== [3/4] DS admin API ==="
+            echo "=== [3/5] DS admin API ==="
             # Use -s (silent) without -f so we capture the body even on HTTP error codes.
             # Check HTTP status separately to emit a useful error message.
             HTTP_CODE=$(curl -s -o /tmp/admin_resp.json -w "%{http_code}" \
@@ -359,7 +381,7 @@ jobs:
             echo "${RESP}" | grep -q '"success":true' || (echo "❌ Admin API success=false: ${RESP}" && exit 1)
             echo "✅ Admin DS API OK (HTTP ${HTTP_CODE})"
 
-            echo "=== [4/4] DS image on VPS ==="
+            echo "=== [4/5] DS image on VPS ==="
             if docker image inspect "${DS_IMAGE}" --format "{{.Id}}" >/dev/null 2>&1; then
               echo "✅ DS image already local: ${DS_IMAGE}"
               # Verify binary inside image
@@ -368,6 +390,15 @@ jobs:
               && echo "✅ DS binary verified inside image"
             else
               echo "⚠️  DS image not yet on VPS (pull in progress): ${DS_IMAGE}"
+            fi
+
+            echo "=== [5/5] Dashboard health ==="
+            DASH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/health" || true)
+            if [ "${DASH_STATUS}" = "200" ]; then
+              echo "✅ Dashboard UP (HTTP 200)"
+            else
+              echo "❌ Dashboard health check failed (HTTP ${DASH_STATUS})"
+              exit 1
             fi
 
             echo ""
