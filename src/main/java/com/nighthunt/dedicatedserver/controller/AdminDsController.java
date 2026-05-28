@@ -358,7 +358,9 @@ public class AdminDsController {
             row.put("startedAt",     m.getStartedAt());
             row.put("finishedAt",    m.getFinishedAt());
             row.put("createdAt",     m.getCreatedAt());
-            row.put("durationSeconds", m.getDurationSeconds());
+            long dur = (m.getStartedAt() != null && m.getFinishedAt() != null)
+                    ? java.time.Duration.between(m.getStartedAt(), m.getFinishedAt()).getSeconds() : 0L;
+            row.put("durationSeconds", dur);
             return row;
         }).toList();
 
@@ -404,7 +406,9 @@ public class AdminDsController {
         details.put("startedAt",       match.getStartedAt());
         details.put("finishedAt",      match.getFinishedAt());
         details.put("createdAt",       match.getCreatedAt());
-        details.put("durationSeconds", match.getDurationSeconds());
+        long detailDur = (match.getStartedAt() != null && match.getFinishedAt() != null)
+                ? java.time.Duration.between(match.getStartedAt(), match.getFinishedAt()).getSeconds() : 0L;
+        details.put("durationSeconds", detailDur);
 
         List<Map<String, Object>> players = playerResults.stream().map(p -> {
             Map<String, Object> pm = new LinkedHashMap<>();
