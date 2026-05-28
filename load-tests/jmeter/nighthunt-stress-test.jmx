@@ -1,20 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NightHunt Backend - Full Logic Stress Test
+  5 Scenarios: A=Mixed, B=Auth, C=Matchmaking, D=Room, E=Social
+
+  CLI: jmeter -n -t nighthunt-stress-test.jmx
+       -Jvusers=500   (or 1000 / 2000 / 5000 / any custom number)
+       -Jrampup=30    -Jduration=60
+       -Jpassword=StressTest@123
+       -l results/scenario-500vu.jtl  -e -o reports/scenario-500vu/
+
+  Scenarios (enable/disable in GUI or use -JscenarioX=true):
+    [A] Mixed Realistic  — default ON  — report table metrics
+    [B] Auth Flood       — default OFF — login/logout churn
+    [C] Matchmaking      — default OFF — queue join/poll/leave
+    [D] Room Lifecycle   — default OFF — quick-play/leave
+    [E] Social Reads     — default OFF — friends/history
+-->
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <!-- ══════════════════════════════════════════════════════════════════
-         NightHunt Backend Stress Test
-         Scenarios: 500 VU / 1000 VU / 2000 VU
-         Run:  jmeter -n -t nighthunt-stress-test.jmx
-                      -Jvusers=500 -Jrampup=30 -Jduration=60
-                      -Jusername=testuser -Jpassword=Test@123
-                      -l results/scenario-500vu.jtl
-                      -e -o reports/scenario-500vu/
-         ══════════════════════════════════════════════════════════════════ -->
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan"
-              testname="NightHunt Backend Stress Test" enabled="true">
+              testname="NightHunt Full Logic Stress Test" enabled="true">
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
-      <!-- ── User-Defined Variables (override with -J flags on CLI) ── -->
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments"
                    guiclass="ArgumentsPanel" testclass="Arguments">
         <collectionProp name="Arguments.arguments">
@@ -30,16 +37,14 @@
             <stringProp name="Argument.name">PROTOCOL</stringProp>
             <stringProp name="Argument.value">https</stringProp>
           </elementProp>
-          <!-- Override these via -Jusername / -Jpassword on CLI -->
-          <elementProp name="USERNAME" elementType="Argument">
-            <stringProp name="Argument.name">USERNAME</stringProp>
-            <stringProp name="Argument.value">${__P(username,testuser1)}</stringProp>
+          <elementProp name="USER_PREFIX" elementType="Argument">
+            <stringProp name="Argument.name">USER_PREFIX</stringProp>
+            <stringProp name="Argument.value">nh_stress_</stringProp>
           </elementProp>
-          <elementProp name="PASSWORD" elementType="Argument">
-            <stringProp name="Argument.name">PASSWORD</stringProp>
-            <stringProp name="Argument.value">${__P(password,Test@123456)}</stringProp>
+          <elementProp name="USER_PASSWORD" elementType="Argument">
+            <stringProp name="Argument.name">USER_PASSWORD</stringProp>
+            <stringProp name="Argument.value">${__P(password,StressTest@123)}</stringProp>
           </elementProp>
-          <!-- Load scenario params (override with -J flags) -->
           <elementProp name="VU_COUNT" elementType="Argument">
             <stringProp name="Argument.name">VU_COUNT</stringProp>
             <stringProp name="Argument.value">${__P(vusers,500)}</stringProp>
@@ -52,62 +57,59 @@
             <stringProp name="Argument.name">DURATION</stringProp>
             <stringProp name="Argument.value">${__P(duration,60)}</stringProp>
           </elementProp>
+          <elementProp name="GAME_MODE" elementType="Argument">
+            <stringProp name="Argument.name">GAME_MODE</stringProp>
+            <stringProp name="Argument.value">2v2</stringProp>
+          </elementProp>
         </collectionProp>
       </elementProp>
     </TestPlan>
     <hashTree>
 
-      <!-- ══════════════════════════════════════════════════════════════════
-           1. SETUP: Login once → extract JWT → store as JMeter property
-           ══════════════════════════════════════════════════════════════════ -->
+      <!-- ================================================================
+           SETUP: Pre-register test accounts nh_stress_1..N
+           409 Conflict (already exists) is OK - safe to re-run.
+           ================================================================ -->
       <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup"
-                        testname="[Setup] Login and Get JWT Token" enabled="true">
-        <stringProp name="ThreadGroup.num_threads">1</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
-        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
-        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+                        testname="[0] SETUP - Pre-register test accounts" enabled="true">
+        <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">10</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <stringProp name="LoopController.loops">1</stringProp>
         </elementProp>
       </SetupThreadGroup>
       <hashTree>
-        <!-- HTTP Request Defaults for setup -->
-        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement"
-                           testname="HTTP Defaults (Setup)" enabled="true">
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
           <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
           <stringProp name="HTTPSampler.port">${PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
-          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">15000</stringProp>
           <stringProp name="HTTPSampler.response_timeout">15000</stringProp>
         </ConfigTestElement>
         <hashTree/>
-
-        <!-- Login Request -->
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                          testname="POST /api/auth/login" enabled="true">
+                          testname="POST /api/auth/register" enabled="true">
           <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USERNAME}","password":"${PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}","email":"${USER_PREFIX}${__threadNum}@stresstest.local"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+          <stringProp name="HTTPSampler.path">/api/auth/register</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
-          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
         </HTTPSamplerProxy>
         <hashTree>
-          <!-- Content-Type header -->
-          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
-                         testname="Content-Type JSON" enabled="true">
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
             <collectionProp name="HeaderManager.headers">
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
@@ -116,59 +118,35 @@
             </collectionProp>
           </HeaderManager>
           <hashTree/>
-
-          <!-- Extract JWT from response: {"data":{"accessToken":"..."}} -->
-          <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
-                             testname="Extract JWT Token" enabled="true">
-            <stringProp name="JSONPathExtractor.referenceName">JWT_TOKEN</stringProp>
-            <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
-            <stringProp name="JSONPathExtractor.defaultValues">TOKEN_NOT_FOUND</stringProp>
-            <stringProp name="JSONPathExtractor.match_no">0</stringProp>
-          </JSONPathExtractor>
-          <hashTree/>
-
-          <!-- Store token as JMeter property (accessible to all thread groups) -->
-          <BeanShellPostProcessor guiclass="TestBeanGUI" testclass="BeanShellPostProcessor"
-                                  testname="Store Token as Property" enabled="true">
-            <stringProp name="filename"></stringProp>
-            <stringProp name="parameters"></stringProp>
-            <boolProp name="resetInterpreter">false</boolProp>
-            <stringProp name="script">
-String token = vars.get("JWT_TOKEN");
-if (token != null &amp;&amp; !token.equals("TOKEN_NOT_FOUND")) {
-    props.put("jwt_token", token);
-    log.info("JWT Token stored: " + token.substring(0, Math.min(20, token.length())) + "...");
-} else {
-    log.error("LOGIN FAILED — check credentials! Response: " + prev.getResponseDataAsString());
-}
-            </stringProp>
-          </BeanShellPostProcessor>
-          <hashTree/>
-
-          <!-- Assert login succeeded -->
+          <!-- Allow 200 (new) or 409 (already exists) -->
           <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                             testname="Assert Login 200" enabled="true">
+                             testname="Assert 200 or 409" enabled="true">
             <collectionProp name="Asserion.test_strings">
               <stringProp name="49586">200</stringProp>
+              <stringProp name="1609">409</stringProp>
             </collectionProp>
             <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
             <boolProp name="Assertion.assume_success">false</boolProp>
-            <intProp name="Assertion.test_type">8</intProp>
+            <intProp name="Assertion.test_type">40</intProp>
           </ResponseAssertion>
           <hashTree/>
         </hashTree>
       </hashTree>
 
-      <!-- ══════════════════════════════════════════════════════════════════
-           2. MAIN THREAD GROUP — parameterized by -Jvusers, -Jrampup, -Jduration
-           ══════════════════════════════════════════════════════════════════ -->
+      <!-- ================================================================
+           SCENARIO A - MIXED REALISTIC (default ON)
+           Per-VU login, then weighted mix of all major feature endpoints.
+           Use this for Bảng 4.2 style throughput/latency report.
+           Endpoints: check-session(35%), stats(20%), friends(15%),
+                      game-modes(15%), match-history(15%)
+           ================================================================ -->
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
-                   testname="[Main] Concurrent Users — ${VU_COUNT} VU" enabled="true">
+                   testname="[A] Mixed Realistic - ${VU_COUNT} VU" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
         <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
-        <stringProp name="ThreadGroup.delay">2</stringProp>
+        <stringProp name="ThreadGroup.delay">12</stringProp>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
           <boolProp name="LoopController.continue_forever">true</boolProp>
@@ -176,10 +154,7 @@ if (token != null &amp;&amp; !token.equals("TOKEN_NOT_FOUND")) {
         </elementProp>
       </ThreadGroup>
       <hashTree>
-
-        <!-- HTTP Defaults for main tests -->
-        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement"
-                           testname="HTTP Defaults" enabled="true">
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
@@ -188,17 +163,55 @@ if (token != null &amp;&amp; !token.equals("TOKEN_NOT_FOUND")) {
           <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
           <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
-          <boolProp name="HTTPSampler.image_parser">false</boolProp>
         </ConfigTestElement>
         <hashTree/>
-
-        <!-- Authorization Header (shared JWT from setUp) -->
+        <!-- Per-VU login (runs once per VU lifetime) -->
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController"
+                            testname="Per-VU Login (once)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/login [per-VU]" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract JWT" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">INVALID_TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <!-- Auth header used by all requests in this thread group -->
         <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
-                       testname="Authorization Header" enabled="true">
+                       testname="Auth Header" enabled="true">
           <collectionProp name="HeaderManager.headers">
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Authorization</stringProp>
-              <stringProp name="Header.value">Bearer ${__property(jwt_token)}</stringProp>
+              <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
             </elementProp>
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Content-Type</stringProp>
@@ -207,173 +220,94 @@ if (token != null &amp;&amp; !token.equals("TOKEN_NOT_FOUND")) {
           </collectionProp>
         </HeaderManager>
         <hashTree/>
-
-        <!-- HTTP Cache Manager (disable caching for accurate results) -->
-        <CacheManager guiclass="CacheManagerGui" testclass="CacheManager"
-                      testname="HTTP Cache Manager" enabled="true">
-          <boolProp name="clearEachIteration">true</boolProp>
-          <boolProp name="useExpires">false</boolProp>
-        </CacheManager>
-        <hashTree/>
-
-        <!-- ── Transaction 1: Check Session (40% weight — simulate active players) ─ -->
-        <TransactionController guiclass="TransactionControllerGui"
-                               testclass="TransactionController"
-                               testname="T1: Check Session" enabled="true">
-          <boolProp name="TransactionController.includeTimers">false</boolProp>
-        </TransactionController>
+        <!-- 35% check-session -->
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController"
+                              testname="35% - Check Session" enabled="true">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <floatProp name="ThroughputController.percentThroughput">35.0</floatProp>
+        </ThroughputController>
         <hashTree>
-          <ThroughputController guiclass="ThroughputControllerGui"
-                                testclass="ThroughputController"
-                                testname="40% weight" enabled="true">
-            <intProp name="ThroughputController.style">1</intProp>
-            <boolProp name="ThroughputController.perThread">false</boolProp>
-            <floatProp name="ThroughputController.percentThroughput">40.0</floatProp>
-          </ThroughputController>
-          <hashTree>
-            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                              testname="GET /api/auth/check-session" enabled="true">
-              <stringProp name="HTTPSampler.path">/api/auth/check-session</stringProp>
-              <stringProp name="HTTPSampler.method">GET</stringProp>
-              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-            </HTTPSamplerProxy>
-            <hashTree>
-              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                                 testname="Assert 2xx" enabled="true">
-                <collectionProp name="Asserion.test_strings">
-                  <stringProp name="49586">2\d\d</stringProp>
-                </collectionProp>
-                <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-                <boolProp name="Assertion.assume_success">false</boolProp>
-                <intProp name="Assertion.test_type">1</intProp>
-              </ResponseAssertion>
-              <hashTree/>
-            </hashTree>
-          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/auth/check-session" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/auth/check-session</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
         </hashTree>
-
-        <!-- ── Transaction 2: Backend Stats (30% weight — dashboard/lobby polling) ─ -->
-        <TransactionController guiclass="TransactionControllerGui"
-                               testclass="TransactionController"
-                               testname="T2: Backend Stats" enabled="true">
-          <boolProp name="TransactionController.includeTimers">false</boolProp>
-        </TransactionController>
+        <!-- 20% backend/stats -->
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController"
+                              testname="20% - Backend Stats" enabled="true">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <floatProp name="ThroughputController.percentThroughput">20.0</floatProp>
+        </ThroughputController>
         <hashTree>
-          <ThroughputController guiclass="ThroughputControllerGui"
-                                testclass="ThroughputController"
-                                testname="30% weight" enabled="true">
-            <intProp name="ThroughputController.style">1</intProp>
-            <boolProp name="ThroughputController.perThread">false</boolProp>
-            <floatProp name="ThroughputController.percentThroughput">30.0</floatProp>
-          </ThroughputController>
-          <hashTree>
-            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                              testname="GET /api/backend/stats" enabled="true">
-              <stringProp name="HTTPSampler.path">/api/backend/stats</stringProp>
-              <stringProp name="HTTPSampler.method">GET</stringProp>
-              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-            </HTTPSamplerProxy>
-            <hashTree>
-              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                                 testname="Assert 2xx" enabled="true">
-                <collectionProp name="Asserion.test_strings">
-                  <stringProp name="49586">2\d\d</stringProp>
-                </collectionProp>
-                <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-                <boolProp name="Assertion.assume_success">false</boolProp>
-                <intProp name="Assertion.test_type">1</intProp>
-              </ResponseAssertion>
-              <hashTree/>
-            </hashTree>
-          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/backend/stats" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/backend/stats</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
         </hashTree>
-
-        <!-- ── Transaction 3: Game Modes Available (20% weight — lobby screen) ─── -->
-        <TransactionController guiclass="TransactionControllerGui"
-                               testclass="TransactionController"
-                               testname="T3: Game Modes" enabled="true">
-          <boolProp name="TransactionController.includeTimers">false</boolProp>
-        </TransactionController>
+        <!-- 15% friends -->
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController"
+                              testname="15% - Friend List" enabled="true">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+        </ThroughputController>
         <hashTree>
-          <ThroughputController guiclass="ThroughputControllerGui"
-                                testclass="ThroughputController"
-                                testname="20% weight" enabled="true">
-            <intProp name="ThroughputController.style">1</intProp>
-            <boolProp name="ThroughputController.perThread">false</boolProp>
-            <floatProp name="ThroughputController.percentThroughput">20.0</floatProp>
-          </ThroughputController>
-          <hashTree>
-            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                              testname="GET /api/game-modes/available" enabled="true">
-              <stringProp name="HTTPSampler.path">/api/game-modes/available</stringProp>
-              <stringProp name="HTTPSampler.method">GET</stringProp>
-              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-            </HTTPSamplerProxy>
-            <hashTree>
-              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                                 testname="Assert 2xx" enabled="true">
-                <collectionProp name="Asserion.test_strings">
-                  <stringProp name="49586">2\d\d</stringProp>
-                </collectionProp>
-                <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-                <boolProp name="Assumption.assume_success">false</boolProp>
-                <intProp name="Assertion.test_type">1</intProp>
-              </ResponseAssertion>
-              <hashTree/>
-            </hashTree>
-          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/friends" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/friends</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
         </hashTree>
-
-        <!-- ── Transaction 4: Match History (10% weight — DB read, heaviest) ────── -->
-        <TransactionController guiclass="TransactionControllerGui"
-                               testclass="TransactionController"
-                               testname="T4: Match History (DB read)" enabled="true">
-          <boolProp name="TransactionController.includeTimers">false</boolProp>
-        </TransactionController>
+        <!-- 15% game-modes -->
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController"
+                              testname="15% - Game Modes" enabled="true">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+        </ThroughputController>
         <hashTree>
-          <ThroughputController guiclass="ThroughputControllerGui"
-                                testclass="ThroughputController"
-                                testname="10% weight" enabled="true">
-            <intProp name="ThroughputController.style">1</intProp>
-            <boolProp name="ThroughputController.perThread">false</boolProp>
-            <floatProp name="ThroughputController.percentThroughput">10.0</floatProp>
-          </ThroughputController>
-          <hashTree>
-            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                              testname="GET /api/match/history?page=0&amp;size=10" enabled="true">
-              <stringProp name="HTTPSampler.path">/api/match/history?page=0&amp;size=10</stringProp>
-              <stringProp name="HTTPSampler.method">GET</stringProp>
-              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-            </HTTPSamplerProxy>
-            <hashTree>
-              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                                 testname="Assert 2xx" enabled="true">
-                <collectionProp name="Asserion.test_strings">
-                  <stringProp name="49586">2\d\d</stringProp>
-                </collectionProp>
-                <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-                <boolProp name="Assertion.assume_success">false</boolProp>
-                <intProp name="Assertion.test_type">1</intProp>
-              </ResponseAssertion>
-              <hashTree/>
-            </hashTree>
-          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/game-modes/available" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/game-modes/available</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
         </hashTree>
-
-        <!-- Think time: 100-500ms random pause (simulate real user behavior) -->
-        <GaussianRandomTimer guiclass="GaussianRandomTimerGui"
-                             testclass="GaussianRandomTimer"
-                             testname="Think Time (100-500ms)" enabled="true">
-          <stringProp name="ConstantTimer.delay">100</stringProp>
-          <stringProp name="RandomTimer.range">400</stringProp>
+        <!-- 15% match-history -->
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController"
+                              testname="15% - Match History" enabled="true">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+        </ThroughputController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/match/history?page=0&amp;size=10" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/match/history?page=0&amp;size=10</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+        </hashTree>
+        <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer"
+                             testname="Think Time 200-800ms" enabled="true">
+          <stringProp name="ConstantTimer.delay">200</stringProp>
+          <stringProp name="RandomTimer.range">600</stringProp>
         </GaussianRandomTimer>
         <hashTree/>
-
-        <!-- ── LISTENERS ─────────────────────────────────────────────────── -->
-
-        <!-- Aggregate Report: shows Avg/Min/Max/p90/p95/p99/Throughput/Error% per endpoint -->
         <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
-                         testname="Aggregate Report" enabled="true">
+                         testname="Aggregate Report [A]" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -381,58 +315,590 @@ if (token != null &amp;&amp; !token.equals("TOKEN_NOT_FOUND")) {
               <time>true</time><latency>true</latency><timestamp>true</timestamp>
               <success>true</success><label>true</label><code>true</code>
               <message>true</message><threadName>true</threadName>
-              <dataType>true</dataType><encoding>false</encoding>
-              <assertions>true</assertions><subresults>true</subresults>
-              <responseData>false</responseData><samplerData>false</samplerData>
-              <xml>false</xml><fieldNames>true</fieldNames>
-              <responseHeaders>false</responseHeaders><requestHeaders>false</requestHeaders>
-              <responseDataOnError>false</responseDataOnError>
-              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <dataType>true</dataType><fieldNames>true</fieldNames>
               <bytes>true</bytes><sentBytes>true</sentBytes>
-              <threadCounts>true</threadCounts><idleTime>true</idleTime>
-              <connectTime>true</connectTime>
+              <threadCounts>true</threadCounts>
             </value>
           </objProp>
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-
-        <!-- Summary Report: overall totals -->
         <ResultCollector guiclass="SummaryReport" testclass="ResultCollector"
-                         testname="Summary Report" enabled="true">
+                         testname="Summary Report [A]" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
             <value class="SampleSaveConfiguration">
-              <time>true</time><latency>true</latency>
-              <timestamp>true</timestamp><success>true</success>
-              <label>true</label><code>true</code><message>true</message>
+              <time>true</time><latency>true</latency><timestamp>true</timestamp>
+              <success>true</success><label>true</label><code>true</code>
               <fieldNames>true</fieldNames>
             </value>
           </objProp>
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-
-        <!-- View Results Tree (disable in high-load runs, enable for debug) -->
-        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector"
-                         testname="View Results Tree [DEBUG ONLY - disable for load test]"
-                         enabled="false">
-          <boolProp name="ResultCollector.error_logging">false</boolProp>
-          <objProp>
-            <name>saveConfig</name>
-            <value class="SampleSaveConfiguration">
-              <time>true</time><latency>true</latency>
-              <timestamp>true</timestamp><success>true</success>
-              <fieldNames>true</fieldNames>
-            </value>
-          </objProp>
-          <stringProp name="filename"></stringProp>
-        </ResultCollector>
-        <hashTree/>
-
       </hashTree>
-      <!-- END Main Thread Group -->
+
+      <!-- ================================================================
+           SCENARIO B - AUTH FLOOD (default OFF)
+           Flow: Login -> check-session -> logout -> repeat
+           Tests: Redis session store, JWT generation throughput
+           DISABLE [A] before enabling this.
+           ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[B] Auth Flood - ${VU_COUNT} VU [DISABLE A first]"
+                   enabled="false">
+        <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">12</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
+          <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController"
+                               testname="Auth Cycle: Login-Session-Logout" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/login" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract TOKEN" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">INVALID</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/auth/check-session" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/auth/check-session</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/logout" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/auth/logout</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer"
+                             testname="Think Time 50-300ms" enabled="true">
+          <stringProp name="ConstantTimer.delay">50</stringProp>
+          <stringProp name="RandomTimer.range">250</stringProp>
+        </GaussianRandomTimer>
+        <hashTree/>
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
+                         testname="Aggregate Report [B]" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time><latency>true</latency><timestamp>true</timestamp>
+              <success>true</success><label>true</label><code>true</code>
+              <fieldNames>true</fieldNames>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+
+      <!-- ================================================================
+           SCENARIO C - MATCHMAKING CHURN (default OFF)
+           Flow per VU: Login (once) -> [JOIN queue -> POLL x5 -> LEAVE -> repeat]
+           Tests: Redis queue ops, matchmaking service concurrency
+           DISABLE [A] before enabling this.
+           ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[C] Matchmaking Churn - ${VU_COUNT} VU [DISABLE A first]"
+                   enabled="false">
+        <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">12</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
+          <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController"
+                            testname="Per-VU Login (once)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/login [per-VU]" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract TOKEN" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">INVALID</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
+                       testname="Auth Header" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+            </elementProp>
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Content-Type</stringProp>
+              <stringProp name="Header.value">application/json</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController"
+                               testname="Matchmaking Cycle: JOIN-POLL-LEAVE" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/matchmaking/queue (JOIN)" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"gameMode":"${GAME_MODE}","platform":"MOBILE"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/matchmaking/queue</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <LoopController guiclass="LoopControlGui" testclass="LoopController"
+                          testname="Poll Status x5" enabled="true">
+            <boolProp name="LoopController.continue_forever">false</boolProp>
+            <stringProp name="LoopController.loops">5</stringProp>
+          </LoopController>
+          <hashTree>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                              testname="GET /api/matchmaking/queue/status" enabled="true">
+              <stringProp name="HTTPSampler.path">/api/matchmaking/queue/status</stringProp>
+              <stringProp name="HTTPSampler.method">GET</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer"
+                           testname="3s poll interval" enabled="true">
+              <stringProp name="ConstantTimer.delay">3000</stringProp>
+            </ConstantTimer>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="DELETE /api/matchmaking/queue (LEAVE)" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/matchmaking/queue</stringProp>
+            <stringProp name="HTTPSampler.method">DELETE</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+        </hashTree>
+        <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer"
+                             testname="Inter-cycle pause 1-3s" enabled="true">
+          <stringProp name="ConstantTimer.delay">1000</stringProp>
+          <stringProp name="RandomTimer.range">2000</stringProp>
+        </GaussianRandomTimer>
+        <hashTree/>
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
+                         testname="Aggregate Report [C]" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time><latency>true</latency><timestamp>true</timestamp>
+              <success>true</success><label>true</label><code>true</code>
+              <fieldNames>true</fieldNames>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+
+      <!-- ================================================================
+           SCENARIO D - ROOM LIFECYCLE (default OFF)
+           Flow: Login (once) -> [QuickPlay -> browse rooms -> leave -> repeat]
+           Tests: DB write throughput, room state management
+           DISABLE [A] before enabling this.
+           ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[D] Room Lifecycle - ${VU_COUNT} VU [DISABLE A first]"
+                   enabled="false">
+        <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">12</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
+          <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController"
+                            testname="Per-VU Login (once)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/login [per-VU]" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract TOKEN" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">INVALID</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
+                       testname="Auth Header" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+            </elementProp>
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Content-Type</stringProp>
+              <stringProp name="Header.value">application/json</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController"
+                               testname="Room Lifecycle: QuickPlay-Browse-Leave" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/rooms/quick-play" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"mode":"${GAME_MODE}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/rooms/quick-play</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract ROOM_ID" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">ROOM_ID</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.id</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">0</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="GET /api/rooms (browse list)" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/rooms</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/rooms/${ROOM_ID}/leave" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/rooms/${ROOM_ID}/leave</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+        </hashTree>
+        <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer"
+                             testname="Think Time 500ms-2s" enabled="true">
+          <stringProp name="ConstantTimer.delay">500</stringProp>
+          <stringProp name="RandomTimer.range">1500</stringProp>
+        </GaussianRandomTimer>
+        <hashTree/>
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
+                         testname="Aggregate Report [D]" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time><latency>true</latency><timestamp>true</timestamp>
+              <success>true</success><label>true</label><code>true</code>
+              <fieldNames>true</fieldNames>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+
+      <!-- ================================================================
+           SCENARIO E - SOCIAL READ LOAD (default OFF)
+           Flow: Login (once) -> [friends + friend-requests + match-history -> repeat]
+           Tests: DB read query load, connection pool
+           ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[E] Social Reads - ${VU_COUNT} VU [DISABLE A first]"
+                   enabled="false">
+        <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">12</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
+          <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController"
+                            testname="Per-VU Login (once)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="POST /api/auth/login [per-VU]" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPathExtractor guiclass="JSONPathExtractorGui" testclass="JSONPathExtractor"
+                               testname="Extract TOKEN" enabled="true">
+              <stringProp name="JSONPathExtractor.referenceName">TOKEN</stringProp>
+              <stringProp name="JSONPathExtractor.jsonPathExprs">$.data.accessToken</stringProp>
+              <stringProp name="JSONPathExtractor.defaultValues">INVALID</stringProp>
+              <stringProp name="JSONPathExtractor.match_no">0</stringProp>
+            </JSONPathExtractor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
+                       testname="Auth Header" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="GET /api/friends" enabled="true">
+          <stringProp name="HTTPSampler.path">/api/friends</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="GET /api/friends/requests/incoming" enabled="true">
+          <stringProp name="HTTPSampler.path">/api/friends/requests/incoming</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="GET /api/match/history?page=0&amp;size=20" enabled="true">
+          <stringProp name="HTTPSampler.path">/api/match/history?page=0&amp;size=20</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+        <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer"
+                             testname="Think Time 300ms-1s" enabled="true">
+          <stringProp name="ConstantTimer.delay">300</stringProp>
+          <stringProp name="RandomTimer.range">700</stringProp>
+        </GaussianRandomTimer>
+        <hashTree/>
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
+                         testname="Aggregate Report [E]" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time><latency>true</latency><timestamp>true</timestamp>
+              <success>true</success><label>true</label><code>true</code>
+              <fieldNames>true</fieldNames>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
 
     </hashTree>
   </hashTree>
