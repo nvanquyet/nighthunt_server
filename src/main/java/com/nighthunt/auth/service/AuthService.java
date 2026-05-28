@@ -104,7 +104,7 @@ public class AuthService {
             retryFor = {CannotAcquireLockException.class, DeadlockLoserDataAccessException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 50, multiplier = 2))
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public AuthResponse login(LoginRequest request) {
         String ipAddress        = getClientIpAddress();
         String deviceFingerprint = request.getDeviceFingerprint();
@@ -208,7 +208,7 @@ public class AuthService {
      * The incoming token is revoked and a new one is issued. This limits the
      * impact of a stolen refresh token to a single use window.
      */
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         RefreshToken rt = refreshTokenRepository.findByToken(request.getRefreshToken())
                 .orElseThrow(() -> new BusinessException(
@@ -339,7 +339,7 @@ public class AuthService {
     // LOGOUT
     // ═══════════════════════════════════════════════════════════════════════════
 
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void logout(Long userId) {
         String userIdStr = String.valueOf(userId);
         recordSessionTerminated(userId, "LOGOUT");
