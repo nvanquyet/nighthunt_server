@@ -22,7 +22,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -96,6 +100,10 @@ public class AuthService {
     // LOGIN
     // ═══════════════════════════════════════════════════════════════════════════
 
+    @Retryable(
+            retryFor = {CannotAcquireLockException.class, DeadlockLoserDataAccessException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 50, multiplier = 2))
     @Transactional
     public AuthResponse login(LoginRequest request) {
         String ipAddress        = getClientIpAddress();

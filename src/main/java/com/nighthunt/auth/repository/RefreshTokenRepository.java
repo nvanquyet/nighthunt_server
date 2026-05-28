@@ -14,8 +14,11 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
 
     Optional<RefreshToken> findByToken(String token);
 
-    /** Revoke ALL active tokens for a user (used on logout / password-change). */
+    /** Delete ALL tokens for a user (used on login / logout / password-change).
+     *  DELETE is used instead of UPDATE revoked=true to avoid InnoDB gap-lock
+     *  deadlocks when 500+ concurrent logins for the same user_id race to
+     *  UPDATE + INSERT in the same transaction. */
     @Modifying
-    @Query("UPDATE RefreshToken rt SET rt.revoked = true WHERE rt.userId = :userId AND rt.revoked = false")
+    @Query("DELETE FROM RefreshToken rt WHERE rt.userId = :userId")
     int revokeAllByUserId(@Param("userId") Long userId);
 }
