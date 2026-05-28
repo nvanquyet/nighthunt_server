@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Ban service
@@ -30,6 +31,11 @@ public class BanService {
     private final FailedLoginAttemptRepository failedLoginAttemptRepository;
     private final ConcurrentLoginAttemptRepository concurrentLoginAttemptRepository;
     private final BanConfigRepository banConfigRepository;
+
+    // In-memory TTL cache for ban config (DB read every 30s instead of every request)
+    private final ConcurrentHashMap<String, long[]> configIntCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object[]> configBoolCache = new ConcurrentHashMap<>();
+    private static final long CONFIG_CACHE_TTL_MS = 30_000L;
     
     // Config keys
     private static final String MAX_FAILED_LOGIN_ATTEMPTS = "MAX_FAILED_LOGIN_ATTEMPTS";
@@ -288,17 +294,29 @@ public class BanService {
         }
     }
     
-    // Helper methods to get config values
+    // Helper methods to get config values (with in-memory TTL cache)
     private int getConfigInt(String key, int defaultValue) {
-        return banConfigRepository.findByConfigKey(key)
+        long[] cached = configIntCache.get(key);
+        if (cached != null && cached[1] > System.currentTimeMillis()) {
+            return (int) cached[0];
+        }
+        int value = banConfigRepository.findByConfigKey(key)
                 .map(BanConfig::getIntValue)
                 .orElse(defaultValue);
+        configIntCache.put(key, new long[]{value, System.currentTimeMillis() + CONFIG_CACHE_TTL_MS});
+        return value;
     }
-    
+
     private boolean getConfigBoolean(String key, boolean defaultValue) {
-        return banConfigRepository.findByConfigKey(key)
+        Object[] cached = configBoolCache.get(key);
+        if (cached != null && (long) cached[1] > System.currentTimeMillis()) {
+            return (boolean) cached[0];
+        }
+        boolean value = banConfigRepository.findByConfigKey(key)
                 .map(BanConfig::getBooleanValue)
                 .orElse(defaultValue);
+        configBoolCache.put(key, new Object[]{value, System.currentTimeMillis() + CONFIG_CACHE_TTL_MS});
+        return value;
     }
 }
 
