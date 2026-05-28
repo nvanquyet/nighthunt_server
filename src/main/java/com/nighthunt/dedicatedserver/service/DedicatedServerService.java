@@ -493,6 +493,61 @@ public class DedicatedServerService {
      *
      * <p>Safe to call even if no DS is associated with the match (relay / custom games).</p>
      */
+    /**
+     * Admin-initiated force-terminate of a specific DS instance.
+     * Stops the container, notifies connected players via WS, marks DB stopped.
+     *
+     * @param serverId the serverId (UUID) of the DS to terminate
+     * @param reason   human-readable reason shown to players (nullable → default message)
+     * @throws IllegalArgumentException if serverId not found
+     */
+    @Transactional
+    public void terminateServerByAdmin(String serverId, String reason) {
+        DedicatedServer server = dsRepo.findByServerId(serverId)
+                .orElseThrow(() -> new IllegalArgumentException("DS not found: " + serverId));
+
+        String effectiveReason = (reason != null && !reason.isBlank())
+                ? reason : "Server was terminated by administrator";
+
+        log.warn("[AdminDS] Force-terminating serverId={} matchId={} reason={}",
+                serverId, server.getMatchId(), effectiveReason);
+
+        // 1. Notify all players currently in this DS via WS
+        String matchId = server.getMatchId();
+        if (matchId != null && !matchId.isBlank()) {
+            roomRepository.findByMatchId(matchId).ifPresent(room -> {
+                List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("reason",  effectiveReason);
+                payload.put("matchId", matchId);
+                payload.put("serverId", serverId);
+                for (RoomPlayer rp : players) {
+                    connectionManager.sendToUser(rp.getUserId(), "server_terminated", payload);
+                }
+                log.info("[AdminDS] Sent server_terminated to {} players in match {}",
+                        players.size(), matchId);
+
+                room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+                roomRepository.save(room);
+            });
+        }
+
+        // 2. Stop Docker container
+        try {
+            dockerManager.stopContainer(server.getDockerContainerId());
+        } catch (Exception e) {
+            log.error("[AdminDS] Docker stop failed for serverId={}: {}", serverId, e.getMessage());
+            // Continue — still mark DB as stopped
+        }
+
+        // 3. Mark stopped in DB
+        server.setStatus("stopped");
+        server.setStoppedAt(LocalDateTime.now());
+        dsRepo.save(server);
+
+        log.info("[AdminDS] DS terminated: serverId={}", serverId);
+    }
+
     @Transactional
     public void reclaimServerForMatch(String matchId) {
         if (matchId == null || matchId.isBlank()) return;
