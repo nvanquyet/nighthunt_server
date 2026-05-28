@@ -34,11 +34,22 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    // ── BCrypt concurrency limiter ─────────────────────────────────────────────
+    /**
+     * Caps the number of concurrent BCrypt verify operations.
+     * BCrypt(8) ≈ 20ms per op. With 2 vCPUs and N concurrent ops:
+     *   wall-clock ≈ N/2 × 20ms (CPU scheduling)
+     * Limit 50 → wall-clock ≈ 500ms per op instead of 5000ms with 500 concurrent.
+     */
+    private static final Semaphore BCRYPT_LIMITER = new Semaphore(50);
 
     // ── Config ─────────────────────────────────────────────────────────────────
     /** Days before a refresh token expires. Override via application.properties. */
@@ -119,7 +130,25 @@ public class AuthService {
                 .or(() -> userRepository.findByEmail(request.getIdentifier()))
                 .orElse(null);
 
-        boolean passwordValid = user != null && passwordEncoder.matches(request.getPassword(), user.getPasswordHash());
+        // Limit concurrent BCrypt operations — prevents CPU starvation on 2-core VPS.
+        // 50 permits → wall-clock BCrypt ≈ 50/2 × 20ms ≈ 500ms instead of 5000ms.
+        boolean bcryptAcquired;
+        try {
+            bcryptAcquired = BCRYPT_LIMITER.tryAcquire(8, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCodes.AUTH_INVALID_CREDENTIALS, "Login interrupted");
+        }
+        if (!bcryptAcquired) {
+            log.warn("BCrypt semaphore timeout for identifier={} ip={}", request.getIdentifier(), ipAddress);
+            throw new BusinessException(ErrorCodes.AUTH_INVALID_CREDENTIALS, "Server busy, please retry");
+        }
+        boolean passwordValid;
+        try {
+            passwordValid = user != null && passwordEncoder.matches(request.getPassword(), user.getPasswordHash());
+        } finally {
+            BCRYPT_LIMITER.release();
+        }
 
         if (!passwordValid) {
             banService.recordFailedLoginAttempt(request.getIdentifier(), ipAddress, deviceFingerprint);
