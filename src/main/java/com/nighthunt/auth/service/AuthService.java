@@ -47,9 +47,10 @@ public class AuthService {
      * Caps the number of concurrent BCrypt verify operations.
      * BCrypt(8) ≈ 20ms per op. With 2 vCPUs and N concurrent ops:
      *   wall-clock ≈ N/2 × 20ms (CPU scheduling)
-     * Limit 50 → wall-clock ≈ 500ms per op instead of 5000ms with 500 concurrent.
+     * Limit 8 on 2 vCPUs → wall-clock ≈ 8/2 × BCrypt_ms per op (low context-switching).
+     * Throughput = cores/BCrypt_ms (constant regardless of N), but smaller N gives lower p99.
      */
-    private static final Semaphore BCRYPT_LIMITER = new Semaphore(50);
+    private static final Semaphore BCRYPT_LIMITER = new Semaphore(8);
 
     // ── Config ─────────────────────────────────────────────────────────────────
     /** Days before a refresh token expires. Override via application.properties. */
@@ -111,11 +112,10 @@ public class AuthService {
     // LOGIN
     // ═══════════════════════════════════════════════════════════════════════════
 
-    @Retryable(
-            retryFor = {CannotAcquireLockException.class, DeadlockLoserDataAccessException.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 50, multiplier = 2))
-    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    // No outer @Transactional — DB connections are only held during the short
+    // individual component transactions (~30ms total), not during BCrypt (~120ms).
+    // With outer @Transactional, HikariCP(50) was held for 750ms per login
+    // causing effective throughput < demand → unbounded queue growth.
     public AuthResponse login(LoginRequest request) {
         String ipAddress        = getClientIpAddress();
         String deviceFingerprint = request.getDeviceFingerprint();
