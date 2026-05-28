@@ -1,0 +1,37 @@
+# Unity client assets - massive, not needed for backend build
+client_unity_only_read/
+
+# Build output
+build/
+
+# Load test files
+load-tests/
+
+# Local dev/scripts
+scripts/
+infra/
+dashboard/
+relay/
+
+# Git
+.git/
+.gitignore
+
+# Docs
+*.md
+AGENTS.md
+CLAUDE.md
+SCENE_SETUP_GUIDE.md
+TESTING_GUIDE.md
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Env files (injected at runtime)
+.env*
+!.env.example
+
+# Docker files for other services
+docker/
