@@ -155,7 +155,7 @@ app.get('/api/modes/*', requireToken, proxyAdmin);
 
 // ── Relay proxy — backend relay is at /relay/* (no /api prefix) ───────────────
 async function proxyRelay(req, res) {
-    const url = `${BACKEND_URL}${req.path}`;
+    const url = `${BACKEND_URL}/api${req.path}`;  // context-path=/api, so /relay/health → /api/relay/health
     try {
         const response = await backendClient({
             method:  req.method,
