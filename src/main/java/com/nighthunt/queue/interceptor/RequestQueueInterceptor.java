@@ -130,10 +130,16 @@ public class RequestQueueInterceptor implements HandlerInterceptor {
         }
         // Auth endpoints need synchronous response (JWT token, credentials).
         // Queueing them returns 202 with no token, breaking all downstream calls.
-        if (endpoint.startsWith("/auth/login") ||
-               endpoint.startsWith("/auth/register") ||
-               endpoint.startsWith("/auth/refresh-token") ||
-               endpoint.startsWith("/auth/auto-login")) {
+        if (endpoint.startsWith("/auth/")) {
+            return true;
+        }
+        // Read-heavy endpoints: always serve synchronously to avoid 202 confusing clients.
+        if (endpoint.startsWith("/profile") ||
+               endpoint.startsWith("/friends") ||
+               endpoint.startsWith("/game-modes") ||
+               endpoint.startsWith("/match/") ||
+               endpoint.startsWith("/rooms") ||
+               endpoint.startsWith("/matchmaking")) {
             return true;
         }
         return false;

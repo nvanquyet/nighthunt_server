@@ -13,6 +13,12 @@ spring:
     username: ${DB_USERNAME:nighthunt}
     password: ${DB_PASSWORD:nighthunt}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 50       # Default 10 is too low for 500-VU stress test
+      minimum-idle: 10
+      connection-timeout: 30000   # 30s wait for connection from pool
+      idle-timeout: 600000
+      max-lifetime: 1800000
   
   jpa:
     open-in-view: false
@@ -42,9 +48,11 @@ spring:
       timeout: 2000ms
       lettuce:
         pool:
-          max-active: 8
-          max-idle: 8
-          min-idle: 0
+          enabled: true
+          max-active: 50      # Default 8 → bottleneck with 500-VU stress test
+          max-idle: 50
+          min-idle: 10
+          max-wait: 5000ms
 
 jwt:
   secret: ${JWT_SECRET:}  # MUST be set via env var — no fallback in production
@@ -67,6 +75,12 @@ server:
   error:
     include-message: always
     include-stacktrace: on_param
+  tomcat:
+    threads:
+      max: 500       # Default 200 → not enough for 500-VU stress test
+      min-spare: 50
+    accept-count: 500  # Queue length when all threads are busy
+    connection-timeout: 20000
 
 ---
 # SSL profile — only loaded by local dev (.env.local: SPRING_PROFILES_ACTIVE=dev,ssl)
