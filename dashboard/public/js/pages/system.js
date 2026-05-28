@@ -18,18 +18,24 @@ async function renderSystem() {
       <button class="btn btn-ghost btn-xs" onclick="loadMetrics()">&#8635; Refresh</button>
     </div>
     <div class="card-body">
+      <p class="text-xs text-muted" style="margin-bottom:.75rem">
+        &#9432; Data from <strong>Micrometer</strong> (Spring Boot) — all HTTP counters &amp; latencies are cumulative since last backend restart.
+        Use the <em>Load Test</em> panel below for real-time throughput numbers.
+      </p>
       <div class="stats-grid" style="margin-bottom:1rem">
-        <div class="stat-card"><div class="stat-label">Throughput</div><div class="stat-value text-cyan" id="m_throughput">—</div><div class="stat-sub">req/min</div></div>
-        <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value text-green" id="m_avgLatency">—</div><div class="stat-sub">ms</div></div>
-        <div class="stat-card"><div class="stat-label">p95 Latency</div><div class="stat-value text-yellow" id="m_p95">—</div><div class="stat-sub">ms</div></div>
-        <div class="stat-card"><div class="stat-label">p99 Latency</div><div class="stat-value" id="m_p99">—</div><div class="stat-sub">ms</div></div>
-        <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-value" id="m_errorRate">—</div><div class="stat-sub">4xx+5xx</div></div>
-        <div class="stat-card"><div class="stat-label">Total Requests</div><div class="stat-value text-muted" id="m_totalReq">—</div><div class="stat-sub">all time</div></div>
-        <div class="stat-card"><div class="stat-label">JVM Heap</div><div class="stat-value text-purple" id="m_heap">—</div><div class="stat-sub"><span id="m_heapPct">—</span> used</div></div>
-        <div class="stat-card"><div class="stat-label">DB Connections</div><div class="stat-value" id="m_dbActive">—</div><div class="stat-sub">active</div></div>
-        <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" id="m_cpu">—</div><div class="stat-sub">system</div></div>
-        <div class="stat-card"><div class="stat-label">Active DS</div><div class="stat-value text-cyan" id="m_activeDs">—</div><div class="stat-sub">containers</div></div>
-        <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value text-green" id="m_uptime">—</div><div class="stat-sub">backend</div></div>
+        <div class="stat-card"><div class="stat-label">Avg Throughput</div><div class="stat-value text-cyan" id="m_throughput">—</div><div class="stat-sub">req/min &bull; since start</div></div>
+        <div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value text-green" id="m_successRate">—</div><div class="stat-sub">% 2xx responses</div></div>
+        <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value text-green" id="m_avgLatency">—</div><div class="stat-sub">ms &bull; all endpoints</div></div>
+        <div class="stat-card"><div class="stat-label">p95 Latency</div><div class="stat-value text-yellow" id="m_p95">—</div><div class="stat-sub">ms &bull; 95% faster than this</div></div>
+        <div class="stat-card"><div class="stat-label">p99 Latency</div><div class="stat-value" id="m_p99">—</div><div class="stat-sub">ms &bull; worst 1%</div></div>
+        <div class="stat-card"><div class="stat-label">Max Latency</div><div class="stat-value" id="m_maxLatency">—</div><div class="stat-sub">ms &bull; slowest ever</div></div>
+        <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-value" id="m_errorRate">—</div><div class="stat-sub">4xx + 5xx %</div></div>
+        <div class="stat-card"><div class="stat-label">Total Requests</div><div class="stat-value text-muted" id="m_totalReq">—</div><div class="stat-sub">since last restart</div></div>
+        <div class="stat-card"><div class="stat-label">JVM Heap</div><div class="stat-value text-purple" id="m_heap">—</div><div class="stat-sub"><span id="m_heapPct">—</span> &bull; &gt;85% = GC pressure</div></div>
+        <div class="stat-card"><div class="stat-label">DB Pool</div><div class="stat-value" id="m_dbActive">—</div><div class="stat-sub">active / <span id="m_dbMax">?</span> max &bull; <span id="m_dbPending">0</span> waiting</div></div>
+        <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" id="m_cpu">—</div><div class="stat-sub">system-level</div></div>
+        <div class="stat-card"><div class="stat-label">Active DS</div><div class="stat-value text-cyan" id="m_activeDs">—</div><div class="stat-sub">game containers</div></div>
+        <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value text-green" id="m_uptime">—</div><div class="stat-sub">backend process</div></div>
       </div>
       <div id="metricsEndpointsTable"><span class="spinner"></span></div>
     </div>
@@ -190,10 +196,18 @@ function renderMetrics(d) {
     if (el) el.textContent = (val !== undefined && val !== -1) ? (unit ? `${val}${unit}` : val) : '—';
   };
 
-  set('m_throughput', http.throughputPerMin);
-  set('m_avgLatency', http.avgLatencyMs);
-  set('m_p95',        http.p95LatencyMs);
-  set('m_p99',        http.p99LatencyMs);
+  set('m_throughput',  http.throughputPerMin);
+  set('m_avgLatency',  http.avgLatencyMs);
+  set('m_p95',         http.p95LatencyMs);
+  set('m_p99',         http.p99LatencyMs);
+  set('m_maxLatency',  http.maxLatencyMs);
+
+  // Success rate
+  const srEl = $('m_successRate');
+  if (srEl) {
+    srEl.textContent = http.successRate >= 0 ? http.successRate + '%' : '—';
+    srEl.style.color = http.successRate < 95 ? 'var(--red)' : http.successRate < 99 ? 'var(--yellow)' : 'var(--green)';
+  }
 
   const errRate = ((http.errorRate4xx || 0) + (http.errorRate5xx || 0)).toFixed(1);
   const errEl = $('m_errorRate');
@@ -211,7 +225,15 @@ function renderMetrics(d) {
     heapEl.style.color = jvm.heapPercent > 85 ? 'var(--red)' : jvm.heapPercent > 70 ? 'var(--yellow)' : 'var(--cyan)';
   }
 
-  set('m_dbActive', db.activeConnections);
+  // DB pool — show active / max + pending waiters
+  const dbActEl = $('m_dbActive');
+  if (dbActEl) {
+    dbActEl.textContent = db.activeConnections >= 0 ? db.activeConnections : '—';
+    const utilPct = db.maxConnections > 0 ? db.activeConnections / db.maxConnections : 0;
+    dbActEl.style.color = utilPct > 0.8 ? 'var(--red)' : utilPct > 0.6 ? 'var(--yellow)' : 'var(--green)';
+  }
+  set('m_dbMax',     db.maxConnections     >= 0 ? db.maxConnections     : undefined);
+  set('m_dbPending', db.pendingConnections >= 0 ? db.pendingConnections : 0);
 
   const cpuEl = $('m_cpu');
   if (cpuEl) {
