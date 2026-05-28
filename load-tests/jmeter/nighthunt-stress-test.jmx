@@ -222,7 +222,7 @@
                               testname="35% - Check Session" enabled="true">
           <intProp name="ThroughputController.style">1</intProp>
           <boolProp name="ThroughputController.perThread">false</boolProp>
-          <floatProp name="ThroughputController.percentThroughput">35.0</floatProp>
+          <stringProp name="ThroughputController.percentThroughput">35.0</stringProp>
         </ThroughputController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -237,7 +237,7 @@
                               testname="20% - Backend Stats" enabled="true">
           <intProp name="ThroughputController.style">1</intProp>
           <boolProp name="ThroughputController.perThread">false</boolProp>
-          <floatProp name="ThroughputController.percentThroughput">20.0</floatProp>
+          <stringProp name="ThroughputController.percentThroughput">20.0</stringProp>
         </ThroughputController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -252,7 +252,7 @@
                               testname="15% - Friend List" enabled="true">
           <intProp name="ThroughputController.style">1</intProp>
           <boolProp name="ThroughputController.perThread">false</boolProp>
-          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+          <stringProp name="ThroughputController.percentThroughput">15.0</stringProp>
         </ThroughputController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -267,7 +267,7 @@
                               testname="15% - Game Modes" enabled="true">
           <intProp name="ThroughputController.style">1</intProp>
           <boolProp name="ThroughputController.perThread">false</boolProp>
-          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+          <stringProp name="ThroughputController.percentThroughput">15.0</stringProp>
         </ThroughputController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -282,7 +282,7 @@
                               testname="15% - Match History" enabled="true">
           <intProp name="ThroughputController.style">1</intProp>
           <boolProp name="ThroughputController.perThread">false</boolProp>
-          <floatProp name="ThroughputController.percentThroughput">15.0</floatProp>
+          <stringProp name="ThroughputController.percentThroughput">15.0</stringProp>
         </ThroughputController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
