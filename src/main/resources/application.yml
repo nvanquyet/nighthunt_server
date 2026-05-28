@@ -1,6 +1,12 @@
 spring:
   application:
     name: nighthunt-backend
+
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          no-store: true   # Prevent browser caching of dashboard.html and other static files
   
   datasource:
     url: ${DB_URL:jdbc:mysql://mysql:3306/nighthunt}

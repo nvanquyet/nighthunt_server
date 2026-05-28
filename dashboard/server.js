@@ -153,6 +153,25 @@ app.delete('/api/admin/*', requireToken, proxyAdmin);
 app.get('/api/maps/*',  requireToken, proxyAdmin);
 app.get('/api/modes/*', requireToken, proxyAdmin);
 
+// ── Relay proxy — backend relay is at /relay/* (no /api prefix) ───────────────
+async function proxyRelay(req, res) {
+    const url = `${BACKEND_URL}${req.path}`;
+    try {
+        const response = await backendClient({
+            method:  req.method,
+            url,
+            params:  req.query,
+            data:    req.body,
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': ADMIN_SECRET }
+        });
+        res.status(response.status).json(response.data);
+    } catch (e) {
+        if (e.response) res.status(e.response.status).json(e.response.data);
+        else res.status(502).json({ error: 'Backend unreachable: ' + e.message });
+    }
+}
+app.get('/relay/*', requireToken, proxyRelay);
+
 // ── Legacy backend stats ──────────────────────────────────────────────────────
 app.get('/api/backend/stats', requireToken, async (req, res) => {
     try {
