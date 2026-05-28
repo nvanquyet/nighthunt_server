@@ -209,22 +209,16 @@ public class PlayerStatusService {
 
     /**
      * Broadcast status change to all friends of the user.
+     * Always publishes — WebSocketEventSubscriber handles per-friend fanout.
      */
     private void broadcastStatusChange(Long userId, String oldStatus, String newStatus, Long currentPartyId, Long currentRoomId) {
-        // Get all friend IDs
-        List<Long> friendIds = friendRepository.findFriendIdsByUserId(userId);
-        
-        // Broadcast to each friend (message broker will handle routing)
-        if (!friendIds.isEmpty()) {
-            messageBrokerService.publishFriendStatusChanged(
-                userId, 
-                oldStatus, 
-                newStatus, 
-                currentPartyId, 
-                currentRoomId
-            );
-            
-            log.debug("Broadcasted status change for user {} to {} friends", userId, friendIds.size());
-        }
+        messageBrokerService.publishFriendStatusChanged(
+            userId,
+            oldStatus,
+            newStatus,
+            currentPartyId,
+            currentRoomId
+        );
+        log.debug("Published friend_status_changed for user {} ({} → {})", userId, oldStatus, newStatus);
     }
 }
