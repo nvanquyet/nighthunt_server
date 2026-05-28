@@ -101,7 +101,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}","email":"${USER_PREFIX}${__threadNum}@stress.local"}</stringProp>
+                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}","confirmPassword":"${USER_PASSWORD}","email":"${USER_PREFIX}${__threadNum}@stress.local"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -175,7 +175,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"identifier":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -205,6 +205,16 @@
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
         </hashTree>
         <!-- Step 2: Use JWT for all subsequent requests -->
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -220,6 +230,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -239,6 +253,10 @@
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -256,6 +274,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -275,6 +297,10 @@
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -292,6 +318,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -373,7 +403,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"identifier":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -403,6 +433,16 @@
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
         </hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
                           testname="GET /api/auth/check-session [B]" enabled="true">
@@ -417,6 +457,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -435,6 +479,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -499,7 +547,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"identifier":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -526,6 +574,16 @@
             <stringProp name="RegexExtractor.regex">"accessToken"\s*:\s*"([^"]+)"</stringProp>
             <stringProp name="RegexExtractor.template">$1$</stringProp>
             <stringProp name="RegexExtractor.default">INVALID_TOKEN</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
@@ -606,6 +664,10 @@
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -669,7 +731,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"identifier":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -696,6 +758,16 @@
             <stringProp name="RegexExtractor.regex">"accessToken"\s*:\s*"([^"]+)"</stringProp>
             <stringProp name="RegexExtractor.template">$1$</stringProp>
             <stringProp name="RegexExtractor.default">INVALID_TOKEN</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
@@ -741,6 +813,16 @@
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
         </hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
                           testname="GET /api/rooms" enabled="true">
@@ -755,6 +837,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -773,6 +859,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -837,7 +927,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
+                <stringProp name="Argument.value">{"identifier":"${USER_PREFIX}${__threadNum}","password":"${USER_PASSWORD}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -867,6 +957,16 @@
             <stringProp name="RegexExtractor.match_no">1</stringProp>
           </RegexExtractor>
           <hashTree/>
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract SESSION_ID" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+            <stringProp name="RegexExtractor.refname">SESSION_ID</stringProp>
+            <stringProp name="RegexExtractor.regex">"sessionId"\s*:\s*"([^"]+)"</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">INVALID_SESSION</stringProp>
+            <stringProp name="RegexExtractor.match_no">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
         </hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
                           testname="GET /api/friends [E]" enabled="true">
@@ -881,6 +981,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -900,6 +1004,10 @@
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -917,6 +1025,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Authorization</stringProp>
                 <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
