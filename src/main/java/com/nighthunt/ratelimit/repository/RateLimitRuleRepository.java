@@ -16,6 +16,6 @@ public interface RateLimitRuleRepository extends JpaRepository<RateLimitRule, Lo
     @Query("SELECT r FROM RateLimitRule r WHERE r.isActive = true ORDER BY LENGTH(r.endpointPattern) DESC")
     List<RateLimitRule> findByIsActiveTrue();
     
-    RateLimitRule findByEndpointPatternAndIsActiveTrue(String endpointPattern);
+    RateLimitRule findFirstByEndpointPatternAndIsActiveTrue(String endpointPattern);
 }
 

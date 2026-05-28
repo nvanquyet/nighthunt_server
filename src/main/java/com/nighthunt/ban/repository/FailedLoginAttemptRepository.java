@@ -13,7 +13,7 @@ import java.util.Optional;
 @Repository
 public interface FailedLoginAttemptRepository extends JpaRepository<FailedLoginAttempt, Long> {
     
-    Optional<FailedLoginAttempt> findByIdentifierAndIpAddress(String identifier, String ipAddress);
+    Optional<FailedLoginAttempt> findFirstByIdentifierAndIpAddressOrderByLastAttemptAtDesc(String identifier, String ipAddress);
     
     @Modifying
     @Query("DELETE FROM FailedLoginAttempt f WHERE f.lastAttemptAt < :cutoffTime AND f.isBanned = false")

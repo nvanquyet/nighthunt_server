@@ -13,9 +13,9 @@ import java.util.Optional;
 @Repository
 public interface ConcurrentLoginAttemptRepository extends JpaRepository<ConcurrentLoginAttempt, Long> {
     
-    Optional<ConcurrentLoginAttempt> findByIpAddressAndWindowEndAfter(String ipAddress, LocalDateTime now);
+    Optional<ConcurrentLoginAttempt> findFirstByIpAddressAndWindowEndAfterOrderByWindowEndDesc(String ipAddress, LocalDateTime now);
     
-    Optional<ConcurrentLoginAttempt> findByDeviceFingerprintAndWindowEndAfter(String deviceFingerprint, LocalDateTime now);
+    Optional<ConcurrentLoginAttempt> findFirstByDeviceFingerprintAndWindowEndAfterOrderByWindowEndDesc(String deviceFingerprint, LocalDateTime now);
     
     @Modifying
     @Query("DELETE FROM ConcurrentLoginAttempt c WHERE c.windowEnd < :cutoffTime AND c.isBanned = false")

@@ -99,7 +99,7 @@ public class BanService {
         LocalDateTime windowStart = LocalDateTime.now().minusMinutes(windowMinutes);
         
         // Find or create failed login attempt record
-        Optional<FailedLoginAttempt> existing = failedLoginAttemptRepository.findByIdentifierAndIpAddress(identifier, ipAddress);
+        Optional<FailedLoginAttempt> existing = failedLoginAttemptRepository.findFirstByIdentifierAndIpAddressOrderByLastAttemptAtDesc(identifier, ipAddress);
         FailedLoginAttempt attempt;
         
         if (existing.isPresent()) {
@@ -167,7 +167,7 @@ public class BanService {
         
         // Find or create concurrent login attempt record
         Optional<ConcurrentLoginAttempt> existing = concurrentLoginAttemptRepository
-                .findByIpAddressAndWindowEndAfter(ipAddress, now);
+                .findFirstByIpAddressAndWindowEndAfterOrderByWindowEndDesc(ipAddress, now);
         
         ConcurrentLoginAttempt attempt;
         
@@ -217,7 +217,7 @@ public class BanService {
      */
     @Transactional
     public void clearFailedLoginAttempts(String identifier, String ipAddress) {
-        failedLoginAttemptRepository.findByIdentifierAndIpAddress(identifier, ipAddress)
+        failedLoginAttemptRepository.findFirstByIdentifierAndIpAddressOrderByLastAttemptAtDesc(identifier, ipAddress)
                 .ifPresent(attempt -> {
                     if (!attempt.getIsBanned()) {
                         failedLoginAttemptRepository.delete(attempt);
