@@ -113,8 +113,7 @@ public class RequestQueueService {
         String requestJson = (String) requests.iterator().next();
         QueuedRequest request;
         try {
-            request = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readValue(requestJson, QueuedRequest.class);
+            request = objectMapper.readValue(requestJson, QueuedRequest.class);
         } catch (Exception e) {
             log.error("Error deserializing queued request: {}", e.getMessage());
             // Remove invalid request from queue
@@ -134,8 +133,7 @@ public class RequestQueueService {
         request.setStatus(QueuedRequest.RequestStatus.PROCESSING);
         String processingKey = getProcessingKey(endpoint, request.getRequestId());
         try {
-            String requestJsonProcessing = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .writeValueAsString(request);
+            String requestJsonProcessing = objectMapper.writeValueAsString(request);
             redisTemplate.opsForValue().set(processingKey, requestJsonProcessing, DEFAULT_QUEUE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.error("Error serializing request for processing queue: {}", e.getMessage());
