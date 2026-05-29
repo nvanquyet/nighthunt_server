@@ -1,0 +1,77 @@
+{
+  "testName": "NightHunt DS Fleet Load Test",
+  "runAt": "2026-05-29T09:29:21.458997+00:00",
+  "totalElapsedSec": 282.1,
+  "config": {
+    "backend": "https://vawnwuyest.me/api",
+    "dsCount": 5,
+    "failDsIdx": 1,
+    "failAfterSec": 60,
+    "monitorSec": 180,
+    "userCount": 1500
+  },
+  "phase1_userLoad": {},
+  "phase2_dsAllocated": {
+    "requested": 5,
+    "started": 5,
+    "servers": [
+      {
+        "index": 0,
+        "serverId": "dry-0",
+        "port": 7777,
+        "willFail": false
+      },
+      {
+        "index": 1,
+        "serverId": "dry-1",
+        "port": 7778,
+        "willFail": false
+      },
+      {
+        "index": 2,
+        "serverId": "dry-2",
+        "port": 7779,
+        "willFail": false
+      },
+      {
+        "index": 3,
+        "serverId": "dry-3",
+        "port": 7780,
+        "willFail": false
+      },
+      {
+        "index": 4,
+        "serverId": "dry-4",
+        "port": 7781,
+        "willFail": false
+      }
+    ]
+  },
+  "phase3_monitoring": {
+    "snapshotCount": 12,
+    "totalHeartbeats": 0,
+    "heartbeatErrors": 0,
+    "heartbeatSuccessRate": "0.0%"
+  },
+  "phase4_failureInjection": {
+    "container": null,
+    "serverId": "dry-1",
+    "killed": true
+  },
+  "phase6_reclaimReport": {
+    "manualReclaim": true,
+    "status": "dry-run"
+  },
+  "finalFleetState": {
+    "containersAlive": 0,
+    "containersDead": 5,
+    "backendFleet": null
+  },
+  "summary": {
+    "dsStartupSuccess": "5/5 (100%)",
+    "dsHeartbeatRate": "0.0%",
+    "failureInjected": true,
+    "failureContainerKilled": true,
+    "fleetReclaimOk": true
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "test_time": "2026-05-29T09:49:49.222358+00:00",
+  "config": {
+    "backend": "http://localhost:8080/api",
+    "max_ds": 80,
+    "batch_size": 8,
+    "ramp_sec": 12,
+    "sustain_sec": 60,
+    "players": 4,
+    "hb_interval": 30
+  },
+  "results": {
+    "total_attempted": 80,
+    "total_allocated": 80,
+    "alloc_errors": 0,
+    "register_errors": 0,
+    "peak_concurrent_ds": 80,
+    "alive_at_end": 80,
+    "total_heartbeats": 456,
+    "hb_errors": 0,
+    "alloc_success_rate": "100.0%",
+    "hb_success_rate": "100.0%"
+  },
+  "latency_ms": {
+    "alloc": {
+      "p50": 472.9,
+      "p95": 664.8,
+      "p99": 793.3,
+      "avg": 481.6,
+      "samples": 80
+    },
+    "register": {
+      "p50": 518.4,
+      "p95": 767.4,
+      "p99": 873.1,
+      "avg": 500.5,
+      "samples": 80
+    },
+    "heartbeat": {
+      "p50": 337.4,
+      "p95": 698.7,
+      "p99": 781.5,
+      "avg": 348.1,
+      "samples": 456
+    }
+  },
+  "events": [
+    {
+      "time": "09:45:40",
+      "kind": "TEST_START",
+      "detail": "max_ds=80 batch=8"
+    },
+    {
+      "time": "09:45:48",
+      "kind": "BATCH_OK",
+      "detail": "batch=1 errors=0/8 concurrent=8"
+    },
+    {
+      "time": "09:46:08",
+      "kind": "BATCH_OK",
+      "detail": "batch=2 errors=0/8 concurrent=16"
+    },
+    {
+      "time": "09:46:28",
+      "kind": "BATCH_OK",
+      "detail": "batch=3 errors=0/8 concurrent=24"
+    },
+    {
+      "time": "09:46:48",
+      "kind": "BATCH_OK",
+      "detail": "batch=4 errors=0/8 concurrent=32"
+    },
+    {
+      "time": "09:47:08",
+      "kind": "BATCH_OK",
+      "detail": "batch=5 errors=0/8 concurrent=40"
+    },
+    {
+      "time": "09:47:28",
+      "kind": "BATCH_OK",
+      "detail": "batch=6 errors=0/8 concurrent=48"
+    },
+    {
+      "time": "09:47:48",
+      "kind": "BATCH_OK",
+      "detail": "batch=7 errors=0/8 concurrent=56"
+    },
+    {
+      "time": "09:48:09",
+      "kind": "BATCH_OK",
+      "detail": "batch=8 errors=0/8 concurrent=64"
+    },
+    {
+      "time": "09:48:29",
+      "kind": "BATCH_OK",
+      "detail": "batch=9 errors=0/8 concurrent=72"
+    },
+    {
+      "time": "09:48:49",
+      "kind": "BATCH_OK",
+      "detail": "batch=10 errors=0/8 concurrent=80"
+    },
+    {
+      "time": "09:48:49",
+      "kind": "RAMP_END",
+      "detail": "attempted=80 peak=80 concurrent=80"
+    },
+    {
+      "time": "09:48:49",
+      "kind": "SUSTAIN_START",
+      "detail": "alive=80"
+    },
+    {
+      "time": "09:49:49",
+      "kind": "TEST_END",
+      "detail": ""
+    }
+  ],
+  "verdict": "✅ EXCELLENT — 80 trận đồng thời, không có lỗi. Có thể tăng MAX_DS để tìm giới hạn thực."
+}

@@ -18,8 +18,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -54,6 +57,14 @@ public class DedicatedServerService {
 
     @Value("${ds.max-players:16}")
     private int defaultMaxPlayers;
+
+    /**
+     * Nếu true: khi 1 DS chết (no heartbeat) → tự động thu hồi TOÀN BỘ fleet.
+     * Dùng trong môi trường test để validate fleet-reclaim-on-failure scenario.
+     * Production: false (1 DS chết không nên kill tất cả game đang chạy).
+     */
+    @Value("${ds.fleet.auto-reclaim-on-failure:false}")
+    private boolean fleetAutoReclaimOnFailure;
 
     // Redis key prefix cho session tokens
     private static final String SESSION_TOKEN_PREFIX = "ds:session:";
@@ -594,16 +605,135 @@ public class DedicatedServerService {
     public void cleanupDeadServers() {
         LocalDateTime cutoff = LocalDateTime.now().minusSeconds(90);
         var deadServers = dsRepo.findDeadServers(cutoff);
+        if (deadServers.isEmpty()) return;
+
+        if (fleetAutoReclaimOnFailure) {
+            // Fleet-incident mode: 1 DS chết → thu hồi TOÀN BỘ fleet
+            String triggerServerId = deadServers.get(0).getServerId();
+            log.warn("[DS-Fleet] Auto-reclaim triggered by dead DS: {} (fleet.auto-reclaim-on-failure=true)",
+                    triggerServerId);
+            fleetReclaimAll("DS fleet incident — server died: " + triggerServerId);
+            return;
+        }
 
         for (DedicatedServer server : deadServers) {
             log.warn("[DS-Svc] Cleaning dead server (no heartbeat): {}", server.getServerId());
-            // Thông báo cho player trước khi dừng container
             cancelMatchForDeadServer(server, "Server crashed — match was cancelled");
             dockerManager.stopContainer(server.getDockerContainerId());
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
         }
+    }
+
+    // ── Fleet Management ──────────────────────────────────────────────────────
+
+    /**
+     * Trả về trạng thái sức khoẻ toàn bộ DS fleet hiện tại.
+     * fleetHealth: OK | WARNING | CRITICAL
+     */
+    public Map<String, Object> getFleetStatus() {
+        List<DedicatedServer> allActive = dsRepo.findAll().stream()
+                .filter(s -> !"stopped".equals(s.getStatus()))
+                .toList();
+
+        LocalDateTime now           = LocalDateTime.now();
+        LocalDateTime hbCutoff      = now.minusSeconds(90);
+
+        List<Map<String, Object>> dsInfoList = allActive.stream().map(ds -> {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("serverId",       ds.getServerId());
+            info.put("status",         ds.getStatus());
+            info.put("port",           ds.getPort());
+            info.put("matchId",        ds.getMatchId());
+            info.put("currentPlayers", ds.getCurrentPlayers());
+            info.put("containerId",    ds.getDockerContainerId());
+            info.put("startedAt",      ds.getStartedAt());
+
+            boolean heartbeatOk = false;
+            long    heartbeatAgeMs = -1;
+            if (ds.getLastHeartbeatAt() != null) {
+                heartbeatAgeMs = Duration.between(ds.getLastHeartbeatAt(), now).toMillis();
+                heartbeatOk    = ds.getLastHeartbeatAt().isAfter(hbCutoff);
+            }
+            info.put("heartbeatAgeMs", heartbeatAgeMs);
+            info.put("heartbeatOk",    heartbeatOk);
+            return info;
+        }).toList();
+
+        long deadCount = dsInfoList.stream()
+                .filter(d -> !Boolean.TRUE.equals(d.get("heartbeatOk")))
+                .count();
+
+        String health = "OK";
+        if (!allActive.isEmpty() && deadCount > 0 && deadCount < allActive.size()) health = "WARNING";
+        else if (!allActive.isEmpty() && deadCount == allActive.size())             health = "CRITICAL";
+        else if (allActive.isEmpty())                                               health = "EMPTY";
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("fleetHealth",            health);
+        result.put("totalActive",            allActive.size());
+        result.put("deadCount",              deadCount);
+        result.put("autoReclaimOnFailure",   fleetAutoReclaimOnFailure);
+        result.put("timestamp",              now.toString());
+        result.put("servers",                dsInfoList);
+        return result;
+    }
+
+    /**
+     * Thu hồi TOÀN BỘ DS fleet đang active.
+     * Notify players qua WS, stop containers, mark DB stopped.
+     * Trả về báo cáo chi tiết.
+     */
+    @Transactional
+    public Map<String, Object> fleetReclaimAll(String triggerReason) {
+        List<DedicatedServer> active = dsRepo.findAll().stream()
+                .filter(s -> !"stopped".equals(s.getStatus()))
+                .toList();
+
+        List<Map<String, Object>> reclaimed = new ArrayList<>();
+        List<Map<String, Object>> failed    = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+
+        log.warn("[DS-Fleet] ===== FLEET RECLAIM START ===== reason={} total={}",
+                triggerReason, active.size());
+
+        for (DedicatedServer server : active) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("serverId",    server.getServerId());
+            entry.put("status",      server.getStatus());
+            entry.put("matchId",     server.getMatchId());
+            entry.put("containerId", server.getDockerContainerId());
+            entry.put("port",        server.getPort());
+            try {
+                cancelMatchForDeadServer(server, "Fleet incident: " + triggerReason);
+                dockerManager.stopContainer(server.getDockerContainerId());
+                server.setStatus("stopped");
+                server.setStoppedAt(now);
+                dsRepo.save(server);
+                entry.put("reclaimStatus", "SUCCESS");
+                reclaimed.add(entry);
+                log.warn("[DS-Fleet] Reclaimed serverId={}", server.getServerId());
+            } catch (Exception e) {
+                entry.put("reclaimStatus", "FAILED");
+                entry.put("error", e.getMessage());
+                failed.add(entry);
+                log.error("[DS-Fleet] Failed to reclaim serverId={}: {}", server.getServerId(), e.getMessage());
+            }
+        }
+
+        log.warn("[DS-Fleet] ===== FLEET RECLAIM DONE ===== reclaimed={}/{} failed={}",
+                reclaimed.size(), active.size(), failed.size());
+
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("incidentTime",           now.toString());
+        report.put("triggerReason",          triggerReason);
+        report.put("totalReclaimAttempted",  active.size());
+        report.put("reclaimedCount",         reclaimed.size());
+        report.put("failedCount",            failed.size());
+        report.put("reclaimed",              reclaimed);
+        report.put("failed",                 failed);
+        return report;
     }
 
     /**

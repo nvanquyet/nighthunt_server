@@ -603,4 +603,44 @@ public class AdminDsController {
         result.put("collectedAt", java.time.Instant.now().toString());
         return ApiResponse.ok(result);
     }
+
+    // ── GET /api/admin/ds/fleet-status ────────────────────────────────────────
+    /**
+     * Real-time fleet health: tất cả DS đang active, heartbeat age, status.
+     * fleetHealth: OK | WARNING | CRITICAL | EMPTY
+     *
+     * GET /api/admin/ds/fleet-status
+     * Header: X-Admin-Secret: <secret>
+     */
+    @GetMapping("/fleet-status")
+    public ApiResponse<Map<String, Object>> fleetStatus(
+            @RequestHeader("X-Admin-Secret") String secret) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+        return ApiResponse.ok(dsService.getFleetStatus());
+    }
+
+    // ── POST /api/admin/ds/fleet-reclaim ──────────────────────────────────────
+    /**
+     * Emergency: thu hồi TOÀN BỘ DS fleet đang active.
+     * Notify players → stop containers → mark DB stopped → trả về báo cáo.
+     *
+     * POST /api/admin/ds/fleet-reclaim
+     * Header: X-Admin-Secret: <secret>
+     * Body (optional): { "reason": "load test incident" }
+     */
+    @PostMapping("/fleet-reclaim")
+    public ApiResponse<Map<String, Object>> fleetReclaim(
+            @RequestHeader("X-Admin-Secret") String secret,
+            @RequestBody(required = false) Map<String, String> body) {
+
+        if (!adminSecret.equals(secret)) {
+            return ApiResponse.error("Unauthorized", "FORBIDDEN");
+        }
+        String reason = body != null ? body.getOrDefault("reason", "Admin-triggered fleet reclaim") : "Admin-triggered fleet reclaim";
+        Map<String, Object> report = dsService.fleetReclaimAll(reason);
+        return ApiResponse.ok(report);
+    }
 }
