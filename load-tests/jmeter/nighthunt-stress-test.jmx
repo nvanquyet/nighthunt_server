@@ -71,7 +71,7 @@
            Regular ThreadGroup, runs 1 loop each VU, no scheduler.
            ================================================================ -->
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
-                   testname="[0] SETUP - Pre-register accounts" enabled="true">
+                   testname="[0] SETUP - Pre-register accounts" enabled="false">
         <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">10</stringProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
@@ -117,6 +117,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -191,6 +195,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -420,6 +428,10 @@
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -564,6 +576,10 @@
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -616,6 +632,10 @@
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -640,7 +660,15 @@
                   <stringProp name="Header.name">Authorization</stringProp>
                   <stringProp name="Header.value">Bearer ${TOKEN}</stringProp>
                 </elementProp>
-              </collectionProp>
+
+                <elementProp name="" elementType="Header">
+
+                  <stringProp name="Header.name">X-Session-Id</stringProp>
+
+                  <stringProp name="Header.value">${SESSION_ID}</stringProp>
+
+                </elementProp>
+</collectionProp>
             </HeaderManager>
             <hashTree/>
           </hashTree>
@@ -748,6 +776,10 @@
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
               </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
+              </elementProp>
             </collectionProp>
           </HeaderManager>
           <hashTree/>
@@ -799,6 +831,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
@@ -943,6 +979,10 @@
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
                 <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Session-Id</stringProp>
+                <stringProp name="Header.value">${SESSION_ID}</stringProp>
               </elementProp>
             </collectionProp>
           </HeaderManager>
