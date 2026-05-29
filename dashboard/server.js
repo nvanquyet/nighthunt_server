@@ -221,8 +221,13 @@ app.get('/api/backend/stats', requireToken, async (req, res) => {
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ── Load Test Reports API ─────────────────────────────────────────────────────
-const LOADTEST_DIR = path.join(__dirname, '..', 'load-tests', 'ds-fleet-test', 'reports');
-const JMETER_DIR   = path.join(__dirname, '..', 'load-tests', 'jmeter');
+// In container: /app/load-tests is mounted from ./load-tests (docker-compose volume)
+// In dev (no container): falls back to ../load-tests relative to /app
+const LOADTEST_BASE = fs.existsSync(path.join(__dirname, 'load-tests'))
+    ? path.join(__dirname, 'load-tests')
+    : path.join(__dirname, '..', 'load-tests');
+const LOADTEST_DIR = path.join(LOADTEST_BASE, 'ds-fleet-test', 'reports');
+const JMETER_DIR   = path.join(LOADTEST_BASE, 'jmeter');
 
 // GET /api/loadtest/capacity — list + data from DS capacity JSON reports
 app.get('/api/loadtest/capacity', requireToken, (req, res) => {
@@ -230,7 +235,9 @@ app.get('/api/loadtest/capacity', requireToken, (req, res) => {
         if (!fs.existsSync(LOADTEST_DIR)) return res.json({ reports: [] });
         const files = fs.readdirSync(LOADTEST_DIR)
             .filter(f => f.endsWith('.json'))
-            .sort().reverse();
+            .map(f => ({ f, mtime: fs.statSync(path.join(LOADTEST_DIR, f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime)
+            .map(x => x.f);
         const reports = files.map(f => {
             try {
                 const raw = JSON.parse(fs.readFileSync(path.join(LOADTEST_DIR, f), 'utf8'));
@@ -241,6 +248,35 @@ app.get('/api/loadtest/capacity', requireToken, (req, res) => {
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+// GET /api/loadtest/capacity/download/:file — download raw JSON
+app.get('/api/loadtest/capacity/download/:file', requireToken, (req, res) => {
+    const safe = path.basename(req.params.file);
+    if (!safe.endsWith('.json')) return res.status(400).json({ error: 'Invalid file' });
+    const filePath = path.join(LOADTEST_DIR, safe);
+    if (!filePath.startsWith(LOADTEST_DIR) || !fs.existsSync(filePath))
+        return res.status(404).json({ error: 'Not found' });
+    res.download(filePath, safe);
+});
+
+// GET /api/loadtest/jmeter/download/:file — download raw JTL or statistics.json
+app.get('/api/loadtest/jmeter/download/:type/:file', requireToken, (req, res) => {
+    const safe = path.basename(req.params.file);
+    const type = req.params.type; // 'jtl' or 'scenario'
+    let filePath;
+    if (type === 'jtl') {
+        filePath = path.join(JMETER_DIR, 'results', safe);
+        if (!filePath.startsWith(path.join(JMETER_DIR, 'results'))) return res.status(400).end();
+    } else if (type === 'scenario') {
+        const scenarioName = path.basename(req.params.file, '.json');
+        filePath = path.join(JMETER_DIR, 'reports', scenarioName, 'statistics.json');
+        if (!filePath.startsWith(path.join(JMETER_DIR, 'reports'))) return res.status(400).end();
+    } else {
+        return res.status(400).json({ error: 'Invalid type' });
+    }
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
+    res.download(filePath, safe);
 });
 
 // GET /api/loadtest/jmeter — latest JMeter statistics.json summary
@@ -266,7 +302,9 @@ app.get('/api/loadtest/jmeter', requireToken, (req, res) => {
         if (fs.existsSync(resultsDir)) {
             const jtls = fs.readdirSync(resultsDir)
                 .filter(f => f.endsWith('.jtl'))
-                .sort().reverse();
+                .map(f => ({ f, mtime: fs.statSync(path.join(resultsDir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime)
+                .map(x => x.f);
             if (jtls.length > 0) {
                 try {
                     timeSeries = parseJtlTimeSeries(path.join(resultsDir, jtls[0]), jtls[0]);

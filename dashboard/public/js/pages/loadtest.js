@@ -263,7 +263,15 @@
         const rows = Object.entries(stats)
             .sort(([a], [b]) => (a === 'Total' ? 1 : b === 'Total' ? -1 : a.localeCompare(b)));
 
-        const html = `<table class="lt-table">
+        const sel    = document.getElementById('lt-scenario-sel');
+        const selIdx = sel ? +sel.value : 0;
+        const scenario = allScenarios[selIdx];
+        const dlBtn = scenario
+            ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${scenario.name}.json')" style="margin-left:auto">&#11123; statistics.json</button>`
+            : '';
+
+        const html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">${dlBtn}</div>
+<table class="lt-table">
 <thead><tr>
   <th>Endpoint</th><th>Samples</th><th>Errors</th><th>Err%</th>
   <th>Avg</th><th>p50</th><th>p95</th><th>p99</th><th>TPS</th>
@@ -295,11 +303,14 @@ ${rows.map(([label, s]) => {
             return;
         }
 
-        const reports = data.reports.filter(r => r.summary);
+        const reports = data.reports.filter(r => r.results || r.summary);
         if (!reports.length) return;
 
         // Peak DS across all reports
-        const peakDS = Math.max(...reports.map(r => r.summary.max_concurrent_ds || 0));
+        const peakDS = Math.max(...reports.map(r => {
+            const res = r.results || r.summary || {};
+            return res.peak_concurrent_ds || res.max_concurrent_ds || res.ds_count || 0;
+        }));
         setStatCard('st-peak-ds', peakDS);
 
         ltDrawCapacityChart(reports);
@@ -311,14 +322,14 @@ ${rows.map(([label, s]) => {
         if (!canvas) return;
         if (capacityChart) { capacityChart.destroy(); capacityChart = null; }
 
+        const getRes = r => r.results || r.summary || {};
+
         // Each report is one run; use batches as series if available
-        // Try to build time-series from results.batches
         const hasTimeSeries = reports.some(r => r.results && r.results.batches);
 
         if (hasTimeSeries) {
-            // Use the latest report's batch data
             const latest = reports.find(r => r.results && r.results.batches) || reports[0];
-            const batches = (latest.results && latest.results.batches) ? latest.results.batches : [];
+            const batches = (latest.results && latest.results.batches) || [];
             const labels  = batches.map((b, i) => 'Batch ' + (i + 1));
             const dsData  = batches.map(b => b.concurrent_ds || b.max_concurrent || 0);
             const p50Data = batches.map(b => b.latency_p50 || b.p50_ms || null);
@@ -362,10 +373,16 @@ ${rows.map(([label, s]) => {
                 }
             });
         } else {
-            // Fallback: one data point per report
-            const labels   = reports.map(r => r.file.replace('ds_capacity_', '').replace('.json', ''));
-            const dsData   = reports.map(r => (r.summary && r.summary.max_concurrent_ds) || 0);
-            const succData = reports.map(r => (r.summary && r.summary.success_rate_pct) || 0);
+            // Fallback: one bar per report
+            const labels   = reports.map(r => r.file.replace('ds_capacity_', '').replace('ds-fleet-test-','').replace('.json', ''));
+            const getRes   = r => r.results || r.summary || {};
+            const dsData   = reports.map(r => getRes(r).peak_concurrent_ds || getRes(r).max_concurrent_ds || 0);
+            // hb_success_rate is 0-1, alloc_success_rate is 0-1
+            const succData = reports.map(r => {
+                const res = getRes(r);
+                const pct = res.hb_success_rate || res.alloc_success_rate || res.success_rate_pct;
+                return pct != null ? (pct <= 1 ? pct * 100 : pct) : null;
+            });
 
             capacityChart = new Chart(canvas.getContext('2d'), {
                 data: {
@@ -402,28 +419,59 @@ ${rows.map(([label, s]) => {
         const el = document.getElementById('lt-capacity-table');
         if (!el) return;
 
-        const html = `<table class="lt-table">
+        const html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+  <span style="font-size:0.85rem;color:var(--muted)">${reports.length} report(s)</span>
+</div>
+<table class="lt-table">
 <thead><tr>
-  <th>Report</th><th>DS Count</th><th>Success Rate</th><th>Total Heartbeats</th><th>Errors</th><th>Verdict</th>
+  <th>Report</th><th>Peak DS</th><th>HB Success</th><th>Total Heartbeats</th><th>HB Errors</th><th>Verdict</th><th>Download</th>
 </tr></thead>
 <tbody>
 ${reports.map(r => {
-    const s = r.summary || {};
-    const vclass = (s.verdict || '').toLowerCase().includes('excellent') ? 'lt-verdict-ok'
-                 : (s.verdict || '').toLowerCase().includes('good')      ? 'lt-verdict-ok'
-                 : 'lt-verdict-warn';
+    const s = r.results || r.summary || {};
+    const verdict = r.verdict || s.verdict || '–';
+    const vclass = verdict.includes('EXCELLENT') || verdict.includes('GOOD') || verdict.includes('✅') ? 'lt-verdict-ok' : 'lt-verdict-warn';
+    const succRate = s.hb_success_rate || s.alloc_success_rate || s.success_rate_pct;
+    const succPct  = succRate != null ? (succRate <= 1 ? succRate * 100 : succRate) : null;
     return `<tr>
-  <td>${r.file.replace('ds_capacity_', '').replace('.json', '')}</td>
-  <td>${s.max_concurrent_ds || s.ds_count || '–'}</td>
-  <td>${fmtPct(s.success_rate_pct)}</td>
+  <td>${r.file.replace('ds_capacity_', '').replace('ds-fleet-test-','').replace('.json', '')}</td>
+  <td>${s.peak_concurrent_ds || s.max_concurrent_ds || '–'}</td>
+  <td>${fmtPct(succPct)}</td>
   <td>${(s.total_heartbeats || 0).toLocaleString()}</td>
-  <td>${s.total_errors || 0}</td>
-  <td><span class="lt-verdict ${vclass}">${s.verdict || '–'}</span></td>
+  <td>${s.hb_errors || s.total_errors || 0}</td>
+  <td><span class="lt-verdict ${vclass}" title="${verdict}">${verdict.length > 30 ? verdict.substring(0,30)+'…' : verdict}</span></td>
+  <td><button class="lt-btn lt-btn-dl" onclick="ltDownload('capacity','${r.file}')">&#11123; JSON</button></td>
 </tr>`;
 }).join('')}
 </tbody></table>`;
         el.innerHTML = html;
     }
+
+    // ── Download helper ──────────────────────────────────────────────────────
+    window.ltDownload = function (type, file) {
+        const token = localStorage.getItem('dashboard_token');
+        let url;
+        if (type === 'capacity') url = `/api/loadtest/capacity/download/${encodeURIComponent(file)}`;
+        else if (type === 'scenario') url = `/api/loadtest/jmeter/download/scenario/${encodeURIComponent(file)}`;
+        else if (type === 'jtl') url = `/api/loadtest/jmeter/download/jtl/${encodeURIComponent(file)}`;
+        else return;
+
+        // Fetch with auth header then trigger download via blob URL
+        fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} })
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.blob();
+            })
+            .then(blob => {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = file;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+            })
+            .catch(e => alert('Download failed: ' + e.message));
+    };
 
     // ── Stat card helper ─────────────────────────────────────────────────────
     function setStatCard(id, val) {

@@ -27,9 +27,11 @@ public class RateLimitConfig implements WebMvcConfigurer {
                 .order(0);
         
         // Rate limit interceptor runs second (to check rate limits)
+        // Exclude admin endpoints — they use X-Admin-Secret auth, not JWT,
+        // and the rate-limit toggle endpoint must never be blocked by rate limiting itself.
         registry.addInterceptor(rateLimitInterceptor)
                 .addPathPatterns("/**")
-                .excludePathPatterns("/actuator/**", "/error", "/ws/**", "/dashboard/**")
+                .excludePathPatterns("/actuator/**", "/error", "/ws/**", "/dashboard/**", "/admin/**")
                 .order(1);
     }
 }

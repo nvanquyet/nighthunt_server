@@ -255,6 +255,8 @@ services:
       ADMIN_SECRET: ${ADMIN_SECRET}
     ports:
       - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
+    volumes:
+      - ./load-tests:/app/load-tests:ro   # read-only mount for load test reports
     depends_on:
       - backend
     restart: unless-stopped

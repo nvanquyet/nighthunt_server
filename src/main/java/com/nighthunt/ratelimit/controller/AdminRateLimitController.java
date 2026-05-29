@@ -17,7 +17,7 @@ import java.util.Map;
  * All endpoints require X-Admin-Secret header (enforced by SecurityConfig).
  */
 @RestController
-@RequestMapping("/api/admin/rate-limit")
+@RequestMapping("/admin/rate-limit")
 @RequiredArgsConstructor
 public class AdminRateLimitController {
 
