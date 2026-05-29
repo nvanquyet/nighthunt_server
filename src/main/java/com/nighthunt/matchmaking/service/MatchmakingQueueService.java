@@ -503,8 +503,9 @@ public class MatchmakingQueueService {
         String lToken    = group.get(0).getLobbyToken();
         String mapId     = group.get(0).getMapId(); // unified mapId set in formMatch()
 
+        RoomResponse room = null;
         try {
-            RoomResponse room = roomService.createRankedRoom(userIds, modeKey, mapId);
+            room = roomService.createRankedRoom(userIds, modeKey, mapId);
             ServerAllocateResponse ds = dsService.allocateServerForMatch("vn", mapId, group.size(), room.getMatchId());
 
             Map<String, Object> payload = new HashMap<>();
@@ -551,6 +552,15 @@ public class MatchmakingQueueService {
                     room.getRoomCode(), modeKey, ds.getIp(), ds.getPort(), userIds);
         } catch (Exception ex) {
             log.error("[MM] Failed to create matched room: {}", ex.getMessage(), ex);
+            // Disband the room so players are not left stuck in an active room
+            if (room != null) {
+                try {
+                    roomService.disbandRoom(room.getRoomId(), userIds.get(0));
+                    log.info("[MM] Disbanded stale room {} after DS failure", room.getRoomId());
+                } catch (Exception disbandEx) {
+                    log.warn("[MM] Failed to disband room {} after DS failure: {}", room.getRoomId(), disbandEx.getMessage());
+                }
+            }
             // Re-queue all players on failure
             for (MatchmakingEntry e : group) {
                 try { enqueueInternal(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); } catch (Exception ignored) {}
