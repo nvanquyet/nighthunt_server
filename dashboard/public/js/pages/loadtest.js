@@ -74,17 +74,19 @@
   </div>
 </div>
 
-<!-- JMeter charts -->
+<!-- JMeter section -->
 <div class="lt-section">
-  <div class="lt-card-header" style="margin-bottom:8px">
-    <h2 class="lt-section-title" style="margin:0">JMeter Stress Test</h2>
-    <select id="lt-scenario-sel" class="lt-select" onchange="ltSelectScenario()"></select>
+  <div class="lt-card-header" style="margin-bottom:12px">
+    <h2 class="lt-section-title" style="margin:0">&#9889; JMeter Stress Test</h2>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="lt-jtl-sel" class="lt-select" onchange="ltSelectJtl()" title="Select JTL for chart"></select>
+      <button class="lt-btn lt-btn-run" style="font-size:0.8rem;padding:4px 12px" onclick="ltRunJmeter()">&#9654; Run JMeter Test</button>
+    </div>
   </div>
   <div class="lt-chart-wrap">
     <canvas id="lt-jmeter-chart" height="100"></canvas>
   </div>
-  <div class="lt-section-title" style="margin-top:24px;font-size:14px">Endpoint Summary</div>
-  <div id="lt-endpoint-table" class="lt-table-wrap"></div>
+  <div id="lt-jmeter-table" class="lt-table-wrap" style="margin-top:16px"></div>
 </div>
 
 <!-- DS Capacity chart -->
@@ -125,14 +127,14 @@
         const logEl     = document.getElementById('lt-run-log');
         const titleEl   = document.getElementById('lt-run-title');
         const statusEl  = document.getElementById('lt-run-status');
-        const runBtn    = document.getElementById('lt-run-cap-btn');
+        const runBtns   = document.querySelectorAll('[onclick*="ltRunCapacity"]');
 
         if (!consoleEl || !logEl) return;
         consoleEl.style.display = 'block';
         logEl.textContent = '';
         if (titleEl)  titleEl.textContent = 'Running DS Capacity Test…';
         if (statusEl) { statusEl.textContent = 'Running'; statusEl.className = 'lt-badge badge-loading'; }
-        if (runBtn)   { runBtn.disabled = true; }
+        runBtns.forEach(b => b.disabled = true);
         consoleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         const token = ltGetToken();
@@ -143,36 +145,15 @@
             });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const { jobId } = await resp.json();
-
-            // Poll output via SSE
-            const evtSrc = new EventSource(`/api/loadtest/run/${jobId}/stream?token=${encodeURIComponent(token || '')}`);
-            evtSrc.addEventListener('log', e => {
-                logEl.textContent += e.data + '\n';
-                logEl.scrollTop = logEl.scrollHeight;
+            ltStreamJob(jobId, token, logEl, statusEl, async () => {
+                logEl.textContent += '\n✅ Test completed — refreshing reports…\n';
+                await ltLoadData();
+                runBtns.forEach(b => b.disabled = false);
             });
-            evtSrc.addEventListener('done', async e => {
-                evtSrc.close();
-                const info = JSON.parse(e.data || '{}');
-                if (statusEl) {
-                    statusEl.textContent = info.code === 0 ? 'Done ✓' : 'Failed ✗';
-                    statusEl.className   = 'lt-badge ' + (info.code === 0 ? 'badge-ok' : 'badge-danger');
-                }
-                if (runBtn) runBtn.disabled = false;
-                if (info.code === 0) {
-                    logEl.textContent += '\n✅ Test completed — refreshing reports…\n';
-                    await ltLoadData();
-                }
-            });
-            evtSrc.onerror = () => {
-                evtSrc.close();
-                if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
-                if (runBtn) runBtn.disabled = false;
-                logEl.textContent += '\n[stream disconnected]\n';
-            };
         } catch (e) {
             if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
             logEl.textContent += 'Error: ' + e.message + '\n';
-            if (runBtn) runBtn.disabled = false;
+            runBtns.forEach(b => b.disabled = false);
         }
     };
 
@@ -236,56 +217,84 @@
     };
 
     // ── JMeter render ────────────────────────────────────────────────────────
-    let allScenarios = [];
+    let allScenarios  = [];
+    let allJtlFiles   = [];
+    let currentJtlIdx = 0;
 
     function ltRenderJmeter(data) {
+        const tableEl = document.getElementById('lt-jmeter-table');
         if (!data || data.error) {
-            document.getElementById('lt-endpoint-table').innerHTML = '<p class="lt-empty">No JMeter data available.</p>';
+            if (tableEl) tableEl.innerHTML = '<p class="lt-empty">No JMeter data available.</p>';
             return;
         }
 
         allScenarios = (data.scenarios || []).filter(s => s.stats);
-        const sel = document.getElementById('lt-scenario-sel');
 
+        // Build full JTL list: scenario JTLs first, then standalones
+        allJtlFiles = [];
+        allScenarios.forEach(s => { if (s.jtlFile) allJtlFiles.push({ label: s.name, file: s.jtlFile }); });
+        (data.standaloneJtls || []).forEach(f => {
+            if (!allJtlFiles.find(x => x.file === f)) allJtlFiles.push({ label: f.replace('.jtl',''), file: f });
+        });
+
+        // JTL selector
+        const sel = document.getElementById('lt-jtl-sel');
         if (sel) {
-            sel.innerHTML = allScenarios.length
-                ? allScenarios.map((s, i) => `<option value="${i}">${s.name}</option>`).join('')
-                : '<option>No scenarios</option>';
+            sel.innerHTML = allJtlFiles.length
+                ? allJtlFiles.map((x, i) => `<option value="${i}">${x.label}</option>`).join('')
+                : '<option>No JTL files</option>';
         }
 
-        // Update stat cards with Total from latest scenario
+        // Update stat cards from latest scenario
         if (allScenarios.length > 0) {
             const latest = allScenarios[0].stats;
             const total  = latest['Total'] || Object.values(latest)[0];
             if (total) {
-                const peakTps   = Math.max(...Object.values(latest).map(v => v.throughput || 0));
-                setStatCard('st-peak-tps',  peakTps.toFixed(1) + ' /s');
-                setStatCard('st-avg-resp',  fmtMs(total.meanResTime));
+                const peakTps = Math.max(...Object.values(latest).map(v => v.throughput || 0));
+                setStatCard('st-peak-tps',   peakTps.toFixed(1) + ' /s');
+                setStatCard('st-avg-resp',   fmtMs(total.meanResTime));
                 setStatCard('st-error-rate', fmtPct(total.errorPct));
-                setStatCard('st-total-req', (total.sampleCount || 0).toLocaleString());
+                setStatCard('st-total-req',  (total.sampleCount || 0).toLocaleString());
             }
         }
 
-        // Render time-series chart
+        // Draw default chart (first JTL or data.timeSeries)
         ltDrawJmeterChart(data.timeSeries);
-        // Render endpoint table for first scenario
-        if (allScenarios.length > 0) ltDrawEndpointTable(allScenarios[0].stats);
+
+        // Draw scenario summary table
+        ltDrawJmeterSummaryTable();
     }
 
-    window.ltSelectScenario = function () {
-        const sel = document.getElementById('lt-scenario-sel');
-        const idx = sel ? +sel.value : 0;
-        const s   = allScenarios[idx];
-        if (s) ltDrawEndpointTable(s.stats);
+    window.ltSelectJtl = async function () {
+        const sel = document.getElementById('lt-jtl-sel');
+        if (!sel) return;
+        currentJtlIdx = +sel.value;
+        const entry = allJtlFiles[currentJtlIdx];
+        if (!entry) return;
+        try {
+            const ts = await ltFetch('/api/loadtest/jmeter/series/' + encodeURIComponent(entry.file));
+            ltDrawJmeterChart(ts);
+        } catch (e) {
+            const canvas = document.getElementById('lt-jmeter-chart');
+            if (canvas) canvas.parentElement.innerHTML = '<p class="lt-empty">Could not load JTL: ' + e.message + '</p>';
+        }
     };
 
     function ltDrawJmeterChart(ts) {
-        const canvas = document.getElementById('lt-jmeter-chart');
-        if (!canvas) return;
+        const wrap = document.querySelector('#lt-jmeter-chart')?.parentElement;
+        const existingCanvas = document.getElementById('lt-jmeter-chart');
+        if (!existingCanvas) return;
         if (jmeterChart) { jmeterChart.destroy(); jmeterChart = null; }
 
+        // Restore canvas if it was replaced by an error message
+        if (!document.getElementById('lt-jmeter-chart')) {
+            wrap.innerHTML = '<canvas id="lt-jmeter-chart" height="100"></canvas>';
+        }
+        const canvas = document.getElementById('lt-jmeter-chart');
+        if (!canvas) return;
+
         if (!ts || ts.error || !ts.buckets || ts.buckets.length === 0) {
-            canvas.parentElement.innerHTML = '<p class="lt-empty">No JMeter time-series data available.</p>';
+            canvas.parentElement.innerHTML = '<p class="lt-empty">No time-series data for this JTL.</p>';
             return;
         }
 
@@ -293,6 +302,7 @@
         const tpsData = ts.buckets.map(b => b.tps);
         const msData  = ts.buckets.map(b => b.avgMs);
         const vuData  = ts.buckets.map(b => b.threads);
+        const errData = ts.buckets.map(b => b.errorPct);
 
         jmeterChart = new Chart(canvas.getContext('2d'), {
             type: 'bar',
@@ -302,16 +312,21 @@
                     {
                         type: 'line', yAxisID: 'y2', label: 'Avg Response (ms)',
                         data: msData, borderColor: '#4e9af1', backgroundColor: 'rgba(78,154,241,0.12)',
-                        tension: 0.3, fill: true, pointRadius: 2, borderWidth: 2,
+                        tension: 0.3, fill: true, pointRadius: 3, borderWidth: 2,
                     },
                     {
-                        type: 'line', yAxisID: 'y1', label: 'Throughput (TPS)',
+                        type: 'line', yAxisID: 'y1', label: 'TPS',
                         data: tpsData, borderColor: '#f0c040', backgroundColor: 'rgba(240,192,64,0.10)',
-                        tension: 0.3, fill: false, pointRadius: 2, borderWidth: 2,
+                        tension: 0.3, fill: false, pointRadius: 3, borderWidth: 2,
+                    },
+                    {
+                        type: 'line', yAxisID: 'y1', label: 'Error %',
+                        data: errData, borderColor: '#e05555', backgroundColor: 'rgba(224,85,85,0.10)',
+                        tension: 0.3, fill: false, pointRadius: 3, borderWidth: 1.5, borderDash: [4,3],
                     },
                     {
                         type: 'bar', yAxisID: 'y1', label: 'Active Users',
-                        data: vuData, backgroundColor: 'rgba(150,150,180,0.25)', borderWidth: 0,
+                        data: vuData, backgroundColor: 'rgba(150,150,180,0.18)', borderWidth: 0,
                     },
                 ]
             },
@@ -319,77 +334,159 @@
                 responsive: true,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top', labels: { color: '#ccc' } },
-                    title:  { display: true, text: 'Throughput & Response Times vs. Time', color: '#ccc', font: { size: 14 } },
+                    legend: { position: 'top', labels: { color: '#ccc', boxWidth: 12 } },
+                    title:  { display: true, text: (ts.fileName || '') + ' — Throughput & Response Times', color: '#ccc', font: { size: 13 } },
                     tooltip: {
                         callbacks: {
                             label: ctx => {
                                 const v = ctx.parsed.y;
                                 if (ctx.dataset.label.includes('ms')) return ctx.dataset.label + ': ' + fmtMs(v);
-                                if (ctx.dataset.label.includes('TPS')) return ctx.dataset.label + ': ' + v + '/s';
+                                if (ctx.dataset.label.includes('TPS')) return 'TPS: ' + v.toFixed(1) + '/s';
+                                if (ctx.dataset.label.includes('Error')) return 'Error: ' + v.toFixed(1) + '%';
                                 return ctx.dataset.label + ': ' + v;
                             }
                         }
                     }
                 },
                 scales: {
-                    x:  { ticks: { color: '#999', maxRotation: 0, autoSkip: true, maxTicksLimit: 15 }, grid: { color: '#2a2a3a' } },
-                    y1: {
-                        type: 'linear', position: 'left',
-                        title: { display: true, text: 'TPS / Active Users', color: '#aaa' },
-                        ticks: { color: '#aaa' }, grid: { color: '#2a2a3a' },
-                        min: 0,
-                    },
-                    y2: {
-                        type: 'linear', position: 'right',
-                        title: { display: true, text: 'Response Time (ms)', color: '#aaa' },
-                        ticks: { color: '#4e9af1', callback: v => fmtMs(v) },
-                        grid: { drawOnChartArea: false },
-                        min: 0,
-                    },
+                    x:  { ticks: { color: '#999', maxRotation: 0, autoSkip: true, maxTicksLimit: 20 }, grid: { color: '#1e2230' } },
+                    y1: { type: 'linear', position: 'left',  title: { display: true, text: 'TPS / Users / Err%', color: '#aaa' }, ticks: { color: '#aaa' }, grid: { color: '#1e2230' }, min: 0 },
+                    y2: { type: 'linear', position: 'right', title: { display: true, text: 'Response Time (ms)', color: '#4e9af1' }, ticks: { color: '#4e9af1', callback: v => fmtMs(v) }, grid: { drawOnChartArea: false }, min: 0 },
                 }
             }
         });
     }
 
-    function ltDrawEndpointTable(stats) {
-        const el = document.getElementById('lt-endpoint-table');
+    function ltDrawJmeterSummaryTable() {
+        const el = document.getElementById('lt-jmeter-table');
         if (!el) return;
-        if (!stats) { el.innerHTML = '<p class="lt-empty">No endpoint data.</p>'; return; }
 
-        const rows = Object.entries(stats)
-            .sort(([a], [b]) => (a === 'Total' ? 1 : b === 'Total' ? -1 : a.localeCompare(b)));
+        if (!allScenarios.length) {
+            el.innerHTML = '<p class="lt-empty">No scenario reports found.</p>';
+            return;
+        }
 
-        const sel    = document.getElementById('lt-scenario-sel');
-        const selIdx = sel ? +sel.value : 0;
-        const scenario = allScenarios[selIdx];
-        const dlBtn = scenario
-            ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${scenario.name}.json')" style="margin-left:auto">&#11123; statistics.json</button>`
-            : '';
-
-        const html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">${dlBtn}</div>
-<table class="lt-table">
-<thead><tr>
-  <th>Endpoint</th><th>Samples</th><th>Errors</th><th>Err%</th>
-  <th>Avg</th><th>p50</th><th>p95</th><th>p99</th><th>TPS</th>
-</tr></thead>
-<tbody>
-${rows.map(([label, s]) => {
-    const isTot = label === 'Total';
-    return `<tr class="${isTot ? 'lt-row-total' : ''}">
-  <td>${label}</td>
-  <td>${(s.sampleCount||0).toLocaleString()}</td>
-  <td>${(s.errorCount||0).toLocaleString()}</td>
-  <td>${fmtPct(s.errorPct)}</td>
-  <td>${fmtMs(s.meanResTime)}</td>
-  <td>${fmtMs(s.medianResTime)}</td>
-  <td>${fmtMs(s.pct2ResTime)}</td>
-  <td>${fmtMs(s.pct3ResTime)}</td>
-  <td>${(s.throughput||0).toFixed(2)}</td>
+        const rows = allScenarios.map((s, idx) => {
+            const stats  = s.stats || {};
+            const total  = stats['Total'] || Object.values(stats)[0] || {};
+            const peakTps = Math.max(...Object.values(stats).map(v => v.throughput || 0));
+            const errCls  = (total.errorPct || 0) > 20 ? 'style="color:#e07070"' : (total.errorPct || 0) > 5 ? 'style="color:#f0c040"' : 'style="color:#7be495"';
+            const jtlDl   = s.jtlFile
+                ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('jtl','${s.jtlFile}')" title="Download JTL">&#11123; JTL</button>`
+                : '<span style="color:var(--muted);font-size:0.75rem">no JTL</span>';
+            const endpts  = Object.keys(stats).filter(k => k !== 'Total').length;
+            return `<tr>
+  <td><strong>${s.name}</strong><br><span style="color:var(--muted);font-size:0.75rem">${endpts} endpoint${endpts!==1?'s':''}</span></td>
+  <td>${(total.sampleCount||0).toLocaleString()}</td>
+  <td ${errCls}>${fmtPct(total.errorPct)}</td>
+  <td>${peakTps.toFixed(1)} /s</td>
+  <td>${fmtMs(total.meanResTime)}</td>
+  <td>${fmtMs(total.pct2ResTime)}</td>
+  <td>${fmtMs(total.pct3ResTime)}</td>
+  <td>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${s.name}.json')">&#11123; stats.json</button>
+      ${jtlDl}
+      <button class="lt-btn lt-btn-ghost" style="font-size:0.75rem;padding:3px 9px" onclick="ltShowEndpoints(${idx})">&#9776; Endpoints</button>
+    </div>
+  </td>
+</tr>
+<tr id="lt-ep-row-${idx}" style="display:none">
+  <td colspan="8" style="padding:0">
+    <div id="lt-ep-detail-${idx}" style="padding:8px 12px;background:rgba(0,0,0,0.2)"></div>
+  </td>
 </tr>`;
-}).join('')}
+        });
+
+        el.innerHTML = `<table class="lt-table">
+<thead><tr>
+  <th>Scenario</th><th>Samples</th><th>Err%</th><th>Peak TPS</th>
+  <th>Avg</th><th>p95</th><th>p99</th><th>Download / Detail</th>
+</tr></thead>
+<tbody>${rows.join('')}</tbody></table>`;
+    }
+
+    window.ltShowEndpoints = function (idx) {
+        const row    = document.getElementById('lt-ep-row-' + idx);
+        const detail = document.getElementById('lt-ep-detail-' + idx);
+        if (!row || !detail) return;
+        const visible = row.style.display !== 'none';
+        if (visible) { row.style.display = 'none'; return; }
+        row.style.display = '';
+
+        const s = allScenarios[idx];
+        if (!s || !s.stats) { detail.innerHTML = '<p class="lt-empty">No endpoint data.</p>'; return; }
+
+        const rows = Object.entries(s.stats)
+            .sort(([a], [b]) => a === 'Total' ? 1 : b === 'Total' ? -1 : a.localeCompare(b));
+
+        detail.innerHTML = `<table class="lt-table" style="font-size:0.78rem">
+<thead><tr><th>Endpoint</th><th>Samples</th><th>Err%</th><th>Avg</th><th>p50</th><th>p95</th><th>p99</th><th>TPS</th></tr></thead>
+<tbody>
+${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
+  <td>${label}</td><td>${(v.sampleCount||0).toLocaleString()}</td>
+  <td>${fmtPct(v.errorPct)}</td><td>${fmtMs(v.meanResTime)}</td>
+  <td>${fmtMs(v.medianResTime)}</td><td>${fmtMs(v.pct2ResTime)}</td>
+  <td>${fmtMs(v.pct3ResTime)}</td><td>${(v.throughput||0).toFixed(2)}</td>
+</tr>`).join('')}
 </tbody></table>`;
-        el.innerHTML = html;
+    };
+
+    window.ltRunJmeter = async function () {
+        const consoleEl = document.getElementById('lt-run-console');
+        const logEl     = document.getElementById('lt-run-log');
+        const titleEl   = document.getElementById('lt-run-title');
+        const statusEl  = document.getElementById('lt-run-status');
+        if (!consoleEl || !logEl) return;
+
+        consoleEl.style.display = 'block';
+        logEl.textContent = '';
+        if (titleEl)  titleEl.textContent = 'Running JMeter Stress Test…';
+        if (statusEl) { statusEl.textContent = 'Running'; statusEl.className = 'lt-badge badge-loading'; }
+        consoleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        const token = ltGetToken();
+        try {
+            const resp = await fetch('/api/loadtest/run/jmeter', {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {})
+            });
+            const body = await resp.json();
+            if (!resp.ok) {
+                logEl.textContent = '⚠ ' + (body.error || 'Failed') + '\n\n' + (body.hint || '');
+                if (statusEl) { statusEl.textContent = 'N/A'; statusEl.className = 'lt-badge badge-warn'; }
+                return;
+            }
+            ltStreamJob(body.jobId, token, logEl, statusEl, async () => {
+                logEl.textContent += '\n✅ Done — refreshing reports…\n';
+                await ltLoadData();
+            });
+        } catch (e) {
+            if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
+            logEl.textContent += 'Error: ' + e.message;
+        }
+    };
+
+    function ltStreamJob(jobId, token, logEl, statusEl, onDone) {
+        const evtSrc = new EventSource(`/api/loadtest/run/${jobId}/stream?token=${encodeURIComponent(token || '')}`);
+        evtSrc.addEventListener('log', e => {
+            logEl.textContent += e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+        });
+        evtSrc.addEventListener('done', async e => {
+            evtSrc.close();
+            const info = JSON.parse(e.data || '{}');
+            if (statusEl) {
+                statusEl.textContent = info.code === 0 ? 'Done ✓' : 'Failed ✗';
+                statusEl.className   = 'lt-badge ' + (info.code === 0 ? 'badge-ok' : 'badge-danger');
+            }
+            if (info.code === 0 && onDone) await onDone();
+        });
+        evtSrc.onerror = () => {
+            evtSrc.close();
+            if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
+            logEl.textContent += '\n[stream disconnected]\n';
+        };
     }
 
     // ── DS Capacity render ───────────────────────────────────────────────────

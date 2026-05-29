@@ -284,39 +284,64 @@ app.get('/api/loadtest/jmeter', requireToken, (req, res) => {
     try {
         const reportsDir = path.join(JMETER_DIR, 'reports');
         const resultsDir = path.join(JMETER_DIR, 'results');
-        if (!fs.existsSync(reportsDir)) return res.json({ scenarios: [] });
 
-        const scenarios = fs.readdirSync(reportsDir)
-            .filter(d => fs.statSync(path.join(reportsDir, d)).isDirectory())
-            .sort().reverse()
-            .map(dir => {
-                const statsPath = path.join(reportsDir, dir, 'statistics.json');
-                if (!fs.existsSync(statsPath)) return { name: dir, stats: null };
-                try {
-                    return { name: dir, stats: JSON.parse(fs.readFileSync(statsPath, 'utf8')) };
-                } catch { return { name: dir, stats: null }; }
-            });
-
-        // Parse latest .jtl for time-series (aggregate into 30s buckets)
-        let timeSeries = null;
-        if (fs.existsSync(resultsDir)) {
-            const jtls = fs.readdirSync(resultsDir)
+        // Build JTL file list (with mtime) for matching + standalone list
+        const jtlMeta = fs.existsSync(resultsDir)
+            ? fs.readdirSync(resultsDir)
                 .filter(f => f.endsWith('.jtl'))
                 .map(f => ({ f, mtime: fs.statSync(path.join(resultsDir, f)).mtimeMs }))
                 .sort((a, b) => b.mtime - a.mtime)
-                .map(x => x.f);
-            if (jtls.length > 0) {
-                try {
-                    timeSeries = parseJtlTimeSeries(path.join(resultsDir, jtls[0]), jtls[0]);
-                } catch (e) {
-                    timeSeries = { error: e.message };
-                }
+            : [];
+        const jtlByName = Object.fromEntries(jtlMeta.map(x => [x.f, x]));
+
+        // Scenarios from report folders
+        const scenarios = fs.existsSync(reportsDir)
+            ? fs.readdirSync(reportsDir)
+                .filter(d => fs.statSync(path.join(reportsDir, d)).isDirectory())
+                .sort().reverse()
+                .map(dir => {
+                    const statsPath = path.join(reportsDir, dir, 'statistics.json');
+                    let stats = null;
+                    try { if (fs.existsSync(statsPath)) stats = JSON.parse(fs.readFileSync(statsPath, 'utf8')); } catch {}
+                    // Match JTL by exact name
+                    const jtlFile = jtlByName[dir + '.jtl'] ? dir + '.jtl'
+                        : jtlMeta.find(x => x.f.startsWith(dir))?.f || null;
+                    return { name: dir, stats, jtlFile };
+                })
+            : [];
+
+        // Standalone JTLs (no matching report folder)
+        const reportNames = new Set(scenarios.map(s => s.jtlFile).filter(Boolean));
+        const standaloneJtls = jtlMeta.filter(x => !reportNames.has(x.f)).map(x => x.f);
+
+        // Parse latest JTL for default time-series
+        let timeSeries = null;
+        if (jtlMeta.length > 0) {
+            // Prefer a scenario JTL (with most data), fallback to newest
+            const preferred = jtlMeta.find(x => reportNames.has(x.f)) || jtlMeta[0];
+            try {
+                timeSeries = parseJtlTimeSeries(path.join(resultsDir, preferred.f), preferred.f);
+            } catch (e) {
+                timeSeries = { error: e.message };
             }
         }
-        res.json({ scenarios, timeSeries });
+
+        res.json({ scenarios, standaloneJtls, timeSeries });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+// GET /api/loadtest/jmeter/series/:file — timeSeries for a specific JTL
+app.get('/api/loadtest/jmeter/series/:file', requireToken, (req, res) => {
+    const safe = path.basename(req.params.file);
+    if (!safe.endsWith('.jtl')) return res.status(400).json({ error: 'JTL files only' });
+    const resultsDir = path.join(JMETER_DIR, 'results');
+    const filePath   = path.join(resultsDir, safe);
+    if (!filePath.startsWith(resultsDir) || !fs.existsSync(filePath))
+        return res.status(404).json({ error: 'Not found' });
+    try { res.json(parseJtlTimeSeries(filePath, safe)); }
+    catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 function parseJtlTimeSeries(filePath, fileName) {
@@ -421,6 +446,52 @@ app.post('/api/loadtest/run/capacity', requireToken, (req, res) => {
         setTimeout(() => jobs.delete(jobId), 5 * 60 * 1000);
     });
 
+    res.json({ jobId });
+});
+
+// POST /api/loadtest/run/jmeter — launch JMeter stress test
+app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
+    const jmxFile   = path.join(JMETER_DIR, 'nighthunt-stress-test.jmx');
+    const runScript = path.join(JMETER_DIR, 'run-all-scenarios.sh');
+
+    // Check JMeter availability
+    const { execSync } = require('child_process');
+    let jmeterAvail = false;
+    try { execSync('which jmeter', { stdio: 'ignore' }); jmeterAvail = true; } catch {}
+    if (!jmeterAvail) {
+        return res.status(422).json({
+            error: 'JMeter not installed in this container.',
+            hint: 'Install JMeter on your host and run:\n  bash load-tests/jmeter/run-all-scenarios.sh\nThen refresh reports here.'
+        });
+    }
+    if (!fs.existsSync(runScript)) {
+        return res.status(404).json({ error: 'Script not found: ' + runScript });
+    }
+
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const proc = spawn('bash', [runScript], {
+        cwd: JMETER_DIR,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    const job = { proc, chunks: [], done: false, code: null, clients: [] };
+    jobs.set(jobId, job);
+
+    const onData = (data) => {
+        const line = data.toString();
+        job.chunks.push(line);
+        job.clients.forEach(client => client.write(`event: log\ndata: ${line.trimEnd()}\n\n`));
+    };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('close', (code) => {
+        job.done = true; job.code = code;
+        const info = JSON.stringify({ code });
+        job.clients.forEach(client => { client.write(`event: done\ndata: ${info}\n\n`); client.end(); });
+        job.clients = [];
+        setTimeout(() => jobs.delete(jobId), 5 * 60 * 1000);
+    });
     res.json({ jobId });
 });
 
