@@ -532,7 +532,13 @@ app.get('/api/loadtest/run/:jobId/stream', (req, res) => {
     }
 
     job.clients.push(res);
+    // Heartbeat every 20s so nginx proxy_read_timeout never fires during quiet periods
+    const heartbeat = setInterval(() => {
+        if (!job.done) res.write(': heartbeat\n\n');
+        else { clearInterval(heartbeat); }
+    }, 20000);
     req.on('close', () => {
+        clearInterval(heartbeat);
         job.clients = job.clients.filter(c => c !== res);
     });
 });
