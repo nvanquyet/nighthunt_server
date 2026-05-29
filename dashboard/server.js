@@ -466,7 +466,10 @@ app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
     const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/home/vnwue/UNITY/nighthunt_server/load-tests';
     const username = process.env.NH_TEST_USERNAME || 'testuser1';
     const password = process.env.NH_TEST_PASSWORD || 'Test@123456';
-    const adminSecret = process.env.ADMIN_SECRET || '';
+    // NOTE: intentionally NOT passing ADMIN_SECRET — the collect-server-metrics.sh
+    // uses grep -oP and head -n -1 (GNU-only, fails on Alpine BusyBox).
+    // Metrics collection from inside a Docker container is also architecturally wrong.
+    // Without ADMIN_SECRET the metrics collector branch in run-all-scenarios.sh is skipped.
 
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     // Run JMeter inside justb4/jmeter Docker image, mounting the load-tests host dir
@@ -477,7 +480,7 @@ app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
         '-e', `JMETER_HOME=/opt/apache-jmeter-5.5`,
         '-e', `NH_USERNAME=${username}`,
         '-e', `NH_PASSWORD=${password}`,
-        '-e', `ADMIN_SECRET=${adminSecret}`,
+        '-e', 'ADMIN_SECRET=',   // empty → metrics collector branch skipped
         '--entrypoint', '/bin/bash',
         'justb4/jmeter',
         '/load-tests/jmeter/run-all-scenarios.sh'
