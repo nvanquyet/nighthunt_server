@@ -28,6 +28,8 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,6 +66,10 @@ public class RoomService {
     private final SecureRandom random = new SecureRandom();
     // BCrypt(10) — same work-factor as DedicatedServerService
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
+
+    // Self-injection for quickPlay: allows joinRoomByCode/createRoom to run in separate transactions
+    @Autowired @Lazy
+    private RoomService self;
 
     @Transactional
     public RoomResponse createRoom(Long userId, CreateRoomRequest request) {
@@ -212,7 +218,6 @@ public class RoomService {
         return response;
     }
 
-    @Transactional
     public RoomResponse quickPlay(Long userId, QuickPlayRequest request) {
         if (roomPlayerRepository.existsUserInActiveRoom(userId)) {
             throw new BusinessException(ErrorCodes.ROOM_ALREADY_IN_ROOM,
@@ -242,7 +247,7 @@ public class RoomService {
             createRequest.setMapId(request.getMapId());
             createRequest.setIsPublic(true);
             createRequest.setIsLocked(false);
-            return createRoom(userId, createRequest);
+            return self.createRoom(userId, createRequest);
         }
 
         // Random select (skip rooms with password for quick play)
@@ -257,12 +262,12 @@ public class RoomService {
             createRequest.setMapId(request.getMapId());
             createRequest.setIsPublic(true);
             createRequest.setIsLocked(false);
-            return createRoom(userId, createRequest);
+            return self.createRoom(userId, createRequest);
         }
         
         Room selectedRoom = roomsWithoutPassword.get(random.nextInt(roomsWithoutPassword.size()));
         try {
-            return joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
+            return self.joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
         } catch (DataIntegrityViolationException ex) {
             // Slot was taken by a concurrent request — create a fresh room instead
             log.warn("[QuickPlay] Slot conflict joining room {} for user {} — creating new room", selectedRoom.getId(), userId);
@@ -271,7 +276,7 @@ public class RoomService {
             createRequest.setMapId(request.getMapId());
             createRequest.setIsPublic(true);
             createRequest.setIsLocked(false);
-            return createRoom(userId, createRequest);
+            return self.createRoom(userId, createRequest);
         }
     }
 
