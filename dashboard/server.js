@@ -396,11 +396,6 @@ function parseJtlTimeSeries(filePath, fileName) {
     return { fileName, buckets: sorted };
 }
 
-// ── SPA fallback ──────────────────────────────────────────────────────────────
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 // ── Load Test Runner ──────────────────────────────────────────────────────────
 const { spawn } = require('child_process');
 const jobs = new Map(); // jobId -> { proc, chunks, done, code }
@@ -537,6 +532,11 @@ app.get('/api/loadtest/run/:jobId/stream', (req, res) => {
     req.on('close', () => {
         job.clients = job.clients.filter(c => c !== res);
     });
+});
+
+// ── SPA fallback — must be LAST so all API routes register first ──────────────
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
