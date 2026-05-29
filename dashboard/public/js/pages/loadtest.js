@@ -296,7 +296,11 @@
 
         jmeterChart = new Chart(canvas.getContext('2d'), {
             type: 'bar',
-            data: {,
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'line', yAxisID: 'y2', label: 'Avg Response (ms)',
                         data: msData, borderColor: '#4e9af1', backgroundColor: 'rgba(78,154,241,0.12)',
                         tension: 0.3, fill: true, pointRadius: 2, borderWidth: 2,
                     },
