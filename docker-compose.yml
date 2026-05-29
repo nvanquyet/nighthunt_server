@@ -253,10 +253,12 @@ services:
       DASHBOARD_ROOT_PASS: ${DASHBOARD_ROOT_PASS}
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_SECRET: ${ADMIN_SECRET}
+      LOAD_TESTS_HOST_PATH: ${LOAD_TESTS_HOST_PATH:-/home/vnwue/UNITY/nighthunt_server/load-tests}
     ports:
       - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     volumes:
-      - ./load-tests:/app/load-tests:ro   # read-only mount for load test reports
+      - ./load-tests:/app/load-tests      # rw — JMeter docker runner writes results here
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for JMeter runner
     depends_on:
       - backend
     restart: unless-stopped

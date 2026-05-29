@@ -449,29 +449,44 @@ app.post('/api/loadtest/run/capacity', requireToken, (req, res) => {
     res.json({ jobId });
 });
 
-// POST /api/loadtest/run/jmeter — launch JMeter stress test
+// POST /api/loadtest/run/jmeter — launch JMeter stress test via Docker
 app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
-    const jmxFile   = path.join(JMETER_DIR, 'nighthunt-stress-test.jmx');
     const runScript = path.join(JMETER_DIR, 'run-all-scenarios.sh');
 
-    // Check JMeter availability
+    // Check Docker availability
     const { execSync } = require('child_process');
-    let jmeterAvail = false;
-    try { execSync('which jmeter', { stdio: 'ignore' }); jmeterAvail = true; } catch {}
-    if (!jmeterAvail) {
+    let dockerAvail = false;
+    try { execSync('docker info', { stdio: 'ignore' }); dockerAvail = true; } catch {}
+    if (!dockerAvail) {
         return res.status(422).json({
-            error: 'JMeter not installed in this container.',
-            hint: 'Install JMeter on your host and run:\n  bash load-tests/jmeter/run-all-scenarios.sh\nThen refresh reports here.'
+            error: 'Docker not available in this container.',
+            hint: 'Mount the Docker socket into the dashboard container:\n  Add to docker-compose.yml volumes:\n    - /var/run/docker.sock:/var/run/docker.sock'
         });
     }
     if (!fs.existsSync(runScript)) {
         return res.status(404).json({ error: 'Script not found: ' + runScript });
     }
 
+    // Host path for Docker volume mount (Docker run needs the HOST path, not container path)
+    const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/home/vnwue/UNITY/nighthunt_server/load-tests';
+    const username = process.env.NH_TEST_USERNAME || 'testuser1';
+    const password = process.env.NH_TEST_PASSWORD || 'Test@123456';
+    const adminSecret = process.env.ADMIN_SECRET || '';
+
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const proc = spawn('bash', [runScript], {
-        cwd: JMETER_DIR,
-        env: process.env,
+    // Run JMeter inside justb4/jmeter Docker image, mounting the load-tests host dir
+    // JMETER_HOME is /opt/apache-jmeter-5.5 in justb4/jmeter:latest
+    const proc = spawn('docker', [
+        'run', '--rm',
+        '-v', `${LOAD_TESTS_HOST_PATH}:/load-tests`,
+        '-e', `JMETER_HOME=/opt/apache-jmeter-5.5`,
+        '-e', `NH_USERNAME=${username}`,
+        '-e', `NH_PASSWORD=${password}`,
+        '-e', `ADMIN_SECRET=${adminSecret}`,
+        '--entrypoint', '/bin/bash',
+        'justb4/jmeter',
+        '/load-tests/jmeter/run-all-scenarios.sh'
+    ], {
         stdio: ['ignore', 'pipe', 'pipe']
     });
 
