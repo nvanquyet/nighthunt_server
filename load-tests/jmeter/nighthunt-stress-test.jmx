@@ -1229,12 +1229,11 @@
             <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
                                testname="Assert send request ok or duplicate [F]" enabled="true">
               <collectionProp name="Asserion.test_strings">
-                <stringProp name="49586">200</stringProp>
-                <stringProp name="49587">400</stringProp>
+                <stringProp name="49586">200|400</stringProp>
               </collectionProp>
               <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
-              <boolProp name="Assertion.assume_success">false</boolProp>
-              <intProp name="Assertion.test_type">40</intProp>
+              <boolProp name="Assertion.assume_success">true</boolProp>
+              <intProp name="Assertion.test_type">1</intProp>
             </ResponseAssertion>
             <hashTree/>
           </hashTree>
