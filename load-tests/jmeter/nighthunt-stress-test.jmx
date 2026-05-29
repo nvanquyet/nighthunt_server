@@ -843,7 +843,7 @@
                           testname="Extract ROOM_ID [D]" enabled="true">
             <stringProp name="RegexExtractor.useHeaders">false</stringProp>
             <stringProp name="RegexExtractor.refname">ROOM_ID</stringProp>
-            <stringProp name="RegexExtractor.regex">"id"\s*:\s*(\d+)</stringProp>
+            <stringProp name="RegexExtractor.regex">"roomId"\s*:\s*(\d+)</stringProp>
             <stringProp name="RegexExtractor.template">$1$</stringProp>
             <stringProp name="RegexExtractor.default">0</stringProp>
             <stringProp name="RegexExtractor.match_no">1</stringProp>
@@ -851,8 +851,8 @@
           <hashTree/>
         </hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
-                          testname="GET /api/rooms" enabled="true">
-          <stringProp name="HTTPSampler.path">/api/rooms</stringProp>
+                          testname="GET /api/rooms/${ROOM_ID}" enabled="true">
+          <stringProp name="HTTPSampler.path">/api/rooms/${ROOM_ID}</stringProp>
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
         </HTTPSamplerProxy>
