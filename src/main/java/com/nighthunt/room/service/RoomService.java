@@ -261,7 +261,18 @@ public class RoomService {
         }
         
         Room selectedRoom = roomsWithoutPassword.get(random.nextInt(roomsWithoutPassword.size()));
-        return joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
+        try {
+            return joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
+        } catch (DataIntegrityViolationException ex) {
+            // Slot was taken by a concurrent request — create a fresh room instead
+            log.warn("[QuickPlay] Slot conflict joining room {} for user {} — creating new room", selectedRoom.getId(), userId);
+            CreateRoomRequest createRequest = new CreateRoomRequest();
+            createRequest.setMode(request.getMode());
+            createRequest.setMapId(request.getMapId());
+            createRequest.setIsPublic(true);
+            createRequest.setIsLocked(false);
+            return createRoom(userId, createRequest);
+        }
     }
 
     /**
