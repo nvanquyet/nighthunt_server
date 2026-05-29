@@ -25,6 +25,9 @@ import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,11 +80,15 @@ public class MatchmakingQueueService {
      * @param mapId    MapEntry.mapId the player wants (e.g. "map_01"), null = any
      * @param platform "MOBILE" | "PC" | null (unknown / not sent)
      */
+    @Retryable(retryFor = CannotAcquireLockException.class, maxAttempts = 3,
+               backoff = @Backoff(delay = 100, multiplier = 2))
     @Transactional
     public void enqueue(Long userId, String gameMode, String mapId, String platform) {
         enqueueSolo(userId, gameMode, mapId, platform);
     }
 
+    @Retryable(retryFor = CannotAcquireLockException.class, maxAttempts = 3,
+               backoff = @Backoff(delay = 100, multiplier = 2))
     @Transactional
     public void enqueueSolo(Long userId, String gameMode, String mapId, String platform) {
         ensureUserCanEnterMatchmaking(userId);
@@ -93,6 +100,8 @@ public class MatchmakingQueueService {
         enqueueInternal(userId, gameMode, mapId, platform);
     }
 
+    @Retryable(retryFor = CannotAcquireLockException.class, maxAttempts = 3,
+               backoff = @Backoff(delay = 100, multiplier = 2))
     @Transactional
     public void enqueuePartyMember(Long userId, String gameMode, String mapId, String platform) {
         ensureUserCanEnterMatchmaking(userId);
