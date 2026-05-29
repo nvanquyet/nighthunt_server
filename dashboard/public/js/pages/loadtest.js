@@ -94,8 +94,11 @@
     };
 
     // ── API fetch helper ─────────────────────────────────────────────────────
+    function ltGetToken() {
+        return (typeof TOKEN !== 'undefined' && TOKEN) ? TOKEN : sessionStorage.getItem('nh_token');
+    }
     async function ltFetch(url) {
-        const token = localStorage.getItem('dashboard_token');
+        const token = ltGetToken();
         const res = await fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -449,7 +452,7 @@ ${reports.map(r => {
 
     // ── Download helper ──────────────────────────────────────────────────────
     window.ltDownload = function (type, file) {
-        const token = localStorage.getItem('dashboard_token');
+        const token = ltGetToken();
         let url;
         if (type === 'capacity') url = `/api/loadtest/capacity/download/${encodeURIComponent(file)}`;
         else if (type === 'scenario') url = `/api/loadtest/jmeter/download/scenario/${encodeURIComponent(file)}`;
