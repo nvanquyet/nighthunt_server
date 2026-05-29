@@ -108,6 +108,10 @@ app:
   security:
     # CSRF Protection: disable for testing/development, enable for production
     csrf-enabled: ${CSRF_ENABLED:false}
+  rate-limit:
+    # Set RATE_LIMIT_ENABLED=false in docker-compose for load testing / bypass
+    # Never disable in production — prevents IP spam / brute-force attacks
+    enabled: ${RATE_LIMIT_ENABLED:true}
 
 logging:
   level:

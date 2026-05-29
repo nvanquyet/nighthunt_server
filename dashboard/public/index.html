@@ -59,6 +59,9 @@
       <div class="nav-item" id="nav-config"      onclick="nav('config')">     <span class="icon">&#9881;</span><span class="nav-label">Game Config</span></div>
       <div class="nav-item" id="nav-system"      onclick="nav('system')">     <span class="icon">&#128268;</span><span class="nav-label">System Health</span></div>
       <div class="nav-item" id="nav-dbclean"     onclick="nav('dbclean')">    <span class="icon">&#128465;</span><span class="nav-label">DB Monitor</span></div>
+
+      <div class="nav-section-label">Load Tests</div>
+      <div class="nav-item" id="nav-loadtest"    onclick="nav('loadtest')">   <span class="icon">&#128200;</span><span class="nav-label">Test Reports</span></div>
     </div>
 
     <div class="sidebar-footer">
@@ -91,6 +94,9 @@
 <!-- Core -->
 <script src="js/app.js"></script>
 
+<!-- Chart.js (load test charts) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
 <!-- Pages -->
 <script src="js/pages/overview.js"></script>
 <script src="js/pages/users.js"></script>
@@ -103,6 +109,7 @@
 <script src="js/pages/dssessions.js"></script>
 <script src="js/pages/config.js"></script>
 <script src="js/pages/database.js"></script>
+<script src="js/pages/loadtest.js"></script>
 
 </body>
 </html>

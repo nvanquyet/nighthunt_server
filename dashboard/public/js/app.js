@@ -244,6 +244,7 @@ const PAGE_MAP = {
   dssessions:  () => typeof renderDsSessions === 'function' && renderDsSessions(),
   config:      () => typeof renderConfig     === 'function' && renderConfig(),
   dbclean:     () => typeof renderDbCleanup  === 'function' && renderDbCleanup(),
+  loadtest:    () => typeof renderLoadtest   === 'function' && renderLoadtest(),
 };
 
 function nav(page) {
@@ -255,7 +256,7 @@ function nav(page) {
     rooms: '🚪 Rooms', matches: '⚔️ Matches', bans: '🔨 Bans',
     system: '🖥️ System Health', online: '🟢 Online Users',
     dssessions: '🎮 DS Sessions', config: '⚙️ Config',
-    dbclean: '🗄️ Database Monitor'
+    dbclean: '🗄️ Database Monitor', loadtest: '📊 Load Tests'
   };
   const titleEl = document.getElementById('page-title');
   if (titleEl) titleEl.textContent = titles[page] || page;

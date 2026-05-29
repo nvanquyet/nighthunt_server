@@ -1,5 +1,6 @@
 package com.nighthunt.ratelimit.interceptor;
 
+import com.nighthunt.ratelimit.config.RateLimitToggle;
 import com.nighthunt.ratelimit.service.RateLimitService;
 import com.nighthunt.security.util.SecurityUtils;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,9 +20,14 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class RateLimitInterceptor implements HandlerInterceptor {
     
     private final RateLimitService rateLimitService;
+    private final RateLimitToggle rateLimitToggle;
     
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        // Global kill-switch — disabled during load testing (RATE_LIMIT_ENABLED=false)
+        if (!rateLimitToggle.isEnabled()) {
+            return true;
+        }
         // Use getServletPath() (without context-path prefix) so rules like /auth/login match correctly
         String endpoint = request.getServletPath();
         String method = request.getMethod();

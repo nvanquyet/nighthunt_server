@@ -1,12 +1,14 @@
 'use strict';
 
-const express = require('express');
-const axios   = require('axios');
-const https   = require('https');
-const si      = require('systeminformation');
-const cors    = require('cors');
-const jwt     = require('jsonwebtoken');
-const path    = require('path');
+const express    = require('express');
+const axios      = require('axios');
+const https      = require('https');
+const si         = require('systeminformation');
+const cors       = require('cors');
+const jwt        = require('jsonwebtoken');
+const path       = require('path');
+const fs         = require('fs');
+const rateLimit  = require('express-rate-limit');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT         = process.env.PORT                || 3000;
@@ -19,6 +21,10 @@ const ROOT_USER    = process.env.DASHBOARD_ROOT_USER  || 'root';
 const ROOT_PASS    = process.env.DASHBOARD_ROOT_PASS  || 'root_changeme';
 const JWT_SECRET   = process.env.JWT_SECRET          || 'dashboard-jwt-secret-change-me';
 const JWT_EXPIRES  = '12h';
+// DASHBOARD_RATE_LIMIT_ENABLED — protects dashboard UI itself from IP spam
+// Default: true in production. Set to false only during internal testing.
+const DASHBOARD_RATE_LIMIT = process.env.DASHBOARD_RATE_LIMIT_ENABLED !== 'false';
+
 const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://');
 const backendClient = axios.create({
     timeout: 10000,
@@ -30,6 +36,33 @@ const backendClient = axios.create({
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── Dashboard rate limiting (IP-based, protects from login brute-force / scraping) ──
+if (DASHBOARD_RATE_LIMIT) {
+    // Login endpoint: max 20 attempts per 15 min per IP
+    const loginLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 20,
+        message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+        standardHeaders: true,
+        legacyHeaders: false,
+        skipSuccessfulRequests: true,  // only count failed attempts
+    });
+    // General dashboard API: 300 req/min per IP
+    const apiLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 300,
+        message: { error: 'Rate limit exceeded. Slow down.' },
+        standardHeaders: true,
+        legacyHeaders: false,
+    });
+    app.use('/auth/login', loginLimiter);
+    app.use('/api/', apiLimiter);
+    console.log('[NightHunt Dashboard] IP rate limiting ENABLED (login: 20/15min, api: 300/min)');
+} else {
+    console.log('[NightHunt Dashboard] IP rate limiting DISABLED (DASHBOARD_RATE_LIMIT_ENABLED=false)');
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
@@ -186,6 +219,119 @@ app.get('/api/backend/stats', requireToken, async (req, res) => {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// ── Load Test Reports API ─────────────────────────────────────────────────────
+const LOADTEST_DIR = path.join(__dirname, '..', 'load-tests', 'ds-fleet-test', 'reports');
+const JMETER_DIR   = path.join(__dirname, '..', 'load-tests', 'jmeter');
+
+// GET /api/loadtest/capacity — list + data from DS capacity JSON reports
+app.get('/api/loadtest/capacity', requireToken, (req, res) => {
+    try {
+        if (!fs.existsSync(LOADTEST_DIR)) return res.json({ reports: [] });
+        const files = fs.readdirSync(LOADTEST_DIR)
+            .filter(f => f.endsWith('.json'))
+            .sort().reverse();
+        const reports = files.map(f => {
+            try {
+                const raw = JSON.parse(fs.readFileSync(path.join(LOADTEST_DIR, f), 'utf8'));
+                return { file: f, ...raw };
+            } catch { return { file: f, error: 'parse error' }; }
+        });
+        res.json({ reports });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/loadtest/jmeter — latest JMeter statistics.json summary
+app.get('/api/loadtest/jmeter', requireToken, (req, res) => {
+    try {
+        const reportsDir = path.join(JMETER_DIR, 'reports');
+        const resultsDir = path.join(JMETER_DIR, 'results');
+        if (!fs.existsSync(reportsDir)) return res.json({ scenarios: [] });
+
+        const scenarios = fs.readdirSync(reportsDir)
+            .filter(d => fs.statSync(path.join(reportsDir, d)).isDirectory())
+            .sort().reverse()
+            .map(dir => {
+                const statsPath = path.join(reportsDir, dir, 'statistics.json');
+                if (!fs.existsSync(statsPath)) return { name: dir, stats: null };
+                try {
+                    return { name: dir, stats: JSON.parse(fs.readFileSync(statsPath, 'utf8')) };
+                } catch { return { name: dir, stats: null }; }
+            });
+
+        // Parse latest .jtl for time-series (aggregate into 30s buckets)
+        let timeSeries = null;
+        if (fs.existsSync(resultsDir)) {
+            const jtls = fs.readdirSync(resultsDir)
+                .filter(f => f.endsWith('.jtl'))
+                .sort().reverse();
+            if (jtls.length > 0) {
+                try {
+                    timeSeries = parseJtlTimeSeries(path.join(resultsDir, jtls[0]), jtls[0]);
+                } catch (e) {
+                    timeSeries = { error: e.message };
+                }
+            }
+        }
+        res.json({ scenarios, timeSeries });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+function parseJtlTimeSeries(filePath, fileName) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines   = content.trim().split('\n');
+    if (lines.length < 2) return { fileName, buckets: [] };
+
+    const header = lines[0].split(',');
+    const tsIdx  = header.indexOf('timeStamp');
+    const elIdx  = header.indexOf('elapsed');
+    const thIdx  = header.indexOf('allThreads');
+    const okIdx  = header.indexOf('success');
+
+    if (tsIdx < 0 || elIdx < 0) return { fileName, buckets: [] };
+
+    // Find min timestamp for relative time
+    let minTs = Infinity;
+    for (let i = 1; i < lines.length; i++) {
+        const p = lines[i].split(',');
+        const ts = parseInt(p[tsIdx]);
+        if (!isNaN(ts) && ts < minTs) minTs = ts;
+    }
+
+    const BUCKET_MS = 15000; // 15-second buckets
+    const buckets   = {};
+    for (let i = 1; i < lines.length; i++) {
+        const p  = lines[i].split(',');
+        const ts = parseInt(p[tsIdx]);
+        if (isNaN(ts)) continue;
+        const elapsed = parseInt(p[elIdx]) || 0;
+        const threads = parseInt(p[thIdx]) || 0;
+        const ok      = p[okIdx] === 'true';
+        const b = Math.floor((ts - minTs) / BUCKET_MS);
+        if (!buckets[b]) buckets[b] = { count: 0, errors: 0, elapsedSum: 0, threads: 0 };
+        buckets[b].count++;
+        if (!ok) buckets[b].errors++;
+        buckets[b].elapsedSum += elapsed;
+        buckets[b].threads = Math.max(buckets[b].threads, threads);
+    }
+
+    const sorted = Object.entries(buckets)
+        .sort(([a], [b]) => +a - +b)
+        .map(([b, v]) => ({
+            t:         +b * BUCKET_MS / 1000,   // seconds from start
+            tps:       +(v.count / (BUCKET_MS / 1000)).toFixed(2),
+            avgMs:     +(v.elapsedSum / v.count).toFixed(0),
+            errors:    v.errors,
+            errorPct:  +((v.errors / v.count) * 100).toFixed(1),
+            threads:   v.threads,
+        }));
+
+    return { fileName, buckets: sorted };
+}
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
