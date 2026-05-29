@@ -2,6 +2,9 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Install Python3 for load test runner
+RUN apk add --no-cache python3 py3-requests
+
 # Copy package files
 COPY package*.json ./
 

@@ -26,9 +26,24 @@
 
         el.innerHTML = `
 <div id="page-loadtest">
-<div class="page-header">
-  <h1>&#128200; Load Test Reports</h1>
-  <p class="page-subtitle">DS Capacity &amp; JMeter stress test results</p>
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <div>
+    <h1>&#128200; Load Test Reports</h1>
+    <p class="page-subtitle">DS Capacity &amp; JMeter stress test results</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="lt-btn lt-btn-ghost" onclick="ltRefresh()" id="lt-refresh-btn">&#8635; Refresh</button>
+    <button class="lt-btn lt-btn-run"  onclick="ltRunCapacity()" id="lt-run-cap-btn">&#9654; Run DS Capacity Test</button>
+  </div>
+</div>
+
+<!-- Run output console -->
+<div id="lt-run-console" class="lt-console" style="display:none">
+  <div class="lt-console-header">
+    <span id="lt-run-title">Running test…</span>
+    <span id="lt-run-status" class="lt-badge badge-loading">Running</span>
+  </div>
+  <pre id="lt-run-log" class="lt-log"></pre>
 </div>
 
 <!-- Rate limit toggle card -->
@@ -74,7 +89,10 @@
 
 <!-- DS Capacity chart -->
 <div class="lt-section">
-  <h2 class="lt-section-title">DS Capacity Test</h2>
+  <div class="lt-card-header" style="margin-bottom:8px">
+    <h2 class="lt-section-title" style="margin:0">DS Capacity Test</h2>
+    <button class="lt-btn lt-btn-run" style="font-size:0.8rem;padding:4px 12px" onclick="ltRunCapacity()">&#9654; Run New Test</button>
+  </div>
   <div class="lt-chart-wrap">
     <canvas id="lt-capacity-chart" height="100"></canvas>
   </div>
@@ -82,15 +100,80 @@
 </div>
 </div>`;
 
-        // Load data in parallel
+        await ltLoadData();
+    };
+
+    async function ltLoadData() {
+        ltRenderRateLimitStatus();
         const [jmeterData, capacityData] = await Promise.all([
             ltFetch('/api/loadtest/jmeter').catch(e => ({ error: e.message })),
             ltFetch('/api/loadtest/capacity').catch(e => ({ error: e.message }))
         ]);
-
-        ltRenderRateLimitStatus();
         ltRenderJmeter(jmeterData);
         ltRenderCapacity(capacityData);
+    }
+
+    window.ltRefresh = async function () {
+        const btn = document.getElementById('lt-refresh-btn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
+        await ltLoadData();
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    };
+
+    window.ltRunCapacity = async function () {
+        const consoleEl = document.getElementById('lt-run-console');
+        const logEl     = document.getElementById('lt-run-log');
+        const titleEl   = document.getElementById('lt-run-title');
+        const statusEl  = document.getElementById('lt-run-status');
+        const runBtn    = document.getElementById('lt-run-cap-btn');
+
+        if (!consoleEl || !logEl) return;
+        consoleEl.style.display = 'block';
+        logEl.textContent = '';
+        if (titleEl)  titleEl.textContent = 'Running DS Capacity Test…';
+        if (statusEl) { statusEl.textContent = 'Running'; statusEl.className = 'lt-badge badge-loading'; }
+        if (runBtn)   { runBtn.disabled = true; }
+        consoleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        const token = ltGetToken();
+        try {
+            const resp = await fetch('/api/loadtest/run/capacity', {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {})
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const { jobId } = await resp.json();
+
+            // Poll output via SSE
+            const evtSrc = new EventSource(`/api/loadtest/run/${jobId}/stream?token=${encodeURIComponent(token || '')}`);
+            evtSrc.addEventListener('log', e => {
+                logEl.textContent += e.data + '\n';
+                logEl.scrollTop = logEl.scrollHeight;
+            });
+            evtSrc.addEventListener('done', async e => {
+                evtSrc.close();
+                const info = JSON.parse(e.data || '{}');
+                if (statusEl) {
+                    statusEl.textContent = info.code === 0 ? 'Done ✓' : 'Failed ✗';
+                    statusEl.className   = 'lt-badge ' + (info.code === 0 ? 'badge-ok' : 'badge-danger');
+                }
+                if (runBtn) runBtn.disabled = false;
+                if (info.code === 0) {
+                    logEl.textContent += '\n✅ Test completed — refreshing reports…\n';
+                    await ltLoadData();
+                }
+            });
+            evtSrc.onerror = () => {
+                evtSrc.close();
+                if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
+                if (runBtn) runBtn.disabled = false;
+                logEl.textContent += '\n[stream disconnected]\n';
+            };
+        } catch (e) {
+            if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
+            logEl.textContent += 'Error: ' + e.message + '\n';
+            if (runBtn) runBtn.disabled = false;
+        }
     };
 
     // ── API fetch helper ─────────────────────────────────────────────────────
@@ -100,6 +183,16 @@
     async function ltFetch(url) {
         const token = ltGetToken();
         const res = await fetch(url, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+    }
+    async function ltPost(url, body) {
+        const token = ltGetToken();
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
+            body: body ? JSON.stringify(body) : undefined
+        });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
     }
@@ -129,7 +222,7 @@
         const msgEl  = document.getElementById('lt-rl-msg');
         if (btn) btn.disabled = true;
         try {
-            const data = await ltFetch('/api/admin/rate-limit/toggle');
+            const data = await ltPost('/api/admin/rate-limit/toggle');
             if (msgEl) {
                 const enabled = data.data ? data.data.enabled : data.enabled;
                 msgEl.textContent = enabled ? 'Rate limiting enabled.' : 'Rate limiting disabled.';
@@ -202,11 +295,8 @@
         const vuData  = ts.buckets.map(b => b.threads);
 
         jmeterChart = new Chart(canvas.getContext('2d'), {
-            data: {
-                labels,
-                datasets: [
-                    {
-                        type: 'line', yAxisID: 'y2', label: 'Avg Response (ms)',
+            type: 'bar',
+            data: {,
                         data: msData, borderColor: '#4e9af1', backgroundColor: 'rgba(78,154,241,0.12)',
                         tension: 0.3, fill: true, pointRadius: 2, borderWidth: 2,
                     },
@@ -340,6 +430,7 @@ ${rows.map(([label, s]) => {
             const p99Data = batches.map(b => b.latency_p99 || b.p99_ms || null);
 
             capacityChart = new Chart(canvas.getContext('2d'), {
+                type: 'bar',
                 data: {
                     labels,
                     datasets: [
@@ -388,6 +479,7 @@ ${rows.map(([label, s]) => {
             });
 
             capacityChart = new Chart(canvas.getContext('2d'), {
+                type: 'bar',
                 data: {
                     labels,
                     datasets: [

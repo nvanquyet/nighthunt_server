@@ -376,6 +376,83 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ── Load Test Runner ──────────────────────────────────────────────────────────
+const { spawn } = require('child_process');
+const jobs = new Map(); // jobId -> { proc, chunks, done, code }
+
+// POST /api/loadtest/run/capacity — launch DS capacity test
+app.post('/api/loadtest/run/capacity', requireToken, (req, res) => {
+    const testScript = path.join(LOADTEST_BASE, 'ds-fleet-test', 'run_capacity_test.py');
+    if (!fs.existsSync(testScript)) {
+        return res.status(404).json({ error: 'Test script not found: ' + testScript });
+    }
+
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const env = Object.assign({}, process.env, {
+        BACKEND_URL: (process.env.BACKEND_URL || 'http://nighthunt-backend:8080').replace(/^https/, 'http'),
+        PYTHONUNBUFFERED: '1'
+    });
+    const proc = spawn('python3', [testScript], {
+        cwd: path.join(LOADTEST_BASE, 'ds-fleet-test'),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    const job = { proc, chunks: [], done: false, code: null, clients: [] };
+    jobs.set(jobId, job);
+
+    const onData = (data) => {
+        const line = data.toString();
+        job.chunks.push(line);
+        job.clients.forEach(client => client.write(`event: log\ndata: ${line.trimEnd()}\n\n`));
+    };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('close', (code) => {
+        job.done = true;
+        job.code = code;
+        const info = JSON.stringify({ code });
+        job.clients.forEach(client => {
+            client.write(`event: done\ndata: ${info}\n\n`);
+            client.end();
+        });
+        job.clients = [];
+        // Clean up after 5 min
+        setTimeout(() => jobs.delete(jobId), 5 * 60 * 1000);
+    });
+
+    res.json({ jobId });
+});
+
+// GET /api/loadtest/run/:jobId/stream — SSE log stream (token via query param)
+app.get('/api/loadtest/run/:jobId/stream', (req, res) => {
+    // Auth via query param (EventSource can't set headers)
+    const token = req.query.token;
+    try { if (token) jwt.verify(token, JWT_SECRET); else throw new Error('no token'); }
+    catch { return res.status(401).json({ error: 'Unauthorized' }); }
+
+    const job = jobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Replay buffered output
+    job.chunks.forEach(line => res.write(`event: log\ndata: ${line.trimEnd()}\n\n`));
+
+    if (job.done) {
+        res.write(`event: done\ndata: ${JSON.stringify({ code: job.code })}\n\n`);
+        return res.end();
+    }
+
+    job.clients.push(res);
+    req.on('close', () => {
+        job.clients = job.clients.filter(c => c !== res);
+    });
+});
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
     console.log(`[NightHunt Dashboard] Running on port ${PORT}`);

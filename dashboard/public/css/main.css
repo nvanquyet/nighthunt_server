@@ -853,6 +853,7 @@ textarea.form-control {
 .lt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .lt-btn-ok     { background: #2a6a3a; color: #7be495; }
 .lt-btn-danger { background: #6a2a2a; color: #e07070; }
+.lt-btn-dl     { background: rgba(80,130,200,0.2); color: #7ab4f0; font-size: 0.78rem; padding: 5px 12px; }
 .lt-btn:not(:disabled):hover { opacity: 0.8; }
 
 .lt-msg      { font-size: 0.82rem; }
@@ -938,6 +939,42 @@ textarea.form-control {
 .lt-verdict-warn { background: rgba(240,192,64,0.18);  color: #f0c040; }
 
 .lt-empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* Run-test buttons */
+.lt-btn-ghost { background: rgba(255,255,255,0.07); color: var(--muted); }
+.lt-btn-run   { background: rgba(60,180,100,0.22); color: #7be495; border: 1px solid rgba(80,200,120,0.3); }
+.lt-btn-run:not(:disabled):hover { background: rgba(60,180,100,0.35); opacity: 1; }
+
+/* Test run console */
+.lt-console {
+  background: #0d1117;
+  border: 1px solid #2a3045;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+.lt-console-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid #2a3045;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.lt-log {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #a8c8a0;
+  padding: 12px 16px;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
 
 /* Nav section label */
 .nav-section-label {
