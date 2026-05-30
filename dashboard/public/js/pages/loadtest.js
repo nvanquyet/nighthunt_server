@@ -436,9 +436,8 @@ ${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
     };
 
     window.ltOpenScenarioReport = function (scenario) {
-        const token = ltGetToken();
-        if (!scenario || !token) return;
-        const url = `/api/loadtest/jmeter/report/${encodeURIComponent(scenario)}?token=${encodeURIComponent(token)}`;
+        if (!scenario) return;
+        const url = `/api/loadtest/jmeter/report/${encodeURIComponent(scenario)}/`;
         window.open(url, '_blank', 'noopener');
     };
 

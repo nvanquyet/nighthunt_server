@@ -33,6 +33,25 @@ const backendClient = axios.create({
         : undefined
 });
 
+async function getBackendRateLimitStatus() {
+    const response = await backendClient.get(`${BACKEND_URL}/api/admin/rate-limit/status`, {
+        headers: { 'X-Admin-Secret': ADMIN_SECRET }
+    });
+    return response.data?.data?.enabled ?? response.data?.enabled ?? false;
+}
+
+async function setBackendRateLimitEnabled(enabled) {
+    const current = await getBackendRateLimitStatus();
+    if (current === enabled) return current;
+    const response = await backendClient.request({
+        method: 'POST',
+        url: `${BACKEND_URL}/api/admin/rate-limit/toggle`,
+        data: { enabled },
+        headers: { 'X-Admin-Secret': ADMIN_SECRET }
+    });
+    return response.data?.data?.enabled ?? response.data?.enabled ?? current;
+}
+
 const app = express();
 // Dashboard sits behind nginx, so trust the first proxy hop for client IPs.
 app.set('trust proxy', 1);
@@ -298,6 +317,10 @@ app.get('/api/loadtest/jmeter/download/:type/:file', requireToken, (req, res) =>
 // GET /api/loadtest/jmeter/report/:scenario/* — serve full HTML report assets
 // Public on purpose so generated report CSS/JS/assets can load in a new tab.
 app.get('/api/loadtest/jmeter/report/:scenario', (req, res) => {
+    return res.redirect(302, `${req.baseUrl || '/api/loadtest/jmeter/report'}/${encodeURIComponent(path.basename(req.params.scenario))}/`);
+});
+
+app.get('/api/loadtest/jmeter/report/:scenario/', (req, res) => {
     const scenario = path.basename(req.params.scenario);
     const reportDir = path.join(JMETER_DIR, 'reports', scenario);
     const filePath = path.join(reportDir, 'index.html');
@@ -484,7 +507,7 @@ app.post('/api/loadtest/run/capacity', requireToken, (req, res) => {
 });
 
 // POST /api/loadtest/run/jmeter — launch JMeter stress test via Docker
-app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
+app.post('/api/loadtest/run/jmeter', requireToken, async (req, res) => {
     const runScript = path.join(JMETER_DIR, 'run-all-scenarios.sh');
 
     // Check Docker availability
@@ -503,12 +526,23 @@ app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
 
     // Host path for Docker volume mount (Docker run needs the HOST path, not container path)
     const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/home/vnwue/UNITY/nighthunt_server/load-tests';
-    const username = process.env.NH_TEST_USERNAME || 'testuser1';
-    const password = process.env.NH_TEST_PASSWORD || 'Test@123456';
+    const username = process.env.NH_TEST_USERNAME || 'nh_stress_';
+    const password = process.env.NH_TEST_PASSWORD || 'StressTest@123';
     // NOTE: intentionally NOT passing ADMIN_SECRET — the collect-server-metrics.sh
     // uses grep -oP and head -n -1 (GNU-only, fails on Alpine BusyBox).
     // Metrics collection from inside a Docker container is also architecturally wrong.
     // Without ADMIN_SECRET the metrics collector branch in run-all-scenarios.sh is skipped.
+
+    let restoreRateLimit = false;
+    try {
+        const wasEnabled = await getBackendRateLimitStatus();
+        if (wasEnabled) {
+            await setBackendRateLimitEnabled(false);
+            restoreRateLimit = true;
+        }
+    } catch (e) {
+        return res.status(502).json({ error: 'Could not prepare backend for load test: ' + e.message });
+    }
 
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     // Run JMeter inside justb4/jmeter Docker image, mounting the load-tests host dir
@@ -542,6 +576,11 @@ app.post('/api/loadtest/run/jmeter', requireToken, (req, res) => {
         const info = JSON.stringify({ code });
         job.clients.forEach(client => { client.write(`event: done\ndata: ${info}\n\n`); client.end(); });
         job.clients = [];
+        if (restoreRateLimit) {
+            setBackendRateLimitEnabled(true).catch(err => {
+                console.error('[NightHunt Dashboard] Failed to restore backend rate limit:', err.message);
+            });
+        }
         setTimeout(() => jobs.delete(jobId), 5 * 60 * 1000);
     });
     res.json({ jobId });
