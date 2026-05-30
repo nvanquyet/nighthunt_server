@@ -292,6 +292,8 @@ jobs:
 
             echo "=== Build/start dashboard in compose project: $COMPOSE_PROJECT_NAME ==="
             compose rm -sf dashboard 2>/dev/null || true
+            # Also remove any orphan container with the same name not tracked by compose
+            docker rm -f nighthunt-dashboard 2>/dev/null || true
             compose up -d --no-deps --build dashboard
 
             echo "=== Health check: dashboard (20s timeout) ==="
