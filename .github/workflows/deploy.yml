@@ -153,6 +153,31 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare writable load-tests directory on VPS
+        uses: appleboy/ssh-action@v1.0.0
+        env:
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          envs: DEPLOY_DIR
+          script: |
+            set -e
+            : "${DEPLOY_DIR:=/opt/nighthunt}"
+            mkdir -p "$DEPLOY_DIR"
+
+            CURRENT_UID=$(id -u)
+            CURRENT_GID=$(id -g)
+
+            docker run --rm -v "$DEPLOY_DIR":/work alpine sh -lc "
+              mkdir -p /work/load-tests/jmeter /work/load-tests/ds-fleet-test/mock-ds &&
+              chown -R ${CURRENT_UID}:${CURRENT_GID} /work/load-tests &&
+              find /work/load-tests -type d -exec chmod 775 {} + &&
+              find /work/load-tests -type f -exec chmod 664 {} +
+            "
+
       - name: Copy configs to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -160,7 +185,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "docker-compose.yml,docker/,dashboard/,relay/,load-tests/"
+          source: "docker-compose.yml,docker/,dashboard/,relay/,load-tests/jmeter/,load-tests/ds-fleet-test/.gitignore,load-tests/ds-fleet-test/run_capacity_test.py,load-tests/ds-fleet-test/run_fleet_test.py,load-tests/ds-fleet-test/mock-ds/"
           target: ${{ env.DEPLOY_DIR }}
           strip_components: 0
 
