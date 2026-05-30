@@ -95,3 +95,11 @@ client_unity_only_read/nighthunt_client/
 .gradle-home/
 relay/tests/__pycache__/
 relay/__pycache__/
+
+# Load test artifacts (generated output, not source)
+load-tests/**/__pycache__/
+load-tests/jmeter/results/
+load-tests/jmeter/reports/
+load-tests/jmeter/graphs/
+load-tests/reports/
+ds_capacity_report.json

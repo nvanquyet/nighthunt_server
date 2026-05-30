@@ -23,6 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOADTESTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 JMX="${SCRIPT_DIR}/nighthunt-stress-test.jmx"
+JMETER_PROPS="${SCRIPT_DIR}/portable-jtl.properties"
 RESULTS_DIR="${SCRIPT_DIR}/results"
 REPORTS_DIR="${SCRIPT_DIR}/reports"
 JMETER_DOCKER_IMAGE="${JMETER_DOCKER_IMAGE:-justb4/jmeter}"
@@ -52,6 +53,27 @@ run_jmeter_cmd() {
   fi
 }
 
+filter_steady_state_jtl() {
+  local raw_jtl="$1"
+  local steady_jtl="$2"
+
+  awk -F',' '
+    NR == 1 {
+      print
+      for (i = 1; i <= NF; i++) {
+        header[$i] = i
+      }
+      if (!("label" in header)) {
+        exit 2
+      }
+      next
+    }
+    $(header["label"]) != "POST /api/auth/login" && $(header["label"]) != "POST /api/auth/register" {
+      print
+    }
+  ' "$raw_jtl" > "$steady_jtl"
+}
+
 # ── Validate prerequisites ─────────────────────────────────────────────────
 if [[ -z "${JMETER_HOME:-}" ]]; then
   # Try common install locations
@@ -61,6 +83,11 @@ if [[ -z "${JMETER_HOME:-}" ]]; then
       break
     fi
   done
+fi
+
+if [[ ! -f "$JMETER_PROPS" ]]; then
+  echo "[ERROR] Missing JMeter save-service properties: $JMETER_PROPS"
+  exit 1
 fi
 
   if [[ -z "${JMETER_HOME:-}" ]] || [[ ! -x "${JMETER_HOME}/bin/jmeter" ]]; then
@@ -144,9 +171,10 @@ run_scenario() {
   # Run JMeter headless. Warm-up login is captured in RAW_JTL, then filtered out
   # so the final HTML/JTL represent steady-state authenticated traffic only.
   if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
-    run_jmeter_cmd "/opt/apache-jmeter-5.5/bin/jmeter -n -t /load-tests/jmeter/nighthunt-stress-test.jmx -Jvusers=${VU} -Jrampup=${RAMPUP} -Jduration=${DURATION} -Jusername=${NH_USERNAME} -Jpassword=${NH_PASSWORD} -l /load-tests/jmeter/results/${LABEL}-raw.jtl -j /load-tests/jmeter/results/${LABEL}-jmeter.log" 2>&1 | tail -20
+    run_jmeter_cmd "/opt/apache-jmeter-5.5/bin/jmeter -q /load-tests/jmeter/portable-jtl.properties -n -t /load-tests/jmeter/nighthunt-stress-test.jmx -Jvusers=${VU} -Jrampup=${RAMPUP} -Jduration=${DURATION} -Jusername=${NH_USERNAME} -Jpassword=${NH_PASSWORD} -l /load-tests/jmeter/results/${LABEL}-raw.jtl -j /load-tests/jmeter/results/${LABEL}-jmeter.log" 2>&1 | tail -20
   else
     run_jmeter_cmd \
+      -q "$JMETER_PROPS" \
       -n \
       -t "$JMX" \
       -Jvusers="$VU" \
@@ -159,12 +187,12 @@ run_scenario() {
       2>&1 | tail -20
   fi
 
-  awk -F',' 'NR == 1 || (NF == 17 && $3 != "POST /api/auth/login" && $3 != "POST /api/auth/register")' "$RAW_JTL" > "$JTL"
+  filter_steady_state_jtl "$RAW_JTL" "$JTL"
   if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
-    run_jmeter_cmd "rm -rf /load-tests/jmeter/reports/${LABEL} && /opt/apache-jmeter-5.5/bin/jmeter -g /load-tests/jmeter/results/${LABEL}.jtl -o /load-tests/jmeter/reports/${LABEL}" >/dev/null
+    run_jmeter_cmd "rm -rf /load-tests/jmeter/reports/${LABEL} && /opt/apache-jmeter-5.5/bin/jmeter -q /load-tests/jmeter/portable-jtl.properties -g /load-tests/jmeter/results/${LABEL}.jtl -o /load-tests/jmeter/reports/${LABEL}" >/dev/null
     docker_chown_outputs
   else
-    run_jmeter_cmd -g "$JTL" -o "$HTML_REPORT" >/dev/null
+    run_jmeter_cmd -q "$JMETER_PROPS" -g "$JTL" -o "$HTML_REPORT" >/dev/null
   fi
 
   # Stop metrics collector
