@@ -45,13 +45,13 @@ spring:
       host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
-      timeout: 2000ms
+      timeout: 5000ms
       lettuce:
         pool:
           enabled: true
-          max-active: 50      # Default 8 → bottleneck with 500-VU stress test
+          max-active: 100     # Default 8 → bottleneck with concurrent auth/session checks
           max-idle: 50
-          min-idle: 10
+          min-idle: 20
           max-wait: 5000ms
 
 jwt:

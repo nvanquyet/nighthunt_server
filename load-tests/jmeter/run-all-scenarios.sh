@@ -21,9 +21,36 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOADTESTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 JMX="${SCRIPT_DIR}/nighthunt-stress-test.jmx"
 RESULTS_DIR="${SCRIPT_DIR}/results"
 REPORTS_DIR="${SCRIPT_DIR}/reports"
+JMETER_DOCKER_IMAGE="${JMETER_DOCKER_IMAGE:-justb4/jmeter}"
+USE_DOCKER_JMETER=false
+
+docker_cleanup_dir() {
+  local target_dir="$1"
+  if [[ -d "$target_dir" ]]; then
+    docker run --rm -v "${LOADTESTS_ROOT}:/load-tests" alpine sh -lc "rm -rf \"${target_dir/"${LOADTESTS_ROOT}"/\/load-tests}\"" >/dev/null
+  fi
+}
+
+docker_chown_outputs() {
+  docker run --rm -v "${LOADTESTS_ROOT}:/load-tests" alpine sh -lc "chown -R $(id -u):$(id -g) /load-tests/jmeter/results /load-tests/jmeter/reports 2>/dev/null || true" >/dev/null
+}
+
+run_jmeter_cmd() {
+  if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+    docker run --rm \
+      -v "${LOADTESTS_ROOT}:/load-tests" \
+      -e JMETER_HOME=/opt/apache-jmeter-5.5 \
+      --entrypoint /bin/bash \
+      "$JMETER_DOCKER_IMAGE" \
+      -lc "$*"
+  else
+    "${JMETER_HOME}/bin/jmeter" "$@"
+  fi
+}
 
 # ── Validate prerequisites ─────────────────────────────────────────────────
 if [[ -z "${JMETER_HOME:-}" ]]; then
@@ -36,11 +63,15 @@ if [[ -z "${JMETER_HOME:-}" ]]; then
   done
 fi
 
-if [[ -z "${JMETER_HOME:-}" ]] || [[ ! -x "${JMETER_HOME}/bin/jmeter" ]]; then
-  echo "[ERROR] JMETER_HOME not set or jmeter binary not found."
-  echo "  Download: https://jmeter.apache.org/download_jmeter.cgi"
-  echo "  Then: export JMETER_HOME=/path/to/apache-jmeter-5.6.3"
-  exit 1
+  if [[ -z "${JMETER_HOME:-}" ]] || [[ ! -x "${JMETER_HOME}/bin/jmeter" ]]; then
+    if command -v docker >/dev/null 2>&1; then
+      USE_DOCKER_JMETER=true
+    else
+      echo "[ERROR] JMETER_HOME not set or jmeter binary not found, and Docker is unavailable."
+      echo "  Option 1: export JMETER_HOME=/path/to/apache-jmeter-5.6.3"
+      echo "  Option 2: install Docker so the script can use ${JMETER_DOCKER_IMAGE}"
+      exit 1
+    fi
 fi
 
 NH_USERNAME="${NH_USERNAME:-testuser1}"
@@ -52,7 +83,11 @@ echo "║  NightHunt Backend Stress Test — 3 Scenarios             ║"
 echo "║  Target: https://vawnwuyest.me                           ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "JMeter: ${JMETER_HOME}/bin/jmeter"
+if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+  echo "JMeter: docker image ${JMETER_DOCKER_IMAGE}"
+else
+  echo "JMeter: ${JMETER_HOME}/bin/jmeter"
+fi
 echo "User:   ${NH_USERNAME}"
 echo ""
 
@@ -60,8 +95,15 @@ mkdir -p "$RESULTS_DIR" "$REPORTS_DIR"
 
 # ── Fresh run cleanup ─────────────────────────────────────────────────────
 echo "[INFO] Removing previous JMeter reports/results ..."
-find "$REPORTS_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-find "$RESULTS_DIR" -mindepth 1 -maxdepth 1 -type f \( -name '*.jtl' -o -name '*.log' -o -name 'server-metrics-*.csv' \) -delete
+if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+  docker_cleanup_dir "$REPORTS_DIR"
+  mkdir -p "$REPORTS_DIR"
+  docker run --rm -v "${LOADTESTS_ROOT}:/load-tests" alpine sh -lc "find /load-tests/jmeter/results -mindepth 1 -maxdepth 1 -type f \( -name '*.jtl' -o -name '*.log' -o -name 'server-metrics-*.csv' \) -delete" >/dev/null
+  docker_chown_outputs
+else
+  find "$REPORTS_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  find "$RESULTS_DIR" -mindepth 1 -maxdepth 1 -type f \( -name '*.jtl' -o -name '*.log' -o -name 'server-metrics-*.csv' \) -delete
+fi
 echo "[INFO] Cleanup complete. Fresh run will produce only: 500vu / 1000vu / 2000vu"
 
 # ── Run one scenario ───────────────────────────────────────────────────────
@@ -70,8 +112,10 @@ run_scenario() {
   local VU="$2"
   local RAMPUP="$3"
   local DURATION="$4"
+  local COLLECTOR_PID=""
 
   local JTL="${RESULTS_DIR}/${LABEL}.jtl"
+  local RAW_JTL="${RESULTS_DIR}/${LABEL}-raw.jtl"
   local HTML_REPORT="${REPORTS_DIR}/${LABEL}"
 
   echo ""
@@ -83,28 +127,45 @@ run_scenario() {
   # Start server metrics collector in background
   if [[ -n "$ADMIN_SECRET" ]]; then
     export ADMIN_SECRET
-    bash "${SCRIPT_DIR}/collect-server-metrics.sh" "$LABEL" &
+    bash "${SCRIPT_DIR}/collect-server-metrics.sh" "$LABEL" >"${RESULTS_DIR}/${LABEL}-collector.log" 2>&1 &
     COLLECTOR_PID=$!
     echo "[INFO] Server metrics collector PID: $COLLECTOR_PID"
   fi
 
   # Remove old JTL if exists
   rm -f "$JTL"
-  rm -rf "$HTML_REPORT"
+  rm -f "$RAW_JTL"
+  if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+    docker_cleanup_dir "$HTML_REPORT"
+  else
+    rm -rf "$HTML_REPORT"
+  fi
 
-  # Run JMeter headless
-  "${JMETER_HOME}/bin/jmeter" \
-    -n \
-    -t "$JMX" \
-    -Jvusers="$VU" \
-    -Jrampup="$RAMPUP" \
-    -Jduration="$DURATION" \
-    -Jusername="$NH_USERNAME" \
-    -Jpassword="$NH_PASSWORD" \
-    -l "$JTL" \
-    -e -o "$HTML_REPORT" \
-    -j "${RESULTS_DIR}/${LABEL}-jmeter.log" \
-    2>&1 | tail -20
+  # Run JMeter headless. Warm-up login is captured in RAW_JTL, then filtered out
+  # so the final HTML/JTL represent steady-state authenticated traffic only.
+  if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+    run_jmeter_cmd "/opt/apache-jmeter-5.5/bin/jmeter -n -t /load-tests/jmeter/nighthunt-stress-test.jmx -Jvusers=${VU} -Jrampup=${RAMPUP} -Jduration=${DURATION} -Jusername=${NH_USERNAME} -Jpassword=${NH_PASSWORD} -l /load-tests/jmeter/results/${LABEL}-raw.jtl -j /load-tests/jmeter/results/${LABEL}-jmeter.log" 2>&1 | tail -20
+  else
+    run_jmeter_cmd \
+      -n \
+      -t "$JMX" \
+      -Jvusers="$VU" \
+      -Jrampup="$RAMPUP" \
+      -Jduration="$DURATION" \
+      -Jusername="$NH_USERNAME" \
+      -Jpassword="$NH_PASSWORD" \
+      -l "$RAW_JTL" \
+      -j "${RESULTS_DIR}/${LABEL}-jmeter.log" \
+      2>&1 | tail -20
+  fi
+
+  awk -F',' 'NR == 1 || (NF == 17 && $3 != "POST /api/auth/login" && $3 != "POST /api/auth/register")' "$RAW_JTL" > "$JTL"
+  if [[ "$USE_DOCKER_JMETER" == "true" ]]; then
+    run_jmeter_cmd "rm -rf /load-tests/jmeter/reports/${LABEL} && /opt/apache-jmeter-5.5/bin/jmeter -g /load-tests/jmeter/results/${LABEL}.jtl -o /load-tests/jmeter/reports/${LABEL}" >/dev/null
+    docker_chown_outputs
+  else
+    run_jmeter_cmd -g "$JTL" -o "$HTML_REPORT" >/dev/null
+  fi
 
   # Stop metrics collector
   if [[ -n "${COLLECTOR_PID:-}" ]]; then
@@ -115,6 +176,8 @@ run_scenario() {
   # Print quick summary
   echo ""
   echo "[RESULT] ${LABEL} — HTML report: ${HTML_REPORT}/index.html"
+  echo "[RESULT] ${LABEL} — steady-state JTL: ${JTL}"
+  echo "[RESULT] ${LABEL} — warm-up raw JTL: ${RAW_JTL}"
 
   # Extract key metrics from JTL with awk
   if [[ -f "$JTL" ]]; then
