@@ -137,11 +137,11 @@ public class AuthService {
             bcryptAcquired = BCRYPT_LIMITER.tryAcquire(8, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCodes.AUTH_INVALID_CREDENTIALS, "Login interrupted");
+            throw new BusinessException(ErrorCodes.AUTH_SERVER_BUSY, "Login interrupted");
         }
         if (!bcryptAcquired) {
             log.warn("BCrypt semaphore timeout for identifier={} ip={}", request.getIdentifier(), ipAddress);
-            throw new BusinessException(ErrorCodes.AUTH_INVALID_CREDENTIALS, "Server busy, please retry");
+            throw new BusinessException(ErrorCodes.AUTH_SERVER_BUSY, "Server busy, please retry");
         }
         boolean passwordValid;
         try {

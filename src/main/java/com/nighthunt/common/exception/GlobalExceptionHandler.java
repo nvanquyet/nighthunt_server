@@ -25,8 +25,11 @@ public class GlobalExceptionHandler {
         log.warn("Business exception: {} - {}", ex.getErrorCode(), ex.getMessage());
 
         HttpStatus status = mapToStatus(ex.getErrorCode());
-        return ResponseEntity.status(status)
-                .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(status);
+        if (ErrorCodes.AUTH_SERVER_BUSY.equals(ex.getErrorCode())) {
+            response.header("Retry-After", "5");
+        }
+        return response.body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -93,6 +96,7 @@ public class GlobalExceptionHandler {
         return switch (errorCode) {
             case ErrorCodes.AUTH_FORCE_LOGOUT, ErrorCodes.AUTH_SESSION_EXPIRED,
                     ErrorCodes.AUTH_TOKEN_INVALID, ErrorCodes.AUTH_TOKEN_EXPIRED -> HttpStatus.UNAUTHORIZED;
+            case ErrorCodes.AUTH_SERVER_BUSY -> HttpStatus.SERVICE_UNAVAILABLE;
             default -> HttpStatus.BAD_REQUEST;
         };
     }
