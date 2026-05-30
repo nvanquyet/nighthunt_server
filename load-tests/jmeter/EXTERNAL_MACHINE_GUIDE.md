@@ -100,24 +100,138 @@ the main load groups fire. All of this is automatic.
 
 ## 4. Running a Test
 
-### Option A — JMeter GUI (easiest, best for first run)
+### Option A — JMeter GUI (Windows step-by-step)
 
-1. Open JMeter GUI
-2. **File → Open** → select `nighthunt-stress-test.jmx`
-3. Click the **Test Plan** node in the tree on the left
-4. Find the **User Defined Variables** section — you'll see:
+> **Khi nào dùng GUI?** Lần đầu chạy, muốn xem cây test plan, hoặc muốn
+> debug từng request. Cho production load test nên dùng CLI (Option B) vì
+> GUI tiêu tốn thêm RAM.
 
-   | Variable      | Default value     | Change to             |
-   |---------------|-------------------|-----------------------|
-   | `BASE_URL`    | `vawnwuyest.me`   | your target host      |
-   | `vusers`      | `500`             | `500` / `1000` / `2000` |
-   | `rampup`      | `30`              | see presets below     |
-   | `duration`    | `60`              | see presets below     |
-   | `setupRampup` | `120`             | see presets below     |
-   | `password`    | `StressTest@123`  | leave as-is           |
+---
 
-5. **Run → Start** (green play button) or `Ctrl+R`
-6. Watch results in the **Summary Report** or **View Results Tree** listener
+#### A1 — Mở JMeter GUI
+
+**Windows:**
+```
+C:\jmeter\bin\jmeter.bat
+```
+Double-click file trên trong Explorer, hoặc chạy trong PowerShell.  
+Cửa sổ GUI sẽ mở — có thanh menu trên cùng và cột cây bên trái.
+
+**Linux / macOS:**
+```bash
+jmeter
+```
+
+> Nếu cửa sổ không xuất hiện, kiểm tra Java: `java -version` phải là 11+.
+
+---
+
+#### A2 — Mở file test plan
+
+1. Trên menu bar: **File → Open**
+2. Điều hướng đến thư mục `load-tests/jmeter/`
+3. Chọn `nighthunt-stress-test.jmx` → **Open**
+
+Cột cây bên trái sẽ hiện ra cấu trúc như sau:
+```
+📁 Test Plan
+  📁 [0] SETUP – Register & Login Users
+      HTTP Request – /api/auth/register
+      HTTP Request – /api/auth/login
+  📁 [1] Authenticate (Main Load)
+      HTTP Request – /api/auth/login
+  📁 [2] Game Actions (Main Load)
+      HTTP Request – /api/room/...
+      HTTP Request – /api/game/...
+  📁 Summary Report          ← listener xem kết quả
+  📁 View Results Tree       ← listener xem từng request
+```
+
+---
+
+#### A3 — Đặt thông số trước khi chạy
+
+1. Click vào node **Test Plan** (dòng đầu tiên trong cây)
+2. Ở panel bên phải, tìm phần **User Defined Variables** (bảng có cột Name / Value)
+3. Double-click vào ô **Value** của từng biến để sửa:
+
+   | Biến          | Mặc định          | Sửa thành                          |
+   |---------------|-------------------|------------------------------------|
+   | `BASE_URL`    | `vawnwuyest.me`   | Giữ nguyên (hoặc đổi nếu test server khác) |
+   | `PORT`        | `443`             | Giữ nguyên                         |
+   | `PROTOCOL`    | `https`           | Giữ nguyên                         |
+   | `vusers`      | `500`             | `500` / `1000` / `2000`            |
+   | `rampup`      | `30`              | Xem bảng presets bên dưới          |
+   | `duration`    | `60`              | Xem bảng presets bên dưới          |
+   | `setupRampup` | `120`             | Xem bảng presets bên dưới          |
+   | `password`    | `StressTest@123`  | Không đổi                          |
+
+4. Nhấn **Ctrl+S** để lưu lại thay đổi vào file JMX.
+
+---
+
+#### A4 — Thêm listener để xem kết quả (nếu chưa có)
+
+Nếu cây chưa có **Summary Report** hoặc **View Results Tree**:
+
+1. Right-click vào **Test Plan** trong cây → **Add → Listener → Summary Report**
+2. Right-click vào **Test Plan** → **Add → Listener → View Results Tree**
+
+> **Summary Report** — hiện số liệu tổng hợp: throughput, error %, avg response time.  
+> **View Results Tree** — hiện từng request (xanh = pass, đỏ = fail). Chỉ dùng khi debug vì nặng bộ nhớ.
+
+---
+
+#### A5 — Cấu hình ghi kết quả ra file (khuyến nghị)
+
+1. Click vào node **Summary Report** trong cây
+2. Ở phần **Filename**, nhập:
+   ```
+   results/1000vu-raw.jtl
+   ```
+   (Tạo thư mục `results/` trong cùng thư mục với file JMX trước nếu chưa có)
+3. Tích ✅ **Configure** → đảm bảo định dạng là **CSV**
+
+File `.jtl` này sẽ được dùng để gen HTML report ở bước 6.
+
+---
+
+#### A6 — Chạy test
+
+| Hành động | Cách thực hiện                              |
+|-----------|----------------------------------------------|
+| **Bắt đầu** | Menu **Run → Start** hoặc `Ctrl+R` hoặc nút **▶ (xanh lá)** trên toolbar |
+| **Dừng nhẹ** | Menu **Run → Stop** hoặc `Ctrl+.` — chờ thread hoàn thành |
+| **Dừng ngay** | Menu **Run → Shutdown** hoặc `Ctrl+,` — cắt ngay lập tức |
+
+**Theo dõi test đang chạy:**
+- Góc trên bên phải cửa sổ hiện **số thread đang active** (ví dụ `1000/1000`)
+- Tab **Summary Report** hiện live: Samples, Average, Error%, Throughput
+- Thanh progress màu xanh lá = đang chạy; khi hết màu = test đã xong
+
+---
+
+#### A7 — Đọc kết quả trong Summary Report
+
+Sau khi test kết thúc, click vào **Summary Report** trong cây:
+
+| Cột             | Ý nghĩa                                         | Mục tiêu 1000 VU   |
+|-----------------|-------------------------------------------------|-------------------|
+| **# Samples**   | Tổng số request đã gửi                          | —                 |
+| **Average**     | Thời gian phản hồi trung bình (ms)             | < 3000 ms         |
+| **90% Line**    | 90% request phản hồi trong X ms                | < 5000 ms         |
+| **Error %**     | Tỉ lệ lỗi                                       | < 2%              |
+| **Throughput**  | Requests/giây                                   | > 50 req/s        |
+
+---
+
+#### A8 — Xóa dữ liệu cũ trước khi chạy lại
+
+Trước mỗi lần chạy mới, xóa kết quả cũ để tránh nhầm lẫn:
+1. Menu **Run → Clear All** hoặc `Ctrl+E`
+2. Hoặc click vào từng listener → nút **Clear** (biểu tượng thùng rác)
+
+> File `.jtl` đã ghi ra disk không bị xóa bởi Clear — chỉ xóa data trên màn hình.
 
 ### Option B — CLI (recommended for clean results + HTML report)
 
