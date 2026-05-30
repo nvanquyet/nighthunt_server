@@ -840,6 +840,18 @@ textarea.form-control {
 
 .lt-desc { color: var(--muted); font-size: 0.85rem; margin: 0 0 14px; }
 .lt-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lt-help-card { padding: 14px 18px; }
+.lt-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.lt-help-text { color: var(--muted); font-size: 0.8rem; line-height: 1.5; margin-top: 4px; }
+.lt-selected-summary {
+  background: rgba(80,130,200,0.09);
+  border: 1px solid rgba(122,180,240,0.22);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.lt-selected-title { font-size: 0.92rem; color: #dcecff; margin-bottom: 4px; }
+.lt-selected-meta { font-size: 0.8rem; color: #7ab4f0; margin-bottom: 4px; }
 
 .lt-btn {
   padding: 8px 18px;
@@ -931,6 +943,28 @@ textarea.form-control {
   border-bottom: 1px solid rgba(255,255,255,0.04);
   white-space: nowrap;
 }
+.lt-scenario-row-active td { background: rgba(80,130,200,0.10); }
+.lt-link-btn {
+  border: none;
+  background: transparent;
+  color: #dcecff;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.lt-link-btn:hover { color: #7ab4f0; }
+.lt-status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lt-status-warn { background: rgba(240,192,64,0.18); color: #f0c040; }
 .lt-row-total td { font-weight: 700; background: rgba(255,255,255,0.03); }
 
 /* Verdict labels */

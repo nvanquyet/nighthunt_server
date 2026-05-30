@@ -298,15 +298,20 @@ app.get('/api/loadtest/capacity/download/:file', requireToken, (req, res) => {
 // GET /api/loadtest/jmeter/download/:file — download raw JTL or statistics.json
 app.get('/api/loadtest/jmeter/download/:type/:file', requireToken, (req, res) => {
     const safe = path.basename(req.params.file);
-    const type = req.params.type; // 'jtl' or 'scenario'
+    const type = req.params.type; // 'jtl', 'scenario', or 'result'
     let filePath;
     if (type === 'jtl') {
+        if (!safe.endsWith('.jtl')) return res.status(400).json({ error: 'JTL only' });
         filePath = path.join(JMETER_DIR, 'results', safe);
         if (!filePath.startsWith(path.join(JMETER_DIR, 'results'))) return res.status(400).end();
     } else if (type === 'scenario') {
         const scenarioName = path.basename(req.params.file, '.json');
         filePath = path.join(JMETER_DIR, 'reports', scenarioName, 'statistics.json');
         if (!filePath.startsWith(path.join(JMETER_DIR, 'reports'))) return res.status(400).end();
+    } else if (type === 'result') {
+        if (!/\.(log|txt|csv)$/i.test(safe)) return res.status(400).json({ error: 'Invalid result file' });
+        filePath = path.join(JMETER_DIR, 'results', safe);
+        if (!filePath.startsWith(path.join(JMETER_DIR, 'results'))) return res.status(400).end();
     } else {
         return res.status(400).json({ error: 'Invalid type' });
     }
@@ -356,31 +361,65 @@ app.get('/api/loadtest/jmeter', requireToken, (req, res) => {
             : [];
         const jtlByName = Object.fromEntries(jtlMeta.map(x => [x.f, x]));
 
-        // Scenarios from report folders
-        const scenarios = fs.existsSync(reportsDir)
+        const reportDirs = fs.existsSync(reportsDir)
             ? fs.readdirSync(reportsDir)
                 .filter(d => fs.statSync(path.join(reportsDir, d)).isDirectory())
-                .sort().reverse()
-                .map(dir => {
-                    const statsPath = path.join(reportsDir, dir, 'statistics.json');
-                    let stats = null;
-                    try { if (fs.existsSync(statsPath)) stats = JSON.parse(fs.readFileSync(statsPath, 'utf8')); } catch {}
-                    // Match JTL by exact name
-                    const jtlFile = jtlByName[dir + '.jtl'] ? dir + '.jtl'
-                        : jtlMeta.find(x => x.f.startsWith(dir))?.f || null;
-                    return { name: dir, stats, jtlFile };
-                })
             : [];
 
-        // Standalone JTLs (no matching report folder)
-        const reportNames = new Set(scenarios.map(s => s.jtlFile).filter(Boolean));
-        const standaloneJtls = jtlMeta.filter(x => !reportNames.has(x.f)).map(x => x.f);
+        const scenarioNames = new Set(reportDirs);
+        jtlMeta.forEach(({ f }) => {
+            const match = f.match(/^(scenario-[^.]+?)(?:-raw)?\.jtl$/);
+            if (match) scenarioNames.add(match[1]);
+        });
+
+        const scenarios = Array.from(scenarioNames)
+            .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+            .map(name => {
+                const statsPath = path.join(reportsDir, name, 'statistics.json');
+                let stats = null;
+                try {
+                    if (fs.existsSync(statsPath)) stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+                } catch {}
+
+                const jtlFile = jtlByName[name + '.jtl'] ? name + '.jtl' : null;
+                const rawJtlFile = jtlByName[name + '-raw.jtl'] ? name + '-raw.jtl' : null;
+                const logFile = fs.existsSync(path.join(resultsDir, name + '-jmeter.log')) ? name + '-jmeter.log' : null;
+                const collectorFile = fs.existsSync(path.join(resultsDir, name + '-collector.log')) ? name + '-collector.log' : null;
+                const reportReady = Boolean(stats && fs.existsSync(path.join(reportsDir, name, 'index.html')));
+                const chartFile = jtlFile || rawJtlFile || null;
+
+                return {
+                    name,
+                    stats,
+                    jtlFile,
+                    rawJtlFile,
+                    logFile,
+                    collectorFile,
+                    chartFile,
+                    reportReady,
+                    status: reportReady ? 'complete' : (rawJtlFile ? 'raw-only' : 'missing')
+                };
+            });
+
+        const scenarioFiles = new Set();
+        scenarios.forEach(s => {
+            if (s.jtlFile) scenarioFiles.add(s.jtlFile);
+            if (s.rawJtlFile) scenarioFiles.add(s.rawJtlFile);
+        });
+
+        // Standalone JTLs (no matching scenario bundle)
+        const standaloneJtls = jtlMeta.filter(x => !scenarioFiles.has(x.f)).map(x => x.f);
 
         // Parse latest JTL for default time-series
         let timeSeries = null;
         if (jtlMeta.length > 0) {
-            // Prefer a scenario JTL (with most data), fallback to newest
-            const preferred = jtlMeta.find(x => reportNames.has(x.f)) || jtlMeta[0];
+            const preferredScenario = scenarios.find(s => s.chartFile && s.reportReady)
+                || scenarios.find(s => s.chartFile)
+                || null;
+            const preferredFile = preferredScenario?.chartFile;
+            const preferred = preferredFile
+                ? jtlMeta.find(x => x.f === preferredFile)
+                : jtlMeta[0];
             try {
                 timeSeries = parseJtlTimeSeries(path.join(resultsDir, preferred.f), preferred.f);
             } catch (e) {

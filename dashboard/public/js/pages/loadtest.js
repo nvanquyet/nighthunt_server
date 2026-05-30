@@ -18,6 +18,7 @@
 
     let jmeterChart = null;
     let capacityChart = null;
+    let selectedScenarioIdx = -1;
 
     // ── Main render ──────────────────────────────────────────────────────────
     window.renderLoadtest = async function () {
@@ -83,6 +84,19 @@
       <button class="lt-btn lt-btn-run" style="font-size:0.8rem;padding:4px 12px" onclick="ltRunJmeter()">&#9654; Run JMeter Test</button>
     </div>
   </div>
+    <div class="lt-card lt-help-card" style="margin-bottom:12px">
+        <div class="lt-help-grid">
+            <div>
+                <strong>Chart meaning</strong>
+                <div class="lt-help-text">Blue line = average response time, yellow line = TPS, red dashed line = error rate, grey bars = active users. The chart shows only the currently selected scenario/JTL, not an aggregate of all scenarios.</div>
+            </div>
+            <div>
+                <strong>Raw vs steady-state</strong>
+                <div class="lt-help-text"><code>-raw.jtl</code> includes warm-up login/register traffic. Normal <code>.jtl</code> is filtered steady-state traffic and is what the HTML report/statistics use. If a scenario is stuck or fails before report generation, you may only see <code>raw</code>.</div>
+            </div>
+        </div>
+    </div>
+    <div id="lt-jmeter-selected" class="lt-selected-summary" style="display:none"></div>
   <div class="lt-chart-wrap">
     <canvas id="lt-jmeter-chart" height="100"></canvas>
   </div>
@@ -228,11 +242,16 @@
             return;
         }
 
-        allScenarios = (data.scenarios || []).filter(s => s.stats);
+        allScenarios = data.scenarios || [];
 
-        // Build full JTL list: scenario JTLs first, then standalones
+        // Build full JTL list: scenario chart files first, then standalone JTLs
         allJtlFiles = [];
-        allScenarios.forEach(s => { if (s.jtlFile) allJtlFiles.push({ label: s.name, file: s.jtlFile }); });
+        allScenarios.forEach((s, idx) => {
+            if (s.chartFile) {
+                const mode = s.reportReady ? 'steady-state' : (s.rawJtlFile ? 'raw only' : 'no report');
+                allJtlFiles.push({ label: `${s.name} (${mode})`, file: s.chartFile, scenarioIdx: idx });
+            }
+        });
         (data.standaloneJtls || []).forEach(f => {
             if (!allJtlFiles.find(x => x.file === f)) allJtlFiles.push({ label: f.replace('.jtl',''), file: f });
         });
@@ -245,21 +264,16 @@
                 : '<option>No JTL files</option>';
         }
 
-        // Update stat cards from latest scenario
-        if (allScenarios.length > 0) {
-            const latest = allScenarios[0].stats;
-            const total  = latest['Total'] || Object.values(latest)[0];
-            if (total) {
-                const peakTps = Math.max(...Object.values(latest).map(v => v.throughput || 0));
-                setStatCard('st-peak-tps',   peakTps.toFixed(1) + ' /s');
-                setStatCard('st-avg-resp',   fmtMs(total.meanResTime));
-                setStatCard('st-error-rate', fmtPct(total.errorPct));
-                setStatCard('st-total-req',  (total.sampleCount || 0).toLocaleString());
-            }
-        }
+        const preferredIdx = allJtlFiles.findIndex(x => x.scenarioIdx != null && allScenarios[x.scenarioIdx]?.reportReady);
+        currentJtlIdx = preferredIdx >= 0 ? preferredIdx : 0;
+        if (sel && currentJtlIdx >= 0) sel.value = String(currentJtlIdx);
+
+        const preferredScenarioIdx = allJtlFiles[currentJtlIdx]?.scenarioIdx;
+        if (preferredScenarioIdx != null) selectedScenarioIdx = preferredScenarioIdx;
 
         ltDrawJmeterSummaryTable();
-        ltDrawJmeterChart(data.timeSeries);
+        ltRenderSelectedScenarioSummary();
+        ltDrawJmeterChart(data.timeSeries, allJtlFiles[currentJtlIdx]);
     }
 
     window.ltSelectJtl = async function () {
@@ -268,16 +282,40 @@
         currentJtlIdx = +sel.value;
         const entry = allJtlFiles[currentJtlIdx];
         if (!entry) return;
+        if (entry.scenarioIdx != null) selectedScenarioIdx = entry.scenarioIdx;
+        ltDrawJmeterSummaryTable();
+        ltRenderSelectedScenarioSummary();
         try {
             const ts = await ltFetch('/api/loadtest/jmeter/series/' + encodeURIComponent(entry.file));
-            ltDrawJmeterChart(ts);
+            ltDrawJmeterChart(ts, entry);
         } catch (e) {
             const canvas = document.getElementById('lt-jmeter-chart');
             if (canvas) canvas.parentElement.innerHTML = '<p class="lt-empty">Could not load JTL: ' + e.message + '</p>';
         }
     };
 
-    function ltDrawJmeterChart(ts) {
+    window.ltFocusScenario = async function (idx) {
+        const scenario = allScenarios[idx];
+        if (!scenario || !scenario.chartFile) return;
+        const entryIdx = allJtlFiles.findIndex(x => x.scenarioIdx === idx);
+        if (entryIdx >= 0) {
+            currentJtlIdx = entryIdx;
+            const sel = document.getElementById('lt-jtl-sel');
+            if (sel) sel.value = String(entryIdx);
+        }
+        selectedScenarioIdx = idx;
+        ltDrawJmeterSummaryTable();
+        ltRenderSelectedScenarioSummary();
+        try {
+            const ts = await ltFetch('/api/loadtest/jmeter/series/' + encodeURIComponent(scenario.chartFile));
+            ltDrawJmeterChart(ts, allJtlFiles[currentJtlIdx]);
+        } catch (e) {
+            const canvas = document.getElementById('lt-jmeter-chart');
+            if (canvas) canvas.parentElement.innerHTML = '<p class="lt-empty">Could not load scenario chart: ' + e.message + '</p>';
+        }
+    };
+
+    function ltDrawJmeterChart(ts, entry) {
         const wrap = document.querySelector('#lt-jmeter-chart')?.parentElement;
         const existingCanvas = document.getElementById('lt-jmeter-chart');
         if (!existingCanvas) return;
@@ -336,7 +374,7 @@
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     legend: { position: 'top', labels: { color: '#ccc', boxWidth: 12 } },
-                    title:  { display: true, text: (ts.fileName || '') + ' — Throughput & Response Times', color: '#ccc', font: { size: 13 } },
+                    title:  { display: true, text: (entry?.label || ts.fileName || '') + ' — Throughput & Response Times', color: '#ccc', font: { size: 13 } },
                     tooltip: {
                         callbacks: {
                             label: ctx => {
@@ -369,28 +407,46 @@
 
         const rows = allScenarios.map((s, idx) => {
             const stats  = s.stats || {};
-            const total  = stats['Total'] || Object.values(stats)[0] || {};
-            const peakTps = Math.max(...Object.values(stats).map(v => v.throughput || 0));
-            const errCls  = (total.errorPct || 0) > 20 ? 'style="color:#e07070"' : (total.errorPct || 0) > 5 ? 'style="color:#f0c040"' : 'style="color:#7be495"';
-            const jtlDl   = s.jtlFile
+                        const statValues = Object.values(stats);
+                        const total  = stats['Total'] || statValues[0] || null;
+                        const peakTps = statValues.length ? Math.max(...statValues.map(v => v.throughput || 0)) : 0;
+                        const errValue = total?.errorPct;
+                        const errCls  = total
+                                ? ((errValue || 0) > 20 ? 'style="color:#e07070"' : (errValue || 0) > 5 ? 'style="color:#f0c040"' : 'style="color:#7be495"')
+                                : '';
+                        const steadyJtlBtn   = s.jtlFile
                 ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('jtl','${s.jtlFile}')" title="Download JTL">&#11123; JTL</button>`
                 : '<span style="color:var(--muted);font-size:0.75rem">no JTL</span>';
-            const htmlBtn = `<button class="lt-btn lt-btn-dl" onclick="ltOpenScenarioReport('${s.name}')" title="Open HTML report">&#128196; HTML</button>`;
-            const endpts  = Object.keys(stats).filter(k => k !== 'Total').length;
-            return `<tr>
-  <td><strong>${s.name}</strong><br><span style="color:var(--muted);font-size:0.75rem">${endpts} endpoint${endpts!==1?'s':''}</span></td>
-  <td>${(total.sampleCount||0).toLocaleString()}</td>
-  <td ${errCls}>${fmtPct(total.errorPct)}</td>
-  <td>${peakTps.toFixed(1)} /s</td>
-  <td>${fmtMs(total.meanResTime)}</td>
-  <td>${fmtMs(total.pct2ResTime)}</td>
-  <td>${fmtMs(total.pct3ResTime)}</td>
+                        const rawJtlBtn = s.rawJtlFile
+                                ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('jtl','${s.rawJtlFile}')" title="Download raw JTL">&#11123; RAW</button>`
+                                : '';
+                        const logBtn = s.logFile
+                                ? `<button class="lt-btn lt-btn-ghost" onclick="ltDownload('result','${s.logFile}')" title="Download jmeter log">&#128221; Log</button>`
+                                : '';
+                        const htmlBtn = s.reportReady
+                                ? `<button class="lt-btn lt-btn-dl" onclick="ltOpenScenarioReport('${s.name}')" title="Open HTML report">&#128196; HTML</button>`
+                                : '<span class="lt-status-pill lt-status-warn">raw only</span>';
+                        const endpts  = Object.keys(stats).filter(k => k !== 'Total').length;
+                        const chartMode = s.reportReady ? 'steady-state chart' : (s.rawJtlFile ? 'raw chart only' : 'no chart');
+                        return `<tr class="lt-scenario-row ${idx === selectedScenarioIdx ? 'lt-scenario-row-active' : ''}">
+    <td>
+        <button class="lt-link-btn" onclick="ltFocusScenario(${idx})"><strong>${s.name}</strong></button><br>
+        <span style="color:var(--muted);font-size:0.75rem">${s.reportReady ? `${endpts} endpoint${endpts!==1?'s':''}` : 'incomplete scenario'} · ${chartMode}</span>
+    </td>
+    <td>${total ? (total.sampleCount||0).toLocaleString() : '–'}</td>
+    <td ${errCls}>${total ? fmtPct(total.errorPct) : 'raw only'}</td>
+    <td>${total ? peakTps.toFixed(1) + ' /s' : '–'}</td>
+    <td>${total ? fmtMs(total.meanResTime) : '–'}</td>
+    <td>${total ? fmtMs(total.pct2ResTime) : '–'}</td>
+    <td>${total ? fmtMs(total.pct3ResTime) : '–'}</td>
   <td>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${s.name}.json')">&#11123; stats.json</button>
-      ${jtlDl}
+            ${s.reportReady ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${s.name}.json')">&#11123; stats.json</button>` : ''}
+            ${steadyJtlBtn}
+            ${rawJtlBtn}
             ${htmlBtn}
-      <button class="lt-btn lt-btn-ghost" style="font-size:0.75rem;padding:3px 9px" onclick="ltShowEndpoints(${idx})">&#9776; Endpoints</button>
+            ${logBtn}
+            ${s.reportReady ? `<button class="lt-btn lt-btn-ghost" style="font-size:0.75rem;padding:3px 9px" onclick="ltShowEndpoints(${idx})">&#9776; Endpoints</button>` : ''}
     </div>
   </td>
 </tr>
@@ -418,7 +474,7 @@
         row.style.display = '';
 
         const s = allScenarios[idx];
-        if (!s || !s.stats) { detail.innerHTML = '<p class="lt-empty">No endpoint data.</p>'; return; }
+        if (!s || !s.stats) { detail.innerHTML = '<p class="lt-empty">No steady-state endpoint data yet. This scenario currently only has raw artifacts/logs.</p>'; return; }
 
         const rows = Object.entries(s.stats)
             .sort(([a], [b]) => a === 'Total' ? 1 : b === 'Total' ? -1 : a.localeCompare(b));
@@ -434,6 +490,42 @@ ${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
 </tr>`).join('')}
 </tbody></table>`;
     };
+
+    function ltRenderSelectedScenarioSummary() {
+        const el = document.getElementById('lt-jmeter-selected');
+        if (!el) return;
+
+        const scenario = selectedScenarioIdx >= 0 ? allScenarios[selectedScenarioIdx] : null;
+        if (!scenario) {
+            el.style.display = 'none';
+            return;
+        }
+
+        const total = scenario.stats ? (scenario.stats['Total'] || Object.values(scenario.stats)[0]) : null;
+        const mode = scenario.reportReady ? 'steady-state report + chart' : (scenario.rawJtlFile ? 'raw-only chart/log' : 'no scenario data');
+        const note = scenario.reportReady
+            ? `Viewing ${scenario.name}. Table metrics come from filtered steady-state data.`
+            : `Viewing ${scenario.name}. Only raw artifacts are available, so the chart includes warm-up/login traffic and may not match the steady-state table used for completed scenarios.`;
+
+        el.innerHTML = `
+<div class="lt-selected-title">Selected scenario: <strong>${scenario.name}</strong></div>
+<div class="lt-selected-meta">Mode: ${mode}${total ? ` · Samples: ${(total.sampleCount || 0).toLocaleString()} · Err: ${fmtPct(total.errorPct)} · Avg: ${fmtMs(total.meanResTime)}` : ''}</div>
+<div class="lt-help-text">${note}</div>`;
+        el.style.display = 'block';
+
+        if (total) {
+            const peakTps = Math.max(...Object.values(scenario.stats).map(v => v.throughput || 0));
+            setStatCard('st-peak-tps', peakTps.toFixed(1) + ' /s');
+            setStatCard('st-avg-resp', fmtMs(total.meanResTime));
+            setStatCard('st-error-rate', fmtPct(total.errorPct));
+            setStatCard('st-total-req', (total.sampleCount || 0).toLocaleString());
+        } else {
+            setStatCard('st-peak-tps', 'raw only');
+            setStatCard('st-avg-resp', 'raw only');
+            setStatCard('st-error-rate', 'raw only');
+            setStatCard('st-total-req', 'raw only');
+        }
+    }
 
     window.ltOpenScenarioReport = function (scenario) {
         if (!scenario) return;
@@ -663,6 +755,7 @@ ${reports.map(r => {
         if (type === 'capacity') url = `/api/loadtest/capacity/download/${encodeURIComponent(file)}`;
         else if (type === 'scenario') url = `/api/loadtest/jmeter/download/scenario/${encodeURIComponent(file)}`;
         else if (type === 'jtl') url = `/api/loadtest/jmeter/download/jtl/${encodeURIComponent(file)}`;
+        else if (type === 'result') url = `/api/loadtest/jmeter/download/result/${encodeURIComponent(file)}`;
         else return;
 
         // Fetch with auth header then trigger download via blob URL

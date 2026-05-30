@@ -21,7 +21,7 @@
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan"
               testname="NightHunt Stress Test" enabled="true">
       <boolProp name="TestPlan.functional_mode">false</boolProp>
-      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments"
                    guiclass="ArgumentsPanel" testclass="Arguments" testname="Variables">
         <collectionProp name="Arguments.arguments">
@@ -71,9 +71,9 @@
            Regular ThreadGroup, runs 1 loop each VU, no scheduler.
            ================================================================ -->
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
-                   testname="[0] SETUP - Pre-register accounts" enabled="false">
+              testname="[0] SETUP - Pre-register accounts" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${VU_COUNT}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">10</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(setupRampup,120)}</stringProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
@@ -126,9 +126,10 @@
           </HeaderManager>
           <hashTree/>
           <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
-                             testname="Assert 200 or 409" enabled="true">
+                             testname="Assert 200 or duplicate-account response" enabled="true">
             <collectionProp name="Asserion.test_strings">
               <stringProp name="49586">200</stringProp>
+              <stringProp name="49587">400</stringProp>
               <stringProp name="1609">409</stringProp>
             </collectionProp>
             <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
@@ -229,12 +230,21 @@
               <stringProp name="RegexExtractor.match_no">1</stringProp>
             </RegexExtractor>
             <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor"
+                                 testname="Set AUTH_READY [A]" enabled="true">
+              <stringProp name="cacheKey">auth-ready-a</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">vars.put(&quot;AUTH_READY&quot;, (vars.get(&quot;TOKEN&quot;) != &quot;INVALID_TOKEN&quot; &amp;&amp; vars.get(&quot;SESSION_ID&quot;) != &quot;INVALID_SESSION&quot;) ? &quot;true&quot; : &quot;false&quot;)</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <!-- Step 2: Measure authenticated traffic only after warm-up login succeeded -->
         <IfController guiclass="IfControllerPanel" testclass="IfController"
                       testname="Authenticated Steady-State [A]" enabled="true">
-          <stringProp name="IfController.condition">"${TOKEN}" != "INVALID_TOKEN" &amp;&amp; "${SESSION_ID}" != "INVALID_SESSION"</stringProp>
+          <stringProp name="IfController.condition">${AUTH_READY}</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
           <boolProp name="IfController.useExpression">false</boolProp>
         </IfController>
@@ -1015,8 +1025,9 @@
         </hashTree>
         <IfController guiclass="IfControllerPanel" testclass="IfController"
                          testname="Skip social reads if login failed [E]" enabled="true">
-          <stringProp name="IfController.condition">"${TOKEN}" != "INVALID_TOKEN"</stringProp>
+          <stringProp name="IfController.condition">${__groovy(vars.get('TOKEN') != 'INVALID_TOKEN',)}</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">false</boolProp>
         </IfController>
         <hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -1192,8 +1203,9 @@
         </hashTree>
         <IfController guiclass="IfControllerPanel" testclass="IfController"
                       testname="Skip friend ops if login failed [F]" enabled="true">
-          <stringProp name="IfController.condition">"${TOKEN}" != "INVALID_TOKEN"</stringProp>
+          <stringProp name="IfController.condition">${__groovy(vars.get('TOKEN') != 'INVALID_TOKEN',)}</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">false</boolProp>
         </IfController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -1276,8 +1288,9 @@
           </hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController"
                         testname="Cancel request if sent [F]" enabled="true">
-            <stringProp name="IfController.condition">"${REQUEST_ID}" != "0"</stringProp>
+            <stringProp name="IfController.condition">${__groovy(vars.get('REQUEST_ID') != '0',)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">false</boolProp>
           </IfController>
           <hashTree>
             <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -1410,8 +1423,9 @@
         </hashTree>
         <IfController guiclass="IfControllerPanel" testclass="IfController"
                       testname="Skip party ops if login failed [G]" enabled="true">
-          <stringProp name="IfController.condition">"${TOKEN}" != "INVALID_TOKEN"</stringProp>
+          <stringProp name="IfController.condition">${__groovy(vars.get('TOKEN') != 'INVALID_TOKEN',)}</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">false</boolProp>
         </IfController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -1458,8 +1472,9 @@
           </hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController"
                         testname="Proceed with invite if party created [G]" enabled="true">
-            <stringProp name="IfController.condition">"${PARTY_ID}" != "0"</stringProp>
+            <stringProp name="IfController.condition">${__groovy(vars.get('PARTY_ID') != '0',)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">false</boolProp>
           </IfController>
           <hashTree>
             <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
