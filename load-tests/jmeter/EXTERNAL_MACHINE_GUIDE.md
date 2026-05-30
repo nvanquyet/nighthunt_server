@@ -385,6 +385,83 @@ The report contains: **Response Time Over Time**, **Transactions Per Second**,
 
 ---
 
+## 6b. Tổng hợp nhiều lần chạy thành một report duy nhất
+
+Sau khi chạy nhiều kịch bản (500VU, 1000VU, 2000VU…), bạn có nhiều file `.jtl`.
+Gộp chúng lại → gen **một HTML report** duy nhất để so sánh tất cả cùng lúc.
+
+### Bước 1 — Gộp các file JTL
+
+**Linux / macOS:**
+```bash
+# Lấy dòng header từ file đầu tiên
+head -1 results/500vu.jtl > results/combined.jtl
+
+# Nối data rows (bỏ header) từ từng file vào
+for f in results/500vu.jtl results/1000vu.jtl results/2000vu.jtl; do
+  tail -n +2 "$f" >> results/combined.jtl
+done
+
+wc -l results/combined.jtl   # phải > tổng số dòng các file con
+```
+
+**Windows PowerShell:**
+```powershell
+# Danh sách các file cần gộp
+$files = @('500vu', '1000vu', '2000vu')
+
+$header = Get-Content "results\$($files[0]).jtl" -TotalCount 1
+$rows   = $files | ForEach-Object {
+    Get-Content "results\$_.jtl" | Select-Object -Skip 1
+}
+@($header) + $rows | Set-Content results\combined.jtl
+
+(Get-Content results\combined.jtl).Count   # kiểm tra tổng dòng
+```
+
+> Chỉ gộp các file đã **lọc steady-state** (bước 6 Step 1) — không gộp raw JTL
+> vì sẽ bị nhiễm dữ liệu SETUP (register/login users).
+
+---
+
+### Bước 2 — Gen HTML report tổng hợp
+
+```bash
+# Linux / macOS
+rm -rf reports/combined/
+jmeter -g results/combined.jtl -o reports/combined/
+xdg-open reports/combined/index.html   # Linux
+open     reports/combined/index.html   # macOS
+```
+
+```powershell
+# Windows PowerShell
+Remove-Item -Recurse -Force reports\combined -ErrorAction SilentlyContinue
+jmeter -g results\combined.jtl -o reports\combined\
+Start-Process reports\combined\index.html
+```
+
+Report tổng hợp hiện **tất cả scenario trong cùng một biểu đồ**:
+- Response Time Over Time → thấy rõ 3 giai đoạn 500/1000/2000 VU
+- Throughput → điểm saturation khi throughput không tăng dù VU tăng
+- Error rate per sampler → endpoint nào bắt đầu lỗi ở VU nào
+
+---
+
+### Bước 3 — Xem kết quả gộp trong JMeter GUI (không cần gen HTML)
+
+Nếu chỉ muốn xem nhanh trong GUI mà không cần file HTML:
+
+1. Mở JMeter GUI → **File → Open** → mở file `.jmx`
+2. Click node **Summary Report** trong cây
+3. Ở góc trên panel bên phải, click nút **folder 📁** cạnh ô **Filename**
+4. Chọn file `results/combined.jtl` → **Open**
+5. JMeter tự load và tính lại toàn bộ số liệu từ file
+
+> Làm tương tự với **Aggregate Report** listener để xem phân vị (p90/p95/p99).
+
+---
+
 ## 7. Post-Test Checklist
 
 ### Step 1 — Re-enable backend rate limiting (IMPORTANT)
