@@ -139,7 +139,7 @@ services:
       LOG_PATH: /app/logs
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       # JVM heap cap — prevents OOM on 8 GB VPS running multiple containers
-      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx640m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx896m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
     ports:
       - "${SERVER_PORT}:${SERVER_PORT}"
     volumes:
@@ -163,7 +163,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    mem_limit: 960m
+    mem_limit: 1280m
     networks:
       - nighthunt-network
       - game-network
