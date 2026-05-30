@@ -117,7 +117,7 @@ File `nighthunt-stress-test.jmx` có **8 thread groups**:
 
 ```
 Scenario 1 — Load baseline (BẮT BUỘC trước tiên):
-  [0] ✅ + [A] ✅ + [B-G] ❌  →  chạy ở 500 / 1000 / 2000 VU
+  [0] ✅ + [A] ✅ + [B-G] ❌  →  chạy ở 500 / 1000 / 1500 VU
 
 Scenario 2-7 — Targeted stress (tùy chọn, sau khi có baseline):
   [0] ✅ + một trong [B]/[C]/[D]/[E]/[F]/[G] ✅ + còn lại ❌
@@ -197,7 +197,7 @@ Cột cây bên trái sẽ hiện ra cấu trúc như sau:
    | `BASE_URL`    | `vawnwuyest.me`   | Giữ nguyên (hoặc đổi nếu test server khác) |
    | `PORT`        | `443`             | Giữ nguyên                         |
    | `PROTOCOL`    | `https`           | Giữ nguyên                         |
-   | `vusers`      | `500`             | `500` / `1000` / `2000`            |
+   | `vusers`      | `500`             | `500` / `1000` / `1500`            |
    | `rampup`      | `30`              | Xem bảng presets bên dưới          |
    | `duration`    | `60`              | Xem bảng presets bên dưới          |
    | `setupRampup` | `120`             | Xem bảng presets bên dưới          |
@@ -320,14 +320,14 @@ jmeter -n \
   -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https \
   -l results/1000vu-raw.jtl -j results/1000vu.log
 
-# 2000 VU — stress ceiling
-rm -f results/2000vu-raw.jtl results/2000vu.log
+# 1500 VU — stress ceiling
+rm -f results/1500vu-raw.jtl results/1500vu.log
 jmeter -n \
   -t nighthunt-stress-test.jmx \
-  -Jvusers=2000 -Jrampup=120 -Jduration=120 -JsetupRampup=300 \
+  -Jvusers=1500 -Jrampup=90 -Jduration=120 -JsetupRampup=240 \
   -Jpassword=StressTest@123 \
   -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https \
-  -l results/2000vu-raw.jtl -j results/2000vu.log
+  -l results/1500vu-raw.jtl -j results/1500vu.log
 ```
 
 #### Windows PowerShell
@@ -343,6 +343,15 @@ jmeter -n `
   -Jpassword=StressTest@123 `
   -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https `
   -l results\1000vu-raw.jtl -j results\1000vu.log
+
+# 1500 VU — stress ceiling
+Remove-Item -Force results\1500vu-raw.jtl, results\1500vu.log -ErrorAction SilentlyContinue
+jmeter -n `
+  -t nighthunt-stress-test.jmx `
+  -Jvusers=1500 -Jrampup=90 -Jduration=120 -JsetupRampup=240 `
+  -Jpassword=StressTest@123 `
+  -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https `
+  -l results\1500vu-raw.jtl -j results\1500vu.log
 ```
 
 **Muốn chạy đi chạy lại nhiều lần mà không lo ghi đè?** Dùng timestamp:
@@ -397,7 +406,7 @@ docker run --rm `
 |-------------|--------|--------|----------|-------------|--------------------------------|
 | Smoke       | 500    | 30     | 60       | 60          | Quick sanity check, < 2 min    |
 | Standard    | 1000   | 60     | 120      | 180         | Normal load test baseline      |
-| Stress      | 2000   | 120    | 120      | 300         | Near-ceiling, expect errors    |
+| Stress      | 1500   | 90     | 120      | 240         | Near-ceiling stress test       |
 
 **Interpretation targets:**
 
@@ -405,8 +414,8 @@ docker run --rm `
 |------|-----------|--------------|----------------------|
 | 500  | < 0.5%    | < 1 s        | Healthy               |
 | 1000 | < 2%      | < 3 s        | Acceptable            |
-| 2000 | < 5%      | < 6 s        | Near capacity         |
-| 2000 | > 10%     | > 8 s        | Backend saturated     |
+| 1500 | < 5%      | < 5 s        | Near capacity         |
+| 1500 | > 10%     | > 8 s        | Backend saturated     |
 
 ---
 
@@ -477,7 +486,7 @@ The report contains: **Response Time Over Time**, **Transactions Per Second**,
 
 ## 7b. Tổng hợp nhiều lần chạy thành một report duy nhất
 
-Sau khi chạy nhiều kịch bản (500VU, 1000VU, 2000VU…), bạn có nhiều file `.jtl`.
+Sau khi chạy nhiều kịch bản (500VU, 1000VU, 1500VU…), bạn có nhiều file `.jtl`.
 Gộp chúng lại → gen **một HTML report** duy nhất để so sánh tất cả cùng lúc.
 
 ### Bước 1 — Gộp các file JTL
@@ -488,7 +497,7 @@ Gộp chúng lại → gen **một HTML report** duy nhất để so sánh tất
 head -1 results/500vu.jtl > results/combined.jtl
 
 # Nối data rows (bỏ header) từ từng file vào
-for f in results/500vu.jtl results/1000vu.jtl results/2000vu.jtl; do
+for f in results/500vu.jtl results/1000vu.jtl results/1500vu.jtl; do
   tail -n +2 "$f" >> results/combined.jtl
 done
 
@@ -498,7 +507,7 @@ wc -l results/combined.jtl   # phải > tổng số dòng các file con
 **Windows PowerShell:**
 ```powershell
 # Danh sách các file cần gộp
-$files = @('500vu', '1000vu', '2000vu')
+$files = @('500vu', '1000vu', '1500vu')
 
 $header = Get-Content "results\$($files[0]).jtl" -TotalCount 1
 $rows   = $files | ForEach-Object {
@@ -532,7 +541,7 @@ Start-Process reports\combined\index.html
 ```
 
 Report tổng hợp hiện **tất cả scenario trong cùng một biểu đồ**:
-- Response Time Over Time → thấy rõ 3 giai đoạn 500/1000/2000 VU
+- Response Time Over Time → thấy rõ 3 giai đoạn 500/1000/1500 VU
 - Throughput → điểm saturation khi throughput không tăng dù VU tăng
 - Error rate per sampler → endpoint nào bắt đầu lỗi ở VU nào
 
@@ -602,7 +611,7 @@ DELETE FROM users WHERE username LIKE 'nh_stress_%';
 
 ---
 
-### 9.2 — So sánh 3 VU (500 / 1000 / 2000) — Cách lấy graph
+### 9.2 — So sánh 3 VU (500 / 1000 / 1500) — Cách lấy graph
 
 **Cách 1 — Combined JTL (tất cả trong 1 HTML report):**
 
@@ -611,7 +620,7 @@ Dùng section 7b để gộp 3 file JTL → gen một report. Biểu đồ
 trục thời gian sẽ nối nhau, không tách biệt.
 
 ```
-[500VU ramp—steady][1000VU ramp—steady][2000VU ramp—steady]  ← trên cùng 1 chart
+[500VU ramp—steady][1000VU ramp—steady][1500VU ramp—steady]  ← trên cùng 1 chart
 ```
 
 **Cách 2 — 3 report riêng + bảng so sánh thủ công (khuyến nghị cho báo cáo chính thức):**
@@ -625,7 +634,7 @@ Gen 3 report riêng (section 7) → chụp từng `ResponseTimesOverTime.png`
 
 Lấy số liệu từ **Summary Report** listener hoặc HTML report → tab **Statistics**.
 
-| Metric | 500 VU | 1000 VU | 2000 VU | Target |
+| Metric | 500 VU | 1000 VU | 1500 VU | Target |
 |--------|--------|---------|---------|--------|
 | **Avg response time (ms)** | — | — | — | < 1000 |
 | **p90 (ms)** | — | — | — | < 3000 |
@@ -646,7 +655,7 @@ Lấy số liệu từ **Summary Report** listener hoặc HTML report → tab **
 
 ### 9.4 — Verdict đánh giá
 
-| 500 VU | 1000 VU | 2000 VU | Kết luận |
+| 500 VU | 1000 VU | 1500 VU | Kết luận |
 |--------|---------|---------|---------|
 | ✅ Pass | ✅ Pass | ✅ Pass | Backend khỏe — có thể tăng capacity |
 | ✅ Pass | ✅ Pass | ❌ Fail | Capacity ceiling ~1500 VU — cần scale |
