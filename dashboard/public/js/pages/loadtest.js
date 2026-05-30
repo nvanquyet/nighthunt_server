@@ -258,11 +258,8 @@
             }
         }
 
-        // Draw default chart (first JTL or data.timeSeries)
-        ltDrawJmeterChart(data.timeSeries);
-
-        // Draw scenario summary table
         ltDrawJmeterSummaryTable();
+        ltDrawJmeterChart(data.timeSeries);
     }
 
     window.ltSelectJtl = async function () {
@@ -285,6 +282,10 @@
         const existingCanvas = document.getElementById('lt-jmeter-chart');
         if (!existingCanvas) return;
         if (jmeterChart) { jmeterChart.destroy(); jmeterChart = null; }
+        if (typeof Chart === 'undefined') {
+            if (wrap) wrap.innerHTML = '<p class="lt-empty">Chart.js đang bị chặn hoặc chưa tải xong. Bảng report và nút tải vẫn dùng được bên dưới.</p>';
+            return;
+        }
 
         // Restore canvas if it was replaced by an error message
         if (!document.getElementById('lt-jmeter-chart')) {
@@ -374,6 +375,7 @@
             const jtlDl   = s.jtlFile
                 ? `<button class="lt-btn lt-btn-dl" onclick="ltDownload('jtl','${s.jtlFile}')" title="Download JTL">&#11123; JTL</button>`
                 : '<span style="color:var(--muted);font-size:0.75rem">no JTL</span>';
+            const htmlBtn = `<button class="lt-btn lt-btn-dl" onclick="ltOpenScenarioReport('${s.name}')" title="Open HTML report">&#128196; HTML</button>`;
             const endpts  = Object.keys(stats).filter(k => k !== 'Total').length;
             return `<tr>
   <td><strong>${s.name}</strong><br><span style="color:var(--muted);font-size:0.75rem">${endpts} endpoint${endpts!==1?'s':''}</span></td>
@@ -387,6 +389,7 @@
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="lt-btn lt-btn-dl" onclick="ltDownload('scenario','${s.name}.json')">&#11123; stats.json</button>
       ${jtlDl}
+            ${htmlBtn}
       <button class="lt-btn lt-btn-ghost" style="font-size:0.75rem;padding:3px 9px" onclick="ltShowEndpoints(${idx})">&#9776; Endpoints</button>
     </div>
   </td>
@@ -430,6 +433,13 @@ ${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
   <td>${fmtMs(v.pct3ResTime)}</td><td>${(v.throughput||0).toFixed(2)}</td>
 </tr>`).join('')}
 </tbody></table>`;
+    };
+
+    window.ltOpenScenarioReport = function (scenario) {
+        const token = ltGetToken();
+        if (!scenario || !token) return;
+        const url = `/api/loadtest/jmeter/report/${encodeURIComponent(scenario)}?token=${encodeURIComponent(token)}`;
+        window.open(url, '_blank', 'noopener');
     };
 
     window.ltRunJmeter = async function () {
@@ -507,14 +517,18 @@ ${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
         }));
         setStatCard('st-peak-ds', peakDS);
 
-        ltDrawCapacityChart(reports);
         ltDrawCapacityTable(reports);
+        ltDrawCapacityChart(reports);
     }
 
     function ltDrawCapacityChart(reports) {
         const canvas = document.getElementById('lt-capacity-chart');
         if (!canvas) return;
         if (capacityChart) { capacityChart.destroy(); capacityChart = null; }
+        if (typeof Chart === 'undefined') {
+            canvas.parentElement.innerHTML = '<p class="lt-empty">Chart.js đang bị chặn hoặc chưa tải xong. Bảng DS report vẫn dùng được bên dưới.</p>';
+            return;
+        }
 
         const getRes = r => r.results || r.summary || {};
 

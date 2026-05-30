@@ -81,6 +81,20 @@ function requireToken(req, res, next) {
     }
 }
 
+function requireTokenOrQueryToken(req, res, next) {
+    const auth = req.headers['authorization'];
+    const queryToken = req.query.token;
+    const bearer = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    const token = bearer || queryToken;
+    if (!token) return res.status(401).send('Missing token');
+    try {
+        req.admin = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch {
+        return res.status(401).send('Invalid or expired token');
+    }
+}
+
 // Root admin only (role === 'root')
 function requireRoot(req, res, next) {
     requireToken(req, res, () => {
@@ -279,6 +293,29 @@ app.get('/api/loadtest/jmeter/download/:type/:file', requireToken, (req, res) =>
     }
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
     res.download(filePath, safe);
+});
+
+// GET /api/loadtest/jmeter/report/:scenario/* — serve full HTML report assets
+// Public on purpose so generated report CSS/JS/assets can load in a new tab.
+app.get('/api/loadtest/jmeter/report/:scenario', (req, res) => {
+    const scenario = path.basename(req.params.scenario);
+    const reportDir = path.join(JMETER_DIR, 'reports', scenario);
+    const filePath = path.join(reportDir, 'index.html');
+    if (!filePath.startsWith(path.join(JMETER_DIR, 'reports')) || !fs.existsSync(filePath)) {
+        return res.status(404).send('Report not found');
+    }
+    res.sendFile(filePath);
+});
+
+app.get('/api/loadtest/jmeter/report/:scenario/*', (req, res) => {
+    const scenario = path.basename(req.params.scenario);
+    const reportDir = path.join(JMETER_DIR, 'reports', scenario);
+    const relPath = req.params[0] || '';
+    const filePath = path.join(reportDir, relPath);
+    if (!filePath.startsWith(reportDir) || !fs.existsSync(filePath)) {
+        return res.status(404).send('Asset not found');
+    }
+    res.sendFile(filePath);
 });
 
 // GET /api/loadtest/jmeter — latest JMeter statistics.json summary
