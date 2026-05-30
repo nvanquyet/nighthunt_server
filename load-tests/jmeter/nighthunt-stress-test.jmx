@@ -168,8 +168,8 @@
           <stringProp name="HTTPSampler.domain">${BASE_URL}</stringProp>
           <stringProp name="HTTPSampler.port">${PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
-          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
-          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">15000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">15000</stringProp>
         </ConfigTestElement>
         <hashTree/>
         <!-- Step 1: Warm-up login once per VU to get JWT/session before measurement -->
@@ -234,9 +234,9 @@
         <!-- Step 2: Measure authenticated traffic only after warm-up login succeeded -->
         <IfController guiclass="IfControllerPanel" testclass="IfController"
                       testname="Authenticated Steady-State [A]" enabled="true">
-          <stringProp name="IfController.condition">${__jexl3(vars.get('TOKEN') != 'INVALID_TOKEN' &amp;&amp; vars.get('SESSION_ID') != 'INVALID_SESSION')}</stringProp>
+          <stringProp name="IfController.condition">"${TOKEN}" != "INVALID_TOKEN" &amp;&amp; "${SESSION_ID}" != "INVALID_SESSION"</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
-          <boolProp name="IfController.useExpression">true</boolProp>
+          <boolProp name="IfController.useExpression">false</boolProp>
         </IfController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
@@ -1203,7 +1203,7 @@
               <collectionProp name="Arguments.arguments">
                 <elementProp name="" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                  <stringProp name="Argument.value">{"userId":${__jexl3(${__threadNum} % 500 + 1)}}</stringProp>
+                  <stringProp name="Argument.value">{"userId":${__groovy(((ctx.getThreadNum() + 1) % 500) + 1,)}}</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
               </collectionProp>
@@ -1469,7 +1469,7 @@
                 <collectionProp name="Arguments.arguments">
                   <elementProp name="" elementType="HTTPArgument">
                     <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                    <stringProp name="Argument.value">{"inviteeUserId":${__jexl3(${__threadNum} % 500 + 1)}}</stringProp>
+                    <stringProp name="Argument.value">{"inviteeUserId":${__groovy(((ctx.getThreadNum() + 1) % 500) + 1,)}}</stringProp>
                     <stringProp name="Argument.metadata">=</stringProp>
                   </elementProp>
                 </collectionProp>
