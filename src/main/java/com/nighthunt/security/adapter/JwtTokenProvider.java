@@ -45,37 +45,41 @@ public class JwtTokenProvider implements TokenProvider {
     }
 
     @Override
+    public AuthenticatedToken parseToken(String token) {
+        Claims claims = parseClaims(token);
+        return new AuthenticatedToken(
+                Long.parseLong(claims.getSubject()),
+                claims.get("username", String.class)
+        );
+    }
+
+    @Override
     public Long getUserIdFromToken(String token) {
-        Claims claims = Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
-        return Long.parseLong(claims.getSubject());
+        return parseToken(token).userId();
     }
 
     @Override
     public String getUsernameFromToken(String token) {
-        Claims claims = Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
-        return claims.get("username", String.class);
+        return parseToken(token).username();
     }
 
     @Override
     public boolean validateToken(String token) {
         try {
-            Jwts.parserBuilder()
-                    .setSigningKey(secretKey)
-                    .build()
-                    .parseClaimsJws(token);
+            parseClaims(token);
             return true;
         } catch (Exception e) {
             log.debug("Invalid JWT token: {}", e.getMessage());
             return false;
         }
+    }
+
+    private Claims parseClaims(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
     }
 }
 
