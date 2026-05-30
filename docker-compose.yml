@@ -253,7 +253,7 @@ services:
       DASHBOARD_ROOT_PASS: ${DASHBOARD_ROOT_PASS}
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_SECRET: ${ADMIN_SECRET}
-      LOAD_TESTS_HOST_PATH: ${LOAD_TESTS_HOST_PATH:-/home/vnwue/UNITY/nighthunt_server/load-tests}
+      LOAD_TESTS_HOST_PATH: ${LOAD_TESTS_HOST_PATH:-/opt/nighthunt/load-tests}
     ports:
       - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     volumes:

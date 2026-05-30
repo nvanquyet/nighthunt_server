@@ -525,7 +525,7 @@ app.post('/api/loadtest/run/jmeter', requireToken, async (req, res) => {
     }
 
     // Host path for Docker volume mount (Docker run needs the HOST path, not container path)
-    const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/home/vnwue/UNITY/nighthunt_server/load-tests';
+    const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/opt/nighthunt/load-tests';
     const username = process.env.NH_TEST_USERNAME || 'nh_stress_';
     const password = process.env.NH_TEST_PASSWORD || 'StressTest@123';
     // NOTE: intentionally NOT passing ADMIN_SECRET — the collect-server-metrics.sh
