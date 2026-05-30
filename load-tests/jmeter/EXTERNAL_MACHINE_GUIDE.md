@@ -264,18 +264,46 @@ Sau khi test kết thúc, click vào **Summary Report** trong cây:
 
 #### A8 — Xóa dữ liệu cũ trước khi chạy lại
 
-Trước mỗi lần chạy mới, xóa kết quả cũ để tránh nhầm lẫn:
-1. Menu **Run → Clear All** hoặc `Ctrl+E`
-2. Hoặc click vào từng listener → nút **Clear** (biểu tượng thùng rác)
+JMeter có **2 loại dữ liệu cần clear riêng biệt**:
 
-> File `.jtl` đã ghi ra disk không bị xóa bởi Clear — chỉ xóa data trên màn hình.
+**1. Clear data trên màn hình (in-memory):**
+- Menu **Run → Clear All** hoặc `Ctrl+E`
+- Hoặc click listener → nút **Clear** (biểu tượng thùng rác 🗑️)
+- ⚠️ Thao tác này **KHÔNG xóa file `.jtl`** đã ghi ra disk
+
+**2. Xóa file `.jtl` cũ trên disk (BẮT BUỘC trước mỗi run):**
+
+> JMeter **append** vào file `.jtl` cũ thay vì ghi đè — nếu không xóa,
+> dữ liệu lần chạy trước sẽ lẫn vào kết quả lần này.
+
+Trong GUI, trước mỗi lần chạy:
+1. Click listener **Summary Report** trong cây
+2. Tại ô **Filename** — xóa nội dung rồi gõ lại tên file mới
+   (hoặc đặt tên có timestamp: `results/1000vu-run2.jtl`)
+3. JMeter sẽ hỏi `"File already exists, do you want to overwrite?"` → chọn **Yes**
+4. Làm tương tự với listener **Aggregate Report** nếu có
+
+**Hoặc đơn giản hơn:** xóa file trực tiếp trước khi bấm Run:
+```bash
+rm -f results/1000vu-raw.jtl          # Linux/macOS Terminal
+```
+```powershell
+Remove-Item results\1000vu-raw.jtl    # Windows PowerShell
+```
 
 ### Option B — CLI (recommended for clean results + HTML report)
+
+> ⚠️ **JMeter APPEND vào file `.jtl` nếu file đã tồn tại — không ghi đè.**
+> Phải xóa file cũ trước mỗi lần chạy, nếu không dữ liệu các run sẽ cộng dồn
+> vào nhau và kết quả bị sai hoàn toàn.
 
 #### Linux / macOS
 
 ```bash
+mkdir -p results
+
 # 500 VU — smoke test
+rm -f results/500vu-raw.jtl results/500vu.log
 jmeter -n \
   -t nighthunt-stress-test.jmx \
   -Jvusers=500 -Jrampup=30 -Jduration=60 -JsetupRampup=60 \
@@ -284,6 +312,7 @@ jmeter -n \
   -l results/500vu-raw.jtl -j results/500vu.log
 
 # 1000 VU — standard load
+rm -f results/1000vu-raw.jtl results/1000vu.log
 jmeter -n \
   -t nighthunt-stress-test.jmx \
   -Jvusers=1000 -Jrampup=60 -Jduration=120 -JsetupRampup=180 \
@@ -292,6 +321,7 @@ jmeter -n \
   -l results/1000vu-raw.jtl -j results/1000vu.log
 
 # 2000 VU — stress ceiling
+rm -f results/2000vu-raw.jtl results/2000vu.log
 jmeter -n \
   -t nighthunt-stress-test.jmx \
   -Jvusers=2000 -Jrampup=120 -Jduration=120 -JsetupRampup=300 \
@@ -303,13 +333,36 @@ jmeter -n \
 #### Windows PowerShell
 
 ```powershell
+New-Item -ItemType Directory -Force -Path results | Out-Null
+
 # 1000 VU — standard load
+Remove-Item -Force results\1000vu-raw.jtl, results\1000vu.log -ErrorAction SilentlyContinue
 jmeter -n `
   -t nighthunt-stress-test.jmx `
   -Jvusers=1000 -Jrampup=60 -Jduration=120 -JsetupRampup=180 `
   -Jpassword=StressTest@123 `
   -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https `
   -l results\1000vu-raw.jtl -j results\1000vu.log
+```
+
+**Muốn chạy đi chạy lại nhiều lần mà không lo ghi đè?** Dùng timestamp:
+
+```bash
+# Linux / macOS — tên file tự động theo giờ
+TS=$(date +%Y%m%d-%H%M%S)
+jmeter -n -t nighthunt-stress-test.jmx \
+  -Jvusers=1000 -Jrampup=60 -Jduration=120 -JsetupRampup=180 \
+  -Jpassword=StressTest@123 -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https \
+  -l results/1000vu-${TS}.jtl -j results/1000vu-${TS}.log
+```
+
+```powershell
+# Windows PowerShell
+$ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+jmeter -n -t nighthunt-stress-test.jmx `
+  -Jvusers=1000 -Jrampup=60 -Jduration=120 -JsetupRampup=180 `
+  -Jpassword=StressTest@123 -JBASE_URL=vawnwuyest.me -JPORT=443 -JPROTOCOL=https `
+  -l "results\1000vu-$ts.jtl" -j "results\1000vu-$ts.log"
 ```
 
 #### Docker (any OS)
