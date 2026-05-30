@@ -34,6 +34,8 @@ const backendClient = axios.create({
 });
 
 const app = express();
+// Dashboard sits behind nginx, so trust the first proxy hop for client IPs.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
