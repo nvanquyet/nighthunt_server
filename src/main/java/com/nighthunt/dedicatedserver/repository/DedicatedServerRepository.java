@@ -69,4 +69,11 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
           AND d.status IN ('ready', 'in_game', 'starting')
     """)
     Optional<DedicatedServer> findActiveByMatchId(@Param("matchId") String matchId);
+
+    /** Đếm số DS đang active (starting + ready + in_game). Dùng cho hard cap check. */
+    @Query("""
+        SELECT COUNT(d) FROM DedicatedServer d
+        WHERE d.status IN ('starting', 'ready', 'in_game')
+    """)
+    int countActiveServers();
 }

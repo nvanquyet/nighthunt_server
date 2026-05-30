@@ -131,6 +131,13 @@ ds:
 
   max-players: ${DS_MAX_PLAYERS:16}
 
+  # Hard cap: max simultaneously active DS containers (starting + ready + in_game).
+  # Prevents VPS OOM when many matches are requested at once.
+  # Budget formula: (VPS_RAM_MB - infra_MB) / DS_MAX_MEMORY_MB
+  #   8192 - 3000 (infra) = 5192 / 512 (per DS) = ~10  →  8 with headroom
+  # Set to 0 to disable (not recommended in production).
+  max-concurrent: ${DS_MAX_CONCURRENT:8}
+
   docker:
     # Docker image full ref (cập nhật bởi CI/CD qua /api/admin/ds/update-image)
     image-ref:           ${DS_IMAGE_REF:ghcr.io/nvanquyet/nighthunt-ds:latest}

@@ -59,6 +59,16 @@ public class DedicatedServerService {
     private int defaultMaxPlayers;
 
     /**
+     * Hard cap on simultaneously active DS containers (starting + ready + in_game).
+     * Prevents VPS OOM when many matches are requested concurrently.
+     * Budget: (VPS_RAM - infra) / DS_MAX_MEMORY_MB
+     *   e.g. (8192 - 3000) / 512 ≈ 10  →  keep at 8 for headroom.
+     * Set DS_MAX_CONCURRENT=0 to disable the cap (not recommended in production).
+     */
+    @Value("${ds.max-concurrent:${DS_MAX_CONCURRENT:8}}")
+    private int maxConcurrentServers;
+
+    /**
      * Nếu true: khi 1 DS chết (no heartbeat) → tự động thu hồi TOÀN BỘ fleet.
      * Dùng trong môi trường test để validate fleet-reclaim-on-failure scenario.
      * Production: false (1 DS chết không nên kill tất cả game đang chạy).
@@ -194,6 +204,17 @@ public class DedicatedServerService {
         boolean reusingReadyServer = false;
 
         if (server == null) {
+            // Hard cap: reject new DS if VPS is already at capacity
+            if (maxConcurrentServers > 0) {
+                int activeCount = dsRepo.countActiveServers();
+                if (activeCount >= maxConcurrentServers) {
+                    log.warn("[DS-Alloc] Capacity cap reached: active={} max={} — rejecting new DS request",
+                            activeCount, maxConcurrentServers);
+                    throw new RuntimeException(
+                            "Server capacity full (" + activeCount + "/" + maxConcurrentServers +
+                            " active). Try again when a slot is free.");
+                }
+            }
             SpawnResult result = spinUpNewServer(region, mapId, expectedPlayers, matchId);
             server    = result.server();
             devSecret = result.plainSecret(); // null trên production
