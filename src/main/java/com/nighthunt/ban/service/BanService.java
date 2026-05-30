@@ -2,7 +2,6 @@ package com.nighthunt.ban.service;
 
 import com.nighthunt.ban.entity.Ban;
 import com.nighthunt.ban.entity.BanConfig;
-import com.nighthunt.ban.entity.ConcurrentLoginAttempt;
 import com.nighthunt.ban.entity.FailedLoginAttempt;
 import com.nighthunt.ban.repository.*;
 import com.nighthunt.common.exception.BusinessException;
@@ -35,6 +34,7 @@ public class BanService {
     // In-memory TTL cache for ban config (DB read every 30s instead of every request)
     private final ConcurrentHashMap<String, long[]> configIntCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object[]> configBoolCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentAttemptWindow> concurrentAttemptWindows = new ConcurrentHashMap<>();
     private static final long CONFIG_CACHE_TTL_MS = 30_000L;
     
     // Config keys
@@ -45,6 +45,12 @@ public class BanService {
     private static final String CONCURRENT_LOGIN_WINDOW_SECONDS = "CONCURRENT_LOGIN_WINDOW_SECONDS";
     private static final String CONCURRENT_LOGIN_BAN_DURATION_MINUTES = "CONCURRENT_LOGIN_BAN_DURATION_MINUTES";
     private static final String AUTO_UNBAN_ENABLED = "AUTO_UNBAN_ENABLED";
+
+    private static final class ConcurrentAttemptWindow {
+        private int attemptCount;
+        private long windowEndMs;
+        private boolean banRaised;
+    }
     
     /**
      * Check if user is banned
@@ -163,58 +169,49 @@ public class BanService {
      */
     @Transactional
     public void recordConcurrentLoginAttempt(String ipAddress, String deviceFingerprint) {
-        // Get config
         int maxAttempts = getConfigInt(MAX_CONCURRENT_LOGIN_ATTEMPTS, 10);
         int windowSeconds = getConfigInt(CONCURRENT_LOGIN_WINDOW_SECONDS, 60);
         int banDurationMinutes = getConfigInt(CONCURRENT_LOGIN_BAN_DURATION_MINUTES, 15);
-        
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime windowEnd = now.plusSeconds(windowSeconds);
-        
-        // Find or create concurrent login attempt record
-        Optional<ConcurrentLoginAttempt> existing = concurrentLoginAttemptRepository
-                .findFirstByIpAddressAndWindowEndAfterOrderByWindowEndDesc(ipAddress, now);
-        
-        ConcurrentLoginAttempt attempt;
-        
-        if (existing.isPresent()) {
-            attempt = existing.get();
-            attempt.setAttemptCount(attempt.getAttemptCount() + 1);
-            attempt.setWindowEnd(windowEnd);
-        } else {
-            attempt = ConcurrentLoginAttempt.builder()
-                    .ipAddress(ipAddress)
-                    .deviceFingerprint(deviceFingerprint)
-                    .attemptCount(1)
-                    .windowStart(now)
-                    .windowEnd(windowEnd)
-                    .build();
+
+        long nowMs = System.currentTimeMillis();
+        long windowEndMs = nowMs + windowSeconds * 1000L;
+        String counterKey = ipAddress == null || ipAddress.isBlank() ? "unknown" : ipAddress;
+
+        ConcurrentAttemptWindow window = concurrentAttemptWindows.compute(counterKey, (key, current) -> {
+            if (current == null || current.windowEndMs <= nowMs) {
+                ConcurrentAttemptWindow fresh = new ConcurrentAttemptWindow();
+                fresh.attemptCount = 1;
+                fresh.windowEndMs = windowEndMs;
+                return fresh;
+            }
+            current.attemptCount++;
+            current.windowEndMs = windowEndMs;
+            return current;
+        });
+
+        if (window.attemptCount < maxAttempts || window.banRaised) {
+            return;
         }
-        
-        attempt = concurrentLoginAttemptRepository.save(attempt);
-        
-        // Check if should auto-ban
-        if (attempt.getAttemptCount() >= maxAttempts && !attempt.getIsBanned()) {
+
+        synchronized (window) {
+            if (window.banRaised || window.attemptCount < maxAttempts) {
+                return;
+            }
+
             log.warn("Auto-banning due to concurrent login attempts: ip={}, attempts={}",
-                    ipAddress, attempt.getAttemptCount());
-            
-            // Create ban — userId left null for IP bans (not tied to a specific user account)
-            Ban ban = Ban.builder()
+                    ipAddress, window.attemptCount);
+
+            banRepository.save(Ban.builder()
                     .banType(Ban.BanType.IP)
                     .ipAddress(ipAddress)
                     .deviceFingerprint(deviceFingerprint)
                     .reason(String.format("Quá nhiều lần đăng nhập đồng thời (%d lần trong %d giây)",
-                            attempt.getAttemptCount(), windowSeconds))
+                            window.attemptCount, windowSeconds))
                     .banDurationMinutes(banDurationMinutes)
-                    .bannedBy(null) // Auto-ban
-                    .build();
-            
-            ban = banRepository.save(ban);
-            
-            // Mark attempt as banned
-            attempt.setIsBanned(true);
-            attempt.setBanId(ban.getId());
-            concurrentLoginAttemptRepository.save(attempt);
+                    .bannedBy(null)
+                    .build());
+
+            window.banRaised = true;
         }
     }
     
@@ -292,6 +289,24 @@ public class BanService {
         if (!expiredBans.isEmpty()) {
             log.info("Auto-unbanned {} expired bans", expiredBans.size());
         }
+    }
+
+    /**
+     * Purge stale login-attempt records and in-memory counters.
+     * This keeps the auth hot path from degrading over time as test data accumulates.
+     */
+    @Scheduled(fixedDelayString = "${ban.attempt-cleanup.check-interval:300000}")
+    @Transactional
+    public void cleanupOldAttemptState() {
+        LocalDateTime now = LocalDateTime.now();
+        int failedWindowMinutes = getConfigInt(FAILED_LOGIN_WINDOW_MINUTES, 15);
+        int concurrentWindowSeconds = getConfigInt(CONCURRENT_LOGIN_WINDOW_SECONDS, 60);
+
+        failedLoginAttemptRepository.deleteOldAttempts(now.minusMinutes(Math.max(failedWindowMinutes * 2L, 30L)));
+        concurrentLoginAttemptRepository.deleteOldAttempts(now.minusSeconds(Math.max(concurrentWindowSeconds * 2L, 300L)));
+
+        long currentTimeMs = System.currentTimeMillis();
+        concurrentAttemptWindows.entrySet().removeIf(entry -> entry.getValue().windowEndMs <= currentTimeMs);
     }
     
     // Helper methods to get config values (with in-memory TTL cache)
