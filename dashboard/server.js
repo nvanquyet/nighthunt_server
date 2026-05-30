@@ -9,6 +9,7 @@ const jwt        = require('jsonwebtoken');
 const path       = require('path');
 const fs         = require('fs');
 const rateLimit  = require('express-rate-limit');
+const multer     = require('multer');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT         = process.env.PORT                || 3000;
@@ -263,6 +264,31 @@ const LOADTEST_BASE = fs.existsSync(path.join(__dirname, 'load-tests'))
     : path.join(__dirname, '..', 'load-tests');
 const LOADTEST_DIR = path.join(LOADTEST_BASE, 'ds-fleet-test', 'reports');
 const JMETER_DIR   = path.join(LOADTEST_BASE, 'jmeter');
+const GRAPHS_DIR   = path.join(JMETER_DIR, 'graphs');
+
+// Ensure graphs upload dir exists on startup
+if (!fs.existsSync(GRAPHS_DIR)) fs.mkdirSync(GRAPHS_DIR, { recursive: true });
+
+// Multer storage — graphs uploaded via UI
+const graphStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, GRAPHS_DIR),
+    filename: (_req, file, cb) => {
+        const ts   = Date.now();
+        const ext  = path.extname(file.originalname).toLowerCase() || '.png';
+        const base = path.basename(file.originalname, ext)
+            .replace(/[^a-zA-Z0-9_-]/g, '_')
+            .slice(0, 60);
+        cb(null, `${ts}-${base}${ext}`);
+    }
+});
+const graphUpload = multer({
+    storage: graphStorage,
+    limits: { fileSize: 10 * 1024 * 1024 },  // 10 MB
+    fileFilter: (_req, file, cb) => {
+        if (/^image\/(png|jpeg|webp|gif)$/.test(file.mimetype)) cb(null, true);
+        else cb(new Error('Only PNG / JPEG / WEBP / GIF images are accepted'));
+    }
+});
 
 // GET /api/loadtest/capacity — list + data from DS capacity JSON reports
 app.get('/api/loadtest/capacity', requireToken, (req, res) => {
@@ -545,84 +571,64 @@ app.post('/api/loadtest/run/capacity', requireToken, (req, res) => {
     res.json({ jobId });
 });
 
-// POST /api/loadtest/run/jmeter — launch JMeter stress test via Docker
-app.post('/api/loadtest/run/jmeter', requireToken, async (req, res) => {
-    const runScript = path.join(JMETER_DIR, 'run-all-scenarios.sh');
-
-    // Check Docker availability
-    const { execSync } = require('child_process');
-    let dockerAvail = false;
-    try { execSync('docker info', { stdio: 'ignore' }); dockerAvail = true; } catch {}
-    if (!dockerAvail) {
-        return res.status(422).json({
-            error: 'Docker not available in this container.',
-            hint: 'Mount the Docker socket into the dashboard container:\n  Add to docker-compose.yml volumes:\n    - /var/run/docker.sock:/var/run/docker.sock'
+// POST /api/loadtest/graphs/upload — upload a PNG/JPG graph screenshot
+app.post('/api/loadtest/graphs/upload', requireToken, (req, res) => {
+    graphUpload.single('graph')(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.message });
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        res.json({
+            filename: req.file.filename,
+            label:    req.body.label || req.file.originalname,
+            size:     req.file.size
         });
-    }
-    if (!fs.existsSync(runScript)) {
-        return res.status(404).json({ error: 'Script not found: ' + runScript });
-    }
+    });
+});
 
-    // Host path for Docker volume mount (Docker run needs the HOST path, not container path)
-    const LOAD_TESTS_HOST_PATH = process.env.LOAD_TESTS_HOST_PATH || '/opt/nighthunt/load-tests';
-    const username = process.env.NH_TEST_USERNAME || 'nh_stress_';
-    const password = process.env.NH_TEST_PASSWORD || 'StressTest@123';
-    // NOTE: intentionally NOT passing ADMIN_SECRET — the collect-server-metrics.sh
-    // uses grep -oP and head -n -1 (GNU-only, fails on Alpine BusyBox).
-    // Metrics collection from inside a Docker container is also architecturally wrong.
-    // Without ADMIN_SECRET the metrics collector branch in run-all-scenarios.sh is skipped.
-
-    let restoreRateLimit = false;
+// GET /api/loadtest/graphs — list uploaded graph images
+app.get('/api/loadtest/graphs', requireToken, (req, res) => {
     try {
-        const wasEnabled = await getBackendRateLimitStatus();
-        if (wasEnabled) {
-            await setBackendRateLimitEnabled(false);
-            restoreRateLimit = true;
-        }
+        if (!fs.existsSync(GRAPHS_DIR)) return res.json({ graphs: [] });
+        const graphs = fs.readdirSync(GRAPHS_DIR)
+            .filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f))
+            .map(f => {
+                const stat = fs.statSync(path.join(GRAPHS_DIR, f));
+                return { filename: f, size: stat.size, mtime: stat.mtimeMs };
+            })
+            .sort((a, b) => b.mtime - a.mtime);
+        res.json({ graphs });
     } catch (e) {
-        return res.status(502).json({ error: 'Could not prepare backend for load test: ' + e.message });
+        res.status(500).json({ error: e.message });
     }
+});
 
-    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    // Run JMeter inside justb4/jmeter Docker image, mounting the load-tests host dir
-    // JMETER_HOME is /opt/apache-jmeter-5.5 in justb4/jmeter:latest
-    const proc = spawn('docker', [
-        'run', '--rm',
-        '-v', `${LOAD_TESTS_HOST_PATH}:/load-tests`,
-        '-e', `JMETER_HOME=/opt/apache-jmeter-5.5`,
-        '-e', `NH_USERNAME=${username}`,
-        '-e', `NH_PASSWORD=${password}`,
-        '-e', 'ADMIN_SECRET=',   // empty → metrics collector branch skipped
-        '--entrypoint', '/bin/bash',
-        'justb4/jmeter',
-        '/load-tests/jmeter/run-all-scenarios.sh'
-    ], {
-        stdio: ['ignore', 'pipe', 'pipe']
+// GET /api/loadtest/graphs/:filename — serve an uploaded graph image
+app.get('/api/loadtest/graphs/:filename', requireToken, (req, res) => {
+    const safe = path.basename(req.params.filename);
+    const filePath = path.join(GRAPHS_DIR, safe);
+    if (!filePath.startsWith(GRAPHS_DIR) || !fs.existsSync(filePath))
+        return res.status(404).json({ error: 'Not found' });
+    res.sendFile(filePath);
+});
+
+// DELETE /api/loadtest/graphs/:filename — delete an uploaded graph
+app.delete('/api/loadtest/graphs/:filename', requireToken, (req, res) => {
+    const safe = path.basename(req.params.filename);
+    const filePath = path.join(GRAPHS_DIR, safe);
+    if (!filePath.startsWith(GRAPHS_DIR) || !fs.existsSync(filePath))
+        return res.status(404).json({ error: 'Not found' });
+    fs.unlinkSync(filePath);
+    res.json({ ok: true });
+});
+
+// POST /api/loadtest/run/jmeter — REMOVED
+// Running JMeter from the same VPS that hosts the backend saturates resources
+// and can cause SSH loss. Run JMeter from a separate machine instead.
+// See: load-tests/jmeter/EXTERNAL_MACHINE_GUIDE.md
+app.post('/api/loadtest/run/jmeter', requireToken, (_req, res) => {
+    return res.status(410).json({
+        error: 'JMeter runner removed from dashboard.',
+        hint:  'Run JMeter from a separate machine to avoid saturating the VPS. See load-tests/jmeter/EXTERNAL_MACHINE_GUIDE.md'
     });
-
-    const job = { proc, chunks: [], done: false, code: null, clients: [] };
-    jobs.set(jobId, job);
-
-    const onData = (data) => {
-        const line = data.toString();
-        job.chunks.push(line);
-        job.clients.forEach(client => client.write(`event: log\ndata: ${line.trimEnd()}\n\n`));
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.on('close', (code) => {
-        job.done = true; job.code = code;
-        const info = JSON.stringify({ code });
-        job.clients.forEach(client => { client.write(`event: done\ndata: ${info}\n\n`); client.end(); });
-        job.clients = [];
-        if (restoreRateLimit) {
-            setBackendRateLimitEnabled(true).catch(err => {
-                console.error('[NightHunt Dashboard] Failed to restore backend rate limit:', err.message);
-            });
-        }
-        setTimeout(() => jobs.delete(jobId), 5 * 60 * 1000);
-    });
-    res.json({ jobId });
 });
 
 // GET /api/loadtest/run/:jobId/stream — SSE log stream (token via query param)

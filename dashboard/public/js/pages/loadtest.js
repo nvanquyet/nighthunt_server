@@ -81,7 +81,6 @@
     <h2 class="lt-section-title" style="margin:0">&#9889; JMeter Stress Test</h2>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="lt-jtl-sel" class="lt-select" onchange="ltSelectJtl()" title="Select JTL for chart"></select>
-      <button class="lt-btn lt-btn-run" style="font-size:0.8rem;padding:4px 12px" onclick="ltRunJmeter()">&#9654; Run JMeter Test</button>
     </div>
   </div>
     <div class="lt-card lt-help-card" style="margin-bottom:12px">
@@ -96,11 +95,37 @@
             </div>
         </div>
     </div>
+    <div style="margin-bottom:10px;padding:8px 12px;background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.3);border-radius:6px;font-size:0.82rem;color:#90cdf4">
+      &#128295; Run JMeter from an external machine to avoid overloading the VPS.
+      See <strong>load-tests/jmeter/EXTERNAL_MACHINE_GUIDE.md</strong> for setup, commands, and filtering steps.
+    </div>
     <div id="lt-jmeter-selected" class="lt-selected-summary" style="display:none"></div>
   <div class="lt-chart-wrap">
     <canvas id="lt-jmeter-chart" height="100"></canvas>
   </div>
   <div id="lt-jmeter-table" class="lt-table-wrap" style="margin-top:16px"></div>
+</div>
+
+<!-- Upload Load Test Graphs -->
+<div class="lt-section">
+  <div class="lt-card-header" style="margin-bottom:12px">
+    <h2 class="lt-section-title" style="margin:0">&#128247; Upload Load Test Graphs</h2>
+  </div>
+  <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+    <div style="flex:1;min-width:160px">
+      <label style="display:block;font-size:0.78rem;color:#a0aec0;margin-bottom:4px">Label (optional)</label>
+      <input id="lt-graph-label" type="text" placeholder="e.g. 1000vu-2026-05-30"
+        style="width:100%;padding:6px 10px;background:#1a2035;border:1px solid #2d3748;border-radius:5px;color:#e2e8f0;font-size:0.85rem">
+    </div>
+    <div style="flex:2;min-width:200px">
+      <label style="display:block;font-size:0.78rem;color:#a0aec0;margin-bottom:4px">PNG / JPG / WEBP (max 10 MB)</label>
+      <input id="lt-graph-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+        style="width:100%;padding:5px 10px;background:#1a2035;border:1px solid #2d3748;border-radius:5px;color:#e2e8f0;font-size:0.85rem">
+    </div>
+    <button class="lt-btn lt-btn-run" style="font-size:0.85rem;padding:6px 16px;white-space:nowrap" onclick="ltUploadGraph()">&#8593; Upload</button>
+  </div>
+  <div id="lt-graph-upload-msg" style="min-height:18px;font-size:0.82rem;margin-bottom:10px"></div>
+  <div id="lt-graph-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
 </div>
 
 <!-- DS Capacity chart -->
@@ -127,6 +152,7 @@
         ]);
         ltRenderJmeter(jmeterData);
         ltRenderCapacity(capacityData);
+        await ltLoadGraphs();
     }
 
     window.ltRefresh = async function () {
@@ -534,39 +560,105 @@ ${rows.map(([label, v]) => `<tr class="${label==='Total'?'lt-row-total':''}">
     };
 
     window.ltRunJmeter = async function () {
-        const consoleEl = document.getElementById('lt-run-console');
-        const logEl     = document.getElementById('lt-run-log');
-        const titleEl   = document.getElementById('lt-run-title');
-        const statusEl  = document.getElementById('lt-run-status');
-        if (!consoleEl || !logEl) return;
+        // Removed — JMeter must be run from an external machine.
+        // See load-tests/jmeter/EXTERNAL_MACHINE_GUIDE.md
+        alert('JMeter runner has been removed from the dashboard.\nRun tests from an external machine to avoid overloading the VPS.\nSee: load-tests/jmeter/EXTERNAL_MACHINE_GUIDE.md');
+    };
 
-        consoleEl.style.display = 'block';
-        logEl.textContent = '';
-        if (titleEl)  titleEl.textContent = 'Running JMeter Stress Test…';
-        if (statusEl) { statusEl.textContent = 'Running'; statusEl.className = 'lt-badge badge-loading'; }
-        consoleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // ── Graph Upload / Gallery ────────────────────────────────────────────────
 
-        const token = ltGetToken();
+    window.ltUploadGraph = async function () {
+        const fileInput = document.getElementById('lt-graph-file');
+        const labelInput = document.getElementById('lt-graph-label');
+        const msgEl = document.getElementById('lt-graph-upload-msg');
+
+        const file = fileInput && fileInput.files[0];
+        if (!file) { if (msgEl) { msgEl.style.color = '#fc8181'; msgEl.textContent = 'Please select an image file first.'; } return; }
+
+        const form = new FormData();
+        form.append('graph', file);
+        if (labelInput && labelInput.value.trim()) form.append('label', labelInput.value.trim());
+
+        if (msgEl) { msgEl.style.color = '#a0aec0'; msgEl.textContent = 'Uploading…'; }
+
         try {
-            const resp = await fetch('/api/loadtest/run/jmeter', {
+            const token = ltGetToken();
+            const resp = await fetch('/api/loadtest/graphs/upload', {
                 method: 'POST',
-                headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {})
+                headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+                body: form
             });
             const body = await resp.json();
             if (!resp.ok) {
-                logEl.textContent = '⚠ ' + (body.error || 'Failed') + '\n\n' + (body.hint || '');
-                if (statusEl) { statusEl.textContent = 'N/A'; statusEl.className = 'lt-badge badge-warn'; }
+                if (msgEl) { msgEl.style.color = '#fc8181'; msgEl.textContent = '✗ ' + (body.error || 'Upload failed'); }
                 return;
             }
-            ltStreamJob(body.jobId, token, logEl, statusEl, async () => {
-                logEl.textContent += '\n✅ Done — refreshing reports…\n';
-                await ltLoadData();
-            });
+            if (msgEl) { msgEl.style.color = '#68d391'; msgEl.textContent = '✓ Uploaded: ' + body.filename; }
+            if (fileInput) fileInput.value = '';
+            if (labelInput) labelInput.value = '';
+            await ltLoadGraphs();
         } catch (e) {
-            if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'lt-badge badge-danger'; }
-            logEl.textContent += 'Error: ' + e.message;
+            if (msgEl) { msgEl.style.color = '#fc8181'; msgEl.textContent = '✗ ' + e.message; }
         }
     };
+
+    window.ltLoadGraphs = async function () {
+        const gallery = document.getElementById('lt-graph-gallery');
+        if (!gallery) return;
+        try {
+            const token = ltGetToken();
+            const resp = await fetch('/api/loadtest/graphs', {
+                headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+            });
+            if (!resp.ok) return;
+            const { graphs } = await resp.json();
+            if (!graphs || graphs.length === 0) {
+                gallery.innerHTML = '<p style="color:#718096;font-size:0.82rem">No graphs uploaded yet. Run a JMeter test from an external machine, screenshot the HTML report charts, and upload them here.</p>';
+                return;
+            }
+            gallery.innerHTML = graphs.map(g => {
+                const date = new Date(g.mtime).toLocaleDateString();
+                const kb = (g.size / 1024).toFixed(1);
+                return `<div style="background:#1a2035;border:1px solid #2d3748;border-radius:8px;overflow:hidden">
+                    <a href="/api/loadtest/graphs/${encodeURIComponent(g.filename)}" target="_blank" rel="noopener">
+                        <img src="/api/loadtest/graphs/${encodeURIComponent(g.filename)}"
+                             alt="${ltEscapeHtml(g.filename)}"
+                             style="width:100%;display:block;aspect-ratio:16/10;object-fit:cover;cursor:pointer"
+                             loading="lazy">
+                    </a>
+                    <div style="padding:6px 8px;display:flex;justify-content:space-between;align-items:center;gap:4px">
+                        <span style="font-size:0.73rem;color:#a0aec0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"
+                              title="${ltEscapeHtml(g.filename)}">${ltEscapeHtml(g.filename.replace(/^\d+-/, ''))}</span>
+                        <span style="font-size:0.7rem;color:#718096;white-space:nowrap">${date} · ${kb}KB</span>
+                        <button onclick="ltDeleteGraph('${ltEscapeHtml(g.filename)}')"
+                                style="background:none;border:none;color:#fc8181;cursor:pointer;font-size:0.85rem;padding:0 4px"
+                                title="Delete">✕</button>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            if (gallery) gallery.innerHTML = '<p style="color:#fc8181;font-size:0.82rem">Error loading graphs: ' + ltEscapeHtml(e.message) + '</p>';
+        }
+    };
+
+    window.ltDeleteGraph = async function (filename) {
+        if (!confirm('Delete graph: ' + filename + '?')) return;
+        try {
+            const token = ltGetToken();
+            const resp = await fetch('/api/loadtest/graphs/' + encodeURIComponent(filename), {
+                method: 'DELETE',
+                headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+            });
+            if (!resp.ok) { const b = await resp.json(); alert('Delete failed: ' + (b.error || resp.status)); return; }
+            await ltLoadGraphs();
+        } catch (e) {
+            alert('Delete error: ' + e.message);
+        }
+    };
+
+    function ltEscapeHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
 
     function ltStreamJob(jobId, token, logEl, statusEl, onDone) {
         const evtSrc = new EventSource(`/api/loadtest/run/${jobId}/stream?token=${encodeURIComponent(token || '')}`);
