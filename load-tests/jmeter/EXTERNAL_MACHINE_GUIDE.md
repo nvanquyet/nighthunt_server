@@ -98,7 +98,44 @@ the main load groups fire. All of this is automatic.
 
 ---
 
-## 4. Running a Test
+## 4. Cấu trúc Test Plan — Chạy Group nào?
+
+File `nighthunt-stress-test.jmx` có **8 thread groups**:
+
+| Group | Tên | Mặc định | Mục đích |
+|-------|-----|----------|---------|
+| **[0]** | SETUP – Pre-register accounts | ✅ Enabled | Tạo sẵn `nh_stress_1…N` trong DB. **Luôn để enabled, chạy trước mọi group khác.** |
+| **[A]** | Mixed Realistic | ✅ Enabled | **Test chính.** Mix đều tất cả API: auth, profile, room, matchmaking, social. Dùng cho load report. |
+| **[B]** | Auth Flood | ❌ Disabled | Spam login/logout. Tìm bottleneck auth service. |
+| **[C]** | Matchmaking Churn | ❌ Disabled | Queue/dequeue liên tục. Test matchmaking pool. |
+| **[D]** | Room Lifecycle | ❌ Disabled | Create→join→leave phòng liên tục. Test room state. |
+| **[E]** | Social Reads | ❌ Disabled | GET profile/friend list dồn dập. Test read-heavy. |
+| **[F]** | Friend Request | ❌ Disabled | Gửi/từ chối friend request. Test write social. |
+| **[G]** | Party Invite | ❌ Disabled | Mời/từ chối party. Test party state. |
+
+### Workflow chuẩn
+
+```
+Scenario 1 — Load baseline (BẮT BUỘC trước tiên):
+  [0] ✅ + [A] ✅ + [B-G] ❌  →  chạy ở 500 / 1000 / 2000 VU
+
+Scenario 2-7 — Targeted stress (tùy chọn, sau khi có baseline):
+  [0] ✅ + một trong [B]/[C]/[D]/[E]/[F]/[G] ✅ + còn lại ❌
+  → Disable [A] trước khi enable [B]-[G]!
+```
+
+> **Tại sao không chạy tất cả cùng lúc?**
+> Nếu enable nhiều group, VU nhân bội (1000 VU × 7 group = 7000 VU thực tế)
+> và bạn mất khả năng đọc kết quả — không biết endpoint nào gây vấn đề.
+
+### Để enable/disable group trong GUI
+
+Right-click vào tên thread group trong cây → **Enable** / **Disable**.  
+Group bị disable sẽ hiển thị màu xám trong cây.
+
+---
+
+## 5. Running a Test
 
 ### Option A — JMeter GUI (Windows step-by-step)
 
@@ -301,7 +338,7 @@ docker run --rm `
 
 ---
 
-## 5. Recommended VU Presets
+## 6. Recommended VU Presets
 
 | Scenario     | vusers | rampup | duration | setupRampup | Purpose                        |
 |-------------|--------|--------|----------|-------------|--------------------------------|
@@ -320,7 +357,7 @@ docker run --rm `
 
 ---
 
-## 6. Generating the HTML Report (with charts)
+## 7. Generating the HTML Report (with charts)
 
 ### Step 1 — Filter steady-state JTL
 
@@ -385,7 +422,7 @@ The report contains: **Response Time Over Time**, **Transactions Per Second**,
 
 ---
 
-## 6b. Tổng hợp nhiều lần chạy thành một report duy nhất
+## 7b. Tổng hợp nhiều lần chạy thành một report duy nhất
 
 Sau khi chạy nhiều kịch bản (500VU, 1000VU, 2000VU…), bạn có nhiều file `.jtl`.
 Gộp chúng lại → gen **một HTML report** duy nhất để so sánh tất cả cùng lúc.
@@ -462,7 +499,7 @@ Nếu chỉ muốn xem nhanh trong GUI mà không cần file HTML:
 
 ---
 
-## 7. Post-Test Checklist
+## 8. Post-Test Checklist
 
 ### Step 1 — Re-enable backend rate limiting (IMPORTANT)
 
@@ -492,7 +529,85 @@ DELETE FROM users WHERE username LIKE 'nh_stress_%';
 
 ---
 
-## 8. Troubleshooting
+## 9. Performance Report — Graphs & So sánh 3 VU
+
+### 9.1 — Cần những graph nào?
+
+Để báo cáo hiệu năng backend đầy đủ, cần **6 loại graph** sau:
+
+| # | Graph | Lấy từ đâu | Ý nghĩa |
+|---|-------|-----------|---------|
+| 1 | **Response Time Over Time** | HTML report → `ResponseTimesOverTime.png` | Thấy độ trễ tăng theo thời gian khi VU tăng |
+| 2 | **Throughput (TPS) Over Time** | HTML report → `TransactionsPerSecond.png` | Điểm saturation — TPS không tăng dù thêm VU |
+| 3 | **Error Rate % Over Time** | HTML report → `ErrorsOverTime.png` | Thời điểm backend bắt đầu trả lỗi |
+| 4 | **Latency Percentiles (p50/p90/p95/p99)** | HTML report → `ResponseTimePercentiles.png` | Tail latency — quan trọng cho game real-time |
+| 5 | **Active Threads Over Time** | HTML report → `ActiveThreadsOverTime.png` | Xác nhận ramp-up đúng số VU |
+| 6 | **Response Time Distribution** | HTML report → `ResponseTimeDistribution.png` | Histogram — thấy outlier spike |
+
+> **Đường dẫn ảnh:** Sau khi gen HTML report, ảnh nằm trong
+> `reports/1000vu/content/img/`
+
+---
+
+### 9.2 — So sánh 3 VU (500 / 1000 / 2000) — Cách lấy graph
+
+**Cách 1 — Combined JTL (tất cả trong 1 HTML report):**
+
+Dùng section 7b để gộp 3 file JTL → gen một report. Biểu đồ
+**ActiveThreadsOverTime** sẽ hiện 3 giai đoạn rõ ràng. Tuy nhiên các
+trục thời gian sẽ nối nhau, không tách biệt.
+
+```
+[500VU ramp—steady][1000VU ramp—steady][2000VU ramp—steady]  ← trên cùng 1 chart
+```
+
+**Cách 2 — 3 report riêng + bảng so sánh thủ công (khuyến nghị cho báo cáo chính thức):**
+
+Gen 3 report riêng (section 7) → chụp từng `ResponseTimesOverTime.png`
+→ đặt chúng side-by-side + điền bảng so sánh bên dưới.
+
+---
+
+### 9.3 — Bảng so sánh (điền sau khi có kết quả)
+
+Lấy số liệu từ **Summary Report** listener hoặc HTML report → tab **Statistics**.
+
+| Metric | 500 VU | 1000 VU | 2000 VU | Target |
+|--------|--------|---------|---------|--------|
+| **Avg response time (ms)** | — | — | — | < 1000 |
+| **p90 (ms)** | — | — | — | < 3000 |
+| **p95 (ms)** | — | — | — | < 5000 |
+| **p99 (ms)** | — | — | — | < 8000 |
+| **Error rate (%)** | — | — | — | < 2% |
+| **Peak TPS (req/s)** | — | — | — | > 50 |
+| **Test verdict** | ✅/❌ | ✅/❌ | ✅/❌ | — |
+
+**Cách đọc số liệu từ HTML report:**
+1. Mở `reports/1000vu/index.html`
+2. Click tab **Statistics** (góc trên navigation)
+3. Cột **90th pct** = p90, **95th pct** = p95, **99th pct** = p99
+4. Cột **Error %** = error rate
+5. Cột **Throughput** = TPS
+
+---
+
+### 9.4 — Verdict đánh giá
+
+| 500 VU | 1000 VU | 2000 VU | Kết luận |
+|--------|---------|---------|---------|
+| ✅ Pass | ✅ Pass | ✅ Pass | Backend khỏe — có thể tăng capacity |
+| ✅ Pass | ✅ Pass | ❌ Fail | Capacity ceiling ~1500 VU — cần scale |
+| ✅ Pass | ❌ Fail | ❌ Fail | Bottleneck nghiêm trọng — review DB/connection pool |
+| ❌ Fail | ❌ Fail | ❌ Fail | Infrastructure hoặc config sai |
+
+**Fail criteria (bất kỳ 1 trong các điều kiện):**
+- Error rate > 5%
+- p99 > 10 000 ms
+- TPS giảm khi VU tăng (dấu hiệu saturation + queuing)
+
+---
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
