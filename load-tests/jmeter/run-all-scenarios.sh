@@ -58,6 +58,12 @@ echo ""
 
 mkdir -p "$RESULTS_DIR" "$REPORTS_DIR"
 
+# ── Fresh run cleanup ─────────────────────────────────────────────────────
+echo "[INFO] Removing previous JMeter reports/results ..."
+find "$REPORTS_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+find "$RESULTS_DIR" -mindepth 1 -maxdepth 1 -type f \( -name '*.jtl' -o -name '*.log' -o -name 'server-metrics-*.csv' \) -delete
+echo "[INFO] Cleanup complete. Fresh run will produce only: 500vu / 1000vu / 2000vu"
+
 # ── Run one scenario ───────────────────────────────────────────────────────
 run_scenario() {
   local LABEL="$1"
