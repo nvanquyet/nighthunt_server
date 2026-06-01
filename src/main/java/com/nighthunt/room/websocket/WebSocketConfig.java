@@ -8,21 +8,25 @@ import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
-@Configuration
-@EnableWebSocket
+/**
+ * @deprecated Superseded by {@link com.nighthunt.config.ReactiveWebSocketConfig}.
+ *             {@code @Configuration} removed — {@link GameWebSocketHandler} is no longer a
+ *             Spring bean and this class must not be processed. Will be deleted in cleanup PR.
+ */
+// @Configuration — intentionally removed; see ReactiveWebSocketConfig
+// @EnableWebSocket — intentionally removed
+@Deprecated(since = "phase-1", forRemoval = true)
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketConfigurer {
     private final GameWebSocketHandler gameWebSocketHandler;
-    
+
     @Value("${app.websocket.allowed-origins:*}")
     private String[] allowedOrigins;
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        // Unified Game WebSocket - connected after login, handles all events (session + room)
         registry.addHandler(gameWebSocketHandler, "/ws/game")
                 .setAllowedOriginPatterns(allowedOrigins);
-        
-        // Note: Do NOT use .withSockJS() - Unity uses native WebSocket, not SockJS
     }
 }
+

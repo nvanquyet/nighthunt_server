@@ -42,6 +42,7 @@ public class FriendService {
     private final BlockedUserRepository blockedUserRepository;
     private final UserRepository userRepository;
     private final com.nighthunt.messaging.service.MessageBrokerService messageBrokerService;
+    private final FriendCacheService friendCacheService;
 
     // ──────────────────────────────────────────────────────────────────────────
     // FRIEND LIST
@@ -183,6 +184,9 @@ public class FriendService {
         // Update request status
         request.setRequestStatus("ACCEPTED");
         friendRequestRepository.save(request);
+
+        // Invalidate friend-ID cache for both users
+        friendCacheService.evict(requesterId, addresseeId);
         
         log.info("Friend request accepted: {} accepted {}", addresseeId, requesterId);
         
@@ -296,6 +300,9 @@ public class FriendService {
         // Delete both sides of friendship
         friendRepository.deleteByUserIdAndFriendUserId(userId, friendUserId);
         friendRepository.deleteByUserIdAndFriendUserId(friendUserId, userId);
+
+        // Invalidate friend-ID cache for both users
+        friendCacheService.evict(userId, friendUserId);
         
         log.info("Friend removed: {} unfriended {}", userId, friendUserId);
         
@@ -341,6 +348,8 @@ public class FriendService {
         if (friendRepository.existsByUserIdAndFriendUserId(blockerId, blockedUserId)) {
             friendRepository.deleteByUserIdAndFriendUserId(blockerId, blockedUserId);
             friendRepository.deleteByUserIdAndFriendUserId(blockedUserId, blockerId);
+            // Invalidate friend-ID cache since friendship was removed
+            friendCacheService.evict(blockerId, blockedUserId);
         }
 
         // Delete pending friend requests (both directions)

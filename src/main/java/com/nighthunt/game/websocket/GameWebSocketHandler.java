@@ -29,8 +29,10 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -45,9 +47,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * All room-level broadcasts are called from the service layer
  * through the {@link ConnectionManager} interface.
+ *
+ * @deprecated Superseded by {@link ReactiveGameWebSocketHandler} (Reactor Netty).
+ *             {@code @Component} removed so Spring resolves {@code ConnectionManager}
+ *             to the reactive handler only. This class is kept as a reference
+ *             and will be removed in a follow-up cleanup commit.
  */
 @Slf4j
-@Component
+@Deprecated(since = "phase-1", forRemoval = true)
+// @Component — intentionally removed; ReactiveGameWebSocketHandler is now the sole ConnectionManager bean
 public class GameWebSocketHandler extends TextWebSocketHandler implements ConnectionManager {
 
     private final RoomPlayerRepository roomPlayerRepository;
@@ -62,13 +70,15 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
     private MatchPresenceService matchPresenceService;
     private final TransactionTemplate transactionTemplate;
 
-    // userId -> session
+    // userId → session
     private final Map<Long, WebSocketSession> userSessions = new ConcurrentHashMap<>();
-    // userId -> roomId
+    // userId → roomId  (forward index for single lookup)
     private final Map<Long, Long> userRooms = new ConcurrentHashMap<>();
-    // session -> metadata
+    // roomId → Set<userId>  (reverse index — O(1) broadcastToRoom)
+    private final Map<Long, Set<Long>> roomUsers = new ConcurrentHashMap<>();
+    // session → metadata
     private final Map<WebSocketSession, SessionMetadata> sessionMetadata = new ConcurrentHashMap<>();
-    // userId -> last activity timestamp (for heartbeat / stale-connection eviction)
+    // userId → last activity timestamp (for heartbeat / stale-connection eviction)
     private final Map<Long, Instant> lastActivityAt = new ConcurrentHashMap<>();
 
     /** Sessions idle longer than this (seconds) are considered crashed/dead. */
@@ -160,7 +170,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
         // Restore room mapping if user is in a room
         Long roomId = findCurrentRoomId(userId);
         if (roomId != null) {
-            userRooms.put(userId, roomId);
+            updateUserRoom(userId, roomId);   // keeps both userRooms + roomUsers in sync
             recordTransportConnected(userId);
         }
 
@@ -210,7 +220,14 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
             Long userId = metadata.getUserId();
             boolean wasActive = userSessions.remove(userId, session);
             if (wasActive) {
-                userRooms.remove(userId);
+                // Keep both maps in sync on disconnect
+                Long roomId = userRooms.remove(userId);
+                if (roomId != null) {
+                    roomUsers.computeIfPresent(roomId, (k, set) -> {
+                        set.remove(userId);
+                        return set.isEmpty() ? null : set;
+                    });
+                }
                 lastActivityAt.remove(userId);
                 try {
                     playerStatusService.setOffline(userId);
@@ -240,7 +257,13 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
             Long userId = metadata.getUserId();
             boolean wasActive = userSessions.remove(userId, session);
             if (wasActive) {
-                userRooms.remove(userId);
+                Long roomId = userRooms.remove(userId);
+                if (roomId != null) {
+                    roomUsers.computeIfPresent(roomId, (k, set) -> {
+                        set.remove(userId);
+                        return set.isEmpty() ? null : set;
+                    });
+                }
                 lastActivityAt.remove(userId);
                 try {
                     playerStatusService.setOffline(userId);
@@ -322,17 +345,27 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements Connec
 
     @Override
     public void broadcastToRoom(Long roomId, String eventType, Object data) {
-        userRooms.forEach((userId, mappedRoomId) -> {
-            if (roomId.equals(mappedRoomId)) {
-                sendToUser(userId, eventType, data);
-            }
-        });
+        // O(1) lookup via reverse index — no full-map scan
+        Set<Long> members = roomUsers.getOrDefault(roomId, Collections.emptySet());
+        for (Long userId : members) {
+            sendToUser(userId, eventType, data);
+        }
     }
 
     @Override
     public void updateUserRoom(Long userId, Long roomId) {
+        // Remove from old room first
+        Long oldRoomId = userRooms.get(userId);
+        if (oldRoomId != null) {
+            roomUsers.computeIfPresent(oldRoomId, (k, set) -> {
+                set.remove(userId);
+                return set.isEmpty() ? null : set;
+            });
+        }
+
         if (roomId != null && roomId > 0) {
             userRooms.put(userId, roomId);
+            roomUsers.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet()).add(userId);
         } else {
             userRooms.remove(userId);
         }
