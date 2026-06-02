@@ -56,7 +56,7 @@ public class PartyRankedModeService {
         PartyMember hostMember = partyMemberRepository.findByUserId(hostUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
-        Party party = findParty(hostMember.getPartyId());
+        Party party = findPartyForUpdate(hostMember.getPartyId());
         
         // Validate: User is the host
         if (!party.getHostUserId().equals(hostUserId)) {
@@ -95,13 +95,6 @@ public class PartyRankedModeService {
                     partySize, playersPerTeam, request.getGameMode()));
         }
 
-        // If fill option disabled, party must be full team
-        if (!request.isAllowFill() && partySize < playersPerTeam) {
-            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH,
-                String.format("Party must have %d players for %s (no fill)", 
-                    playersPerTeam, request.getGameMode()));
-        }
-
         // Update party status + mode
         party.setPartyStatus("IN_QUEUE");
         party.setPartyMode("RANKED");   // lock context to RANKED
@@ -109,16 +102,24 @@ public class PartyRankedModeService {
         
         // Add all members to matchmaking queue
         for (Long memberId : memberIds) {
-            matchmakingQueueService.enqueuePartyMember(memberId, request.getGameMode(), request.getMapId(), null);
-            log.info("Party member {} queued for matchmaking (party={}, mode={}, mapId={})",
-                memberId, party.getId(), request.getGameMode(), request.getMapId());
+            matchmakingQueueService.enqueuePartyMember(
+                    memberId,
+                    request.getGameMode(),
+                    request.getMapId(),
+                    request.getPlatform(),
+                    party.getId(),
+                    partySize,
+                    request.isAllowFill()
+            );
+            log.info("Party member {} queued for matchmaking (party={}, mode={}, mapId={}, platform={})",
+                memberId, party.getId(), request.getGameMode(), request.getMapId(), request.getPlatform());
         }
 
         // Publish party status change event
         messageBrokerService.publishPartyStatusChanged(party.getId(), "IDLE", "IN_QUEUE");
         
-        log.info("Party {} queued for matchmaking: mode={}, mapId={}, size={}, allowFill={}",
-            party.getId(), request.getGameMode(), request.getMapId(), partySize, request.isAllowFill());
+        log.info("Party {} queued for matchmaking: mode={}, mapId={}, size={}, allowFill={}, platform={}",
+            party.getId(), request.getGameMode(), request.getMapId(), partySize, request.isAllowFill(), request.getPlatform());
     }
 
     /**
@@ -129,7 +130,7 @@ public class PartyRankedModeService {
         PartyMember member = partyMemberRepository.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
         
-        Party party = findParty(member.getPartyId());
+        Party party = findPartyForUpdate(member.getPartyId());
         
         // Only allow if party is in queue
         if (!"IN_QUEUE".equals(party.getPartyStatus())) {
@@ -183,6 +184,11 @@ public class PartyRankedModeService {
 
     private Party findParty(Long partyId) {
         return partyRepository.findById(partyId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_FOUND, "Party not found"));
+    }
+
+    private Party findPartyForUpdate(Long partyId) {
+        return partyRepository.findByIdForUpdate(partyId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_FOUND, "Party not found"));
     }
 }

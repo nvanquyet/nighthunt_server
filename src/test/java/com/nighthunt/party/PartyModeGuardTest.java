@@ -74,7 +74,7 @@ class PartyModeGuardTest {
         Party customParty = Party.builder()
                 .id(PARTY_ID).hostUserId(HOST_ID)
                 .partyStatus("IN_ROOM").partyMode("CUSTOM").build();
-        when(partyRepo.findById(PARTY_ID)).thenReturn(Optional.of(customParty));
+        when(partyRepo.findByIdForUpdate(PARTY_ID)).thenReturn(Optional.of(customParty));
 
         assertThatThrownBy(() -> service.queueParty(HOST_ID, req()))
                 .isInstanceOf(BusinessException.class)
@@ -95,7 +95,7 @@ class PartyModeGuardTest {
         Party rankParty = Party.builder()
                 .id(PARTY_ID).hostUserId(HOST_ID)
                 .partyStatus("IN_QUEUE").partyMode("RANKED").build();
-        when(partyRepo.findById(PARTY_ID)).thenReturn(Optional.of(rankParty));
+        when(partyRepo.findByIdForUpdate(PARTY_ID)).thenReturn(Optional.of(rankParty));
 
         assertThatThrownBy(() -> service.queueParty(HOST_ID, req()))
                 .isInstanceOf(BusinessException.class)
@@ -117,7 +117,7 @@ class PartyModeGuardTest {
         Party idleParty = Party.builder()
                 .id(PARTY_ID).hostUserId(HOST_ID)   // HOST_ID is host, memberId is not
                 .partyStatus("IDLE").partyMode("NONE").build();
-        when(partyRepo.findById(PARTY_ID)).thenReturn(Optional.of(idleParty));
+        when(partyRepo.findByIdForUpdate(PARTY_ID)).thenReturn(Optional.of(idleParty));
 
         assertThatThrownBy(() -> service.queueParty(memberId, req()))
                 .isInstanceOf(BusinessException.class)
@@ -137,7 +137,7 @@ class PartyModeGuardTest {
         Party idleParty = Party.builder()
                 .id(PARTY_ID).hostUserId(HOST_ID)
                 .partyStatus("IDLE").partyMode("NONE").maxMembers(2).build();
-        when(partyRepo.findById(PARTY_ID)).thenReturn(Optional.of(idleParty));
+        when(partyRepo.findByIdForUpdate(PARTY_ID)).thenReturn(Optional.of(idleParty));
         when(gameModeService.isGameModeAvailable("1v1")).thenReturn(true);
         when(gameModeService.getPlayersPerTeam("1v1")).thenReturn(1);
         when(partyMemberRepo.findUserIdsByPartyId(PARTY_ID)).thenReturn(List.of(HOST_ID));
@@ -148,7 +148,8 @@ class PartyModeGuardTest {
         verify(partyRepo).save(argThat(p ->
                 "IN_QUEUE".equals(p.getPartyStatus()) && "RANKED".equals(p.getPartyMode())));
 
-        // enqueuePartyMember must be called for the host
-        verify(queueService).enqueuePartyMember(eq(HOST_ID), eq("1v1"), isNull(), isNull());
+        // enqueuePartyMember must be called for the host with premade party metadata
+        verify(queueService).enqueuePartyMember(
+                eq(HOST_ID), eq("1v1"), isNull(), isNull(), eq(PARTY_ID), eq(1), eq(false));
     }
 }

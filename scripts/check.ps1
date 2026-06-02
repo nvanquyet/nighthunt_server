@@ -74,7 +74,7 @@ if (-not $ApiOnly) {
     if (-not $SkipTests) {
         Step "3 / 4 Tests"
         Push-Location $ProjectRoot
-        $testOut = & .\gradlew.bat test --no-daemon 2>&1
+        $testOut = & .\gradlew.bat :test :realtime-gateway:test --no-daemon 2>&1
         $testExit = $LASTEXITCODE
         Pop-Location
 
@@ -86,7 +86,7 @@ if (-not $ApiOnly) {
     }
 
     Step "4 / 4 Container state"
-    foreach ($container in @('nighthunt-mysql', 'nighthunt-redis', 'nighthunt-backend')) {
+    foreach ($container in @('nighthunt-mysql', 'nighthunt-redis', 'nighthunt-nats', 'nighthunt-realtime-gateway', 'nighthunt-backend')) {
         $state = docker inspect --format "{{.State.Status}}" $container 2>$null
         if ($state -eq 'running') { OK "$container running" }
         elseif ($state) { WARN "$container state = $state" }

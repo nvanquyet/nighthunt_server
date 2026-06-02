@@ -33,4 +33,9 @@ public class PartyRankedQueueRequest {
      * Optional map preference selected by the party host. Null means any map.
      */
     private String mapId;
+
+    /**
+     * Host client platform at queue time: "MOBILE" or "PC". Null means unknown.
+     */
+    private String platform;
 }

@@ -28,14 +28,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    implementation 'org.apache.commons:commons-pool2'  // Required for Lettuce connection pooling
+    implementation 'org.apache.commons:commons-pool2'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.retry:spring-retry'
     implementation 'org.springframework:spring-aspects'
-    implementation 'org.springframework.boot:spring-boot-starter-websocket'
-    // WebFlux — reactive WebSocket handler on Reactor Netty.
-    // REST API remains on embedded Tomcat (spring-boot-starter-web above).
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'io.nats:jnats:2.20.6'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-mysql'
 
@@ -59,7 +56,7 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// Disable plain jar — only produce the Spring Boot fat jar
+// Disable plain jar; only produce the Spring Boot fat jar.
 jar {
     enabled = false
 }

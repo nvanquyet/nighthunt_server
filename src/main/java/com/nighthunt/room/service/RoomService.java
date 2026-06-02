@@ -35,8 +35,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -287,6 +290,11 @@ public class RoomService {
      */
     @Transactional
     public RoomResponse createRankedRoom(List<Long> userIds, String gameMode, String mapId) {
+        return createRankedRoom(userIds, gameMode, mapId, Collections.emptyMap());
+    }
+
+    @Transactional
+    public RoomResponse createRankedRoom(List<Long> userIds, String gameMode, String mapId, Map<Long, Integer> teamByUserId) {
         gameModeService.validateModeOrThrow(gameMode);
 
         String matchId = UUID.randomUUID().toString();
@@ -315,13 +323,31 @@ public class RoomService {
                 .build();
         matchRepository.save(match);
 
+        int playersPerTeam = gameModeService.getPlayersPerTeam(gameMode);
+        Map<Integer, Integer> nextSlotByTeam = new HashMap<>();
         for (Long uid : userIds) {
-            int[] alloc = teamSlotAllocator.allocate(room.getId(), gameModeService.getPlayersPerTeam(gameMode));
+            Integer assignedTeam = teamByUserId != null ? teamByUserId.get(uid) : null;
+            int team;
+            int slot;
+            if (assignedTeam != null) {
+                team = assignedTeam;
+                slot = nextSlotByTeam.getOrDefault(team, 0);
+                if (slot >= playersPerTeam) {
+                    throw new BusinessException(ErrorCodes.ROOM_FULL,
+                            "Assigned ranked team is full for mode " + gameMode);
+                }
+                nextSlotByTeam.put(team, slot + 1);
+            } else {
+                int[] alloc = teamSlotAllocator.allocate(room.getId(), playersPerTeam);
+                team = alloc[0];
+                slot = alloc[1];
+            }
+
             RoomPlayer rp = RoomPlayer.builder()
                     .roomId(room.getId())
                     .userId(uid)
-                    .team(alloc[0])
-                    .slot(alloc[1])
+                    .team(team)
+                    .slot(slot)
                     .isReady(true) // auto-ready in ranked
                     .build();
             roomPlayerRepository.save(rp);

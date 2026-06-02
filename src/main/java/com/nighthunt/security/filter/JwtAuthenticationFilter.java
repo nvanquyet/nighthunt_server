@@ -45,13 +45,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        // Skip JWT filter for WebSocket handshake - WebSocketHandler will validate token itself
-        String requestPath = request.getRequestURI();
-        if (requestPath != null && requestPath.startsWith("/ws/")) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-        
         try {
             String token = getTokenFromRequest(request);
             if (StringUtils.hasText(token)) {

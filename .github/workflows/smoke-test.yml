@@ -119,6 +119,57 @@ jobs:
           echo "access=$NEW_ACCESS"             >> "$GITHUB_OUTPUT"
           echo "session=$EFFECTIVE_SESSION"     >> "$GITHUB_OUTPUT"
 
+      - name: Issue one-time realtime ticket
+        run: |
+          RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "$API_BASE/realtime/tickets" \
+            -H "Authorization: Bearer ${{ steps.refresh.outputs.access }}" \
+            -H "X-Session-Id: ${{ steps.refresh.outputs.session }}")
+          STATUS=$(echo "$RESPONSE" | tail -1); BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP $STATUS | $BODY"
+          [ "$STATUS" = "200" ] || (echo "FAIL: realtime ticket returned $STATUS" && exit 1)
+          TICKET=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['ticket'])")
+          [ -n "$TICKET" ] && [ "$TICKET" != "None" ] && [ "$TICKET" != "null" ] \
+            || (echo "FAIL: empty realtime ticket" && exit 1)
+          API_BASE="$API_BASE" TICKET="$TICKET" python3 - <<'PY'
+          import base64
+          import os
+          import socket
+          import ssl
+          from urllib.parse import quote, urlparse
+
+          base = urlparse(os.environ["API_BASE"])
+          host = base.hostname
+          port = base.port or (443 if base.scheme == "https" else 80)
+          path = f"{base.path.rstrip('/')}/ws/game?ticket={quote(os.environ['TICKET'])}"
+
+          def upgrade():
+              raw = socket.create_connection((host, port), timeout=10)
+              sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host) if base.scheme == "https" else raw
+              key = base64.b64encode(os.urandom(16)).decode()
+              request = (
+                  f"GET {path} HTTP/1.1\r\n"
+                  f"Host: {host}\r\n"
+                  "Connection: Upgrade\r\n"
+                  "Upgrade: websocket\r\n"
+                  "Sec-WebSocket-Version: 13\r\n"
+                  f"Sec-WebSocket-Key: {key}\r\n\r\n"
+              )
+              sock.sendall(request.encode())
+              response = sock.recv(1024).decode("latin-1", errors="replace")
+              sock.close()
+              return response.splitlines()[0] if response else ""
+
+          first = upgrade()
+          print("First WSS upgrade:", first)
+          if " 101 " not in first:
+              raise SystemExit("FAIL: first WSS upgrade did not return HTTP 101")
+
+          replay = upgrade()
+          print("Replay WSS upgrade:", replay)
+          if " 101 " in replay:
+              raise SystemExit("FAIL: replayed realtime ticket was accepted")
+          PY
+
       - name: Logout
         run: |
           # Logout requires BOTH Authorization header AND X-Session-Id (server validates session in Redis)

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * FriendCacheService — Redis-backed cache for friend ID lists.
@@ -39,14 +40,18 @@ public class FriendCacheService {
      * @param userId the user whose friend IDs to retrieve
      * @return list of friend user-IDs (never null)
      */
-    @SuppressWarnings("unchecked")
     public List<Long> getFriendIds(Long userId) {
         String key = KEY_PREFIX + userId;
         try {
             Object cached = redisTemplate.opsForValue().get(key);
-            if (cached instanceof List) {
+            // P0-5 FIX: Jackson may deserialize numbers as Integer on cache hit.
+            // Safe-cast each element to Long regardless of actual numeric subtype.
+            if (cached instanceof List<?> list) {
                 log.debug("Friend-IDs cache HIT for userId={}", userId);
-                return (List<Long>) cached;
+                return list.stream()
+                    .map(item -> item instanceof Number n ? n.longValue()
+                                                         : Long.parseLong(item.toString()))
+                    .collect(Collectors.toList());
             }
         } catch (Exception e) {
             log.warn("Redis read error for key={}, falling back to DB: {}", key, e.getMessage());

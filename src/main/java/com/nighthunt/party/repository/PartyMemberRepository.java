@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -54,7 +55,9 @@ public interface PartyMemberRepository extends JpaRepository<PartyMember, Long> 
 
     /**
      * Get user IDs of all members in a party (efficient query).
+     * readOnly=true: skips Hibernate dirty-checking, allows replica routing.
      */
+    @Transactional(readOnly = true)
     @Query("SELECT pm.userId FROM PartyMember pm WHERE pm.partyId = :partyId ORDER BY pm.joinOrder ASC")
     List<Long> findUserIdsByPartyId(@Param("partyId") Long partyId);
 }

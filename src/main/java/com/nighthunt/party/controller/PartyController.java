@@ -226,7 +226,7 @@ public class PartyController {
      * Queue party for matchmaking (host only).
      * All party members are added to queue together.
      * 
-     * Request body: { "gameMode": "2v2", "allowFill": true }
+     * Request body: { "gameMode": "2v2", "allowFill": true, "mapId": "map_01", "platform": "PC" }
      * Response: Success message
      */
     @PostMapping("/queue")

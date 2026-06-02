@@ -3,7 +3,7 @@
 Muc tieu cua protocol nay la chay full-scope theo dung transport production:
 
 - HTTP APIs qua `https://.../api`
-- Game WebSocket qua `wss://.../api/ws/game?token=...`
+- Game WebSocket qua `wss://.../api/ws/game?ticket=...`
 - Dedicated Server lifecycle qua admin/ds APIs va ds callbacks
 
 Khac voi bai JMeter steady-state truoc do, protocol nay ghep du 3 lop:
@@ -33,9 +33,10 @@ Muc tieu:
 
 ### B. WSS session / realtime probes
 
-Runner noi vao:
+Runner xin ticket roi noi vao:
 
-- `wss://<host>/api/ws/game?token=<accessToken>`
+- `POST /api/realtime/tickets` voi `Authorization: Bearer <accessToken>`
+- `wss://<host>/api/ws/game?ticket=<oneTimeTicket>`
 
 No kiem tra:
 
@@ -48,7 +49,7 @@ Muc tieu:
 
 - xac nhan protocol production dung `wss`, khong phai SockJS
 - xac nhan single-device policy van dung duoi tai that
-- xac nhan Redis session + WebSocket handshake khong bi lech logic
+- xac nhan Redis session + one-time ticket handshake khong bi lech logic
 
 ### C. Ranked queue HTTPS probes
 
@@ -58,16 +59,21 @@ Runner goi:
 - `GET /api/matchmaking/queue/status`
 - `DELETE /api/matchmaking/queue`
 
-Body mac dinh:
+Body mac dinh cua runner load-test:
 
 ```json
 {
   "gameMode": "2v2",
+  "mapId": "map_01",
   "platform": "PC"
 }
 ```
 
-Co the bo sung `mapId` neu can khoa kich ban vao 1 map cu the.
+Trong Unity client that:
+
+- Nguoi choi chon `gameMode` va `mapId` tu UI/config server.
+- `platform` khong phai lua chon UI; client tu detect `Application.isMobilePlatform ? "MOBILE" : "PC"`.
+- Load-test truyen `platform` de gia lap loai client khi chay tu may generator.
 
 Muc tieu:
 
@@ -89,13 +95,57 @@ JMX hien da dung:
 - warm-up login mot lan moi VU
 - chi tinh steady-state cho 5 authenticated endpoints
 
-Scenario chot hien tai:
+Scenario REST/JMeter hien tai:
 
 - `500 VU`
 - `1000 VU`
 - `2000 VU`
 
-### E. Dedicated Server stress
+Day la moc HTTP REST stress, khong phai gioi han WS CCU. Realtime CCU phai do bang k6:
+
+- [load-tests/k6/run-realtime-certification.ps1](../load-tests/k6/run-realtime-certification.ps1)
+- [load-tests/k6/ws_load_test.js](../load-tests/k6/ws_load_test.js)
+
+Khi tang VU manh, chay JMeter REST song song voi k6 WS de do ca REST request-serving va realtime connection-holding.
+
+### E. Party fill / no-fill acceptance
+
+Client that gui party queue payload:
+
+```json
+{
+  "gameMode": "4v4",
+  "mapId": "map_01",
+  "allowFill": true,
+  "platform": "PC"
+}
+```
+
+`platform` do client tu detect. `allowFill` la lua chon cua host khi party dang thieu slot.
+
+Kich ban staging bat buoc:
+
+1. Tao premade party A gom 2 player, chon `4v4`, tat Fill Party.
+2. Queue party A va party B tuong thich. Xac nhan moi premade party giu nguyen cung mot team; khong co solo nao duoc chen vao team da lock.
+3. Tao premade party C gom 2 player, chon `4v4`, bat Fill Party.
+4. Queue them 2 solo hoac party D gom 2 player. Xac nhan matcher ghep du 4 player vao cung team nhung khong them filler vao bang `party_members`.
+5. Ket thuc match qua `POST /api/match/end`.
+6. Xac nhan party goc van con dung member ban dau, party status tro ve `IDLE`, party mode tro ve `NONE`.
+7. Xac nhan filler khong con lien ket party tam sau match.
+
+Database check:
+
+```sql
+SELECT user_id, queue_group_id, party_id, party_size, allow_fill
+FROM matchmaking_queue
+ORDER BY queued_at;
+
+SELECT party_id, user_id
+FROM party_members
+ORDER BY party_id, join_order;
+```
+
+### F. Dedicated Server stress
 
 Van dung 2 harness san co:
 

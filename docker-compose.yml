@@ -20,7 +20,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
@@ -48,7 +48,7 @@ services:
     command: >
       sh -c "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-server --requirepass $$REDIS_PASSWORD; else redis-server; fi"
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -59,6 +59,20 @@ services:
       start_period: 10s
     restart: unless-stopped
     mem_limit: 128m
+    networks:
+      - nighthunt-network
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: nighthunt-nats
+    command: ["-js", "-sd", "/data"]
+    expose:
+      - "4222"
+      - "8222"
+    volumes:
+      - nats_data:/data
+    restart: unless-stopped
+    mem_limit: 256m
     networks:
       - nighthunt-network
 
@@ -74,7 +88,8 @@ services:
       PMA_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
+    profiles: ["tools"]
     depends_on:
       mysql:
         condition: service_healthy
@@ -101,6 +116,12 @@ services:
       REDIS_HOST: ${REDIS_HOST}
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REALTIME_NATS_ENABLED: ${REALTIME_NATS_ENABLED:-true}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_SUBJECT_PREFIX: ${NATS_SUBJECT_PREFIX:-rt.gateway}
+      JETSTREAM_OUTBOX_ENABLED: ${JETSTREAM_OUTBOX_ENABLED:-true}
+      JETSTREAM_STREAM_NAME: ${JETSTREAM_STREAM_NAME:-NIGHTHUNT_EVENTS}
+      JETSTREAM_SUBJECTS: ${JETSTREAM_SUBJECTS:-events.>}
       
       # JWT & Security
       JWT_SECRET: ${JWT_SECRET}
@@ -141,7 +162,7 @@ services:
       # JVM heap cap — prevents OOM on 8 GB VPS running multiple containers
       JAVA_TOOL_OPTIONS: "-Xms256m -Xmx896m -XX:+UseG1GC -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
     ports:
-      - "${SERVER_PORT}:${SERVER_PORT}"
+      - "127.0.0.1:${SERVER_PORT}:${SERVER_PORT}"
     volumes:
       # SSL Certificates
       - ./src/main/resources/certs:/app/certs:ro
@@ -154,6 +175,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nats:
+        condition: service_started
       nighthunt-relay:
         condition: service_healthy
     restart: unless-stopped
@@ -167,6 +190,50 @@ services:
     networks:
       - nighthunt-network
       - game-network
+
+  realtime-gateway:
+    image: ghcr.io/nvanquyet/nighthunt-realtime-gateway:latest
+    build:
+      context: .
+      dockerfile: realtime-gateway/Dockerfile
+    container_name: nighthunt-realtime-gateway
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    environment:
+      GATEWAY_ID: ${GATEWAY_ID:-gateway-1}
+      GATEWAY_PORT: ${GATEWAY_PORT:-8090}
+      GATEWAY_METRICS_PORT: ${GATEWAY_METRICS_PORT:-9091}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URI: ${GATEWAY_REDIS_URI:-}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_SUBJECT_PREFIX: ${NATS_SUBJECT_PREFIX:-rt.gateway}
+      WS_PATH: ${WS_PATH:-/api/ws/game}
+      WS_ACCEPT_BACKLOG: ${WS_ACCEPT_BACKLOG:-8192}
+      WS_MAX_FRAME_BYTES: ${WS_MAX_FRAME_BYTES:-4096}
+      WS_MAX_PENDING_OUTBOUND_BYTES: ${WS_MAX_PENDING_OUTBOUND_BYTES:-262144}
+      WS_HEARTBEAT_TIMEOUT_SECONDS: ${WS_HEARTBEAT_TIMEOUT_SECONDS:-45}
+      WS_PRESENCE_LEASE_SECONDS: ${WS_PRESENCE_LEASE_SECONDS:-60}
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 512m
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000
+    networks:
+      - nighthunt-network
 
   # ── nginx — SSL termination + reverse proxy ────────────────────────────────
   # Handles HTTPS (443) with Let's Encrypt cert and redirects HTTP (80) → HTTPS.
@@ -187,8 +254,14 @@ services:
     depends_on:
       backend:
         condition: service_started
+      realtime-gateway:
+        condition: service_started
     restart: unless-stopped
     mem_limit: 64m
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000
     networks:
       - nighthunt-network
 
@@ -218,7 +291,6 @@ services:
       dockerfile: Dockerfile
     container_name: nighthunt-relay
     ports:
-      - "7776:7776"           # HTTP management API (internal — do NOT expose publicly)
       - "7777-7900:7777-7900/udp"  # UDP game sessions (expose in VPS firewall)
     environment:
       - RELAY_PORT_START=${RELAY_PORT_START:-7777}
@@ -255,7 +327,7 @@ services:
       ADMIN_SECRET: ${ADMIN_SECRET}
       LOAD_TESTS_HOST_PATH: ${LOAD_TESTS_HOST_PATH:-/opt/nighthunt/load-tests}
     ports:
-      - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
+      - "127.0.0.1:${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     volumes:
       - ./load-tests:/app/load-tests      # rw — JMeter docker runner writes results here
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for JMeter runner
@@ -269,6 +341,7 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  nats_data:
   letsencrypt_certs:   # Let's Encrypt certs managed by certbot container
   certbot_www:         # ACME HTTP-01 challenge webroot
   backend_logs:        # Persistent rolling log files (nighthunt.log, nighthunt-error.log)

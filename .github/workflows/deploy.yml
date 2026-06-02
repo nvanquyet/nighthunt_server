@@ -47,7 +47,7 @@ jobs:
         run: ./gradlew build -x test --no-daemon
 
       - name: Run Tests
-        run: ./gradlew test --no-daemon
+        run: ./gradlew :test :realtime-gateway:test --no-daemon
 
   # ── Job 2: Docker Build & Push to GHCR ──────────────────────────────────────
   docker:
@@ -93,6 +93,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push realtime gateway
+        uses: docker/build-push-action@v6.15.0
+        with:
+          context: .
+          file: realtime-gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nighthunt-realtime-gateway:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nighthunt-realtime-gateway:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=realtime-gateway
+          cache-to: type=gha,mode=max,scope=realtime-gateway
 
       - name: Keep latest GHCR image and one backup
         env:
@@ -185,7 +197,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "docker-compose.yml,docker/,dashboard/,relay/,load-tests/jmeter/,load-tests/ds-fleet-test/.gitignore,load-tests/ds-fleet-test/run_capacity_test.py,load-tests/ds-fleet-test/run_fleet_test.py,load-tests/ds-fleet-test/mock-ds/"
+          source: "docker-compose.yml,docker/,dashboard/,relay/,realtime-gateway/,build.gradle,settings.gradle,gradle/,gradlew,load-tests/jmeter/,load-tests/ds-fleet-test/.gitignore,load-tests/ds-fleet-test/run_capacity_test.py,load-tests/ds-fleet-test/run_fleet_test.py,load-tests/ds-fleet-test/mock-ds/"
           target: ${{ env.DEPLOY_DIR }}
           strip_components: 0
 
@@ -238,11 +250,11 @@ jobs:
             echo "=== Ensure game-network exists ==="
             docker network inspect nighthunt_game-network >/dev/null 2>&1 || docker network create nighthunt_game-network
 
-            echo "=== Ensure database/cache are running in compose project: $COMPOSE_PROJECT_NAME ==="
+            echo "=== Ensure database/cache/broker are running in compose project: $COMPOSE_PROJECT_NAME ==="
             # compose rm -sf stops & removes any old containers for these services
             # (handles containers with stale/prefixed names from old deployments)
-            compose rm -sf mysql redis 2>/dev/null || true
-            compose up -d mysql redis
+            compose rm -sf mysql redis nats 2>/dev/null || true
+            compose up -d mysql redis nats
 
             echo "=== Prune stale builder cache (>24 h old only) ==="
             docker builder prune --filter until=24h -f 2>/dev/null || true
@@ -250,6 +262,11 @@ jobs:
             echo "=== Build/start relay in compose project: $COMPOSE_PROJECT_NAME ==="
             compose rm -sf nighthunt-relay 2>/dev/null || true
             compose up -d --build nighthunt-relay
+
+            echo "=== Pull/start realtime gateway in compose project: $COMPOSE_PROJECT_NAME ==="
+            compose rm -sf realtime-gateway 2>/dev/null || true
+            compose pull realtime-gateway
+            compose up -d --no-deps --force-recreate realtime-gateway
 
             compose rm -sf backend 2>/dev/null || true
 
@@ -383,18 +400,23 @@ jobs:
             [ -n "${ADMIN_SECRET}" ] || (echo "❌ ADMIN_SECRET not found in .env.production" && exit 1)
             [ -n "${DS_IMAGE}"     ] || (echo "❌ DS_IMAGE_REF not found in .env.production"  && exit 1)
 
-            echo "=== [1/5] Backend health ==="
+            echo "=== [1/6] Backend health ==="
             STATUS=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1)
             [ "$STATUS" = '"status":"UP"' ] || (echo "❌ Backend not healthy: $STATUS" && exit 1)
             echo "✅ Backend UP"
 
-            echo "=== [2/5] DB & Redis health components ==="
+            echo "=== [2/6] DB & Redis health components ==="
             HEALTH=$(curl -sf "http://localhost:${BACKEND_PORT}/api/actuator/health")
             echo "${HEALTH}" | grep -o '"db":{[^}]*}' || true
             echo "${HEALTH}" | grep -o '"redis":{[^}]*}' || true
             echo "✅ Components checked"
 
-            echo "=== [3/5] DS admin API ==="
+            echo "=== [3/6] Realtime gateway health ==="
+            GATEWAY_HEALTH=$(docker exec nighthunt-realtime-gateway wget -qO- http://localhost:9091/health || true)
+            [ "$GATEWAY_HEALTH" = "UP" ] || (echo "❌ Realtime gateway unhealthy: '$GATEWAY_HEALTH'" && exit 1)
+            echo "✅ Realtime gateway UP"
+
+            echo "=== [4/6] DS admin API ==="
             # Use -s (silent) without -f so we capture the body even on HTTP error codes.
             # Check HTTP status separately to emit a useful error message.
             HTTP_CODE=$(curl -s -o /tmp/admin_resp.json -w "%{http_code}" \
@@ -408,7 +430,7 @@ jobs:
             echo "${RESP}" | grep -q '"success":true' || (echo "❌ Admin API success=false: ${RESP}" && exit 1)
             echo "✅ Admin DS API OK (HTTP ${HTTP_CODE})"
 
-            echo "=== [4/5] DS image on VPS ==="
+            echo "=== [5/6] DS image on VPS ==="
             if docker image inspect "${DS_IMAGE}" --format "{{.Id}}" >/dev/null 2>&1; then
               echo "✅ DS image already local: ${DS_IMAGE}"
               # Verify binary inside image
@@ -419,7 +441,7 @@ jobs:
               echo "⚠️  DS image not yet on VPS (pull in progress): ${DS_IMAGE}"
             fi
 
-            echo "=== [5/5] Dashboard health ==="
+            echo "=== [6/6] Dashboard health ==="
             DASH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/health" || true)
             if [ "${DASH_STATUS}" = "200" ]; then
               echo "✅ Dashboard UP (HTTP 200)"

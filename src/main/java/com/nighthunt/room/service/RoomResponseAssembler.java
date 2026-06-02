@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 
 /**
  * Assembles RoomResponse DTOs from Room entities.
- * Extracted from RoomService and GameWebSocketHandler to eliminate duplication (DRY).
+ * Extracted from RoomService to eliminate duplication.
  */
 @Slf4j
 @Component

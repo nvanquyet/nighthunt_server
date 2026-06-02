@@ -23,7 +23,7 @@ public class RateLimitConfig implements WebMvcConfigurer {
         // Request queue interceptor runs first (to queue if needed)
         registry.addInterceptor(requestQueueInterceptor)
                 .addPathPatterns("/api/**", "/auth/**", "/rooms/**")
-                .excludePathPatterns("/actuator/**", "/error", "/ws/**", "/dashboard/**")
+                .excludePathPatterns("/actuator/**", "/error", "/dashboard/**")
                 .order(0);
         
         // Rate limit interceptor runs second (to check rate limits)
@@ -31,7 +31,7 @@ public class RateLimitConfig implements WebMvcConfigurer {
         // and the rate-limit toggle endpoint must never be blocked by rate limiting itself.
         registry.addInterceptor(rateLimitInterceptor)
                 .addPathPatterns("/**")
-                .excludePathPatterns("/actuator/**", "/error", "/ws/**", "/dashboard/**", "/admin/**")
+                .excludePathPatterns("/actuator/**", "/error", "/dashboard/**", "/admin/**")
                 .order(1);
     }
 }

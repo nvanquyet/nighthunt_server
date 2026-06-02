@@ -13,9 +13,14 @@ import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.entity.MatchPlayerResult;
 import com.nighthunt.match.repository.MatchPlayerResultRepository;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.messaging.service.MessageBrokerService;
+import com.nighthunt.party.entity.PartyMember;
+import com.nighthunt.party.repository.PartyMemberRepository;
+import com.nighthunt.party.repository.PartyRepository;
 import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.relay.service.RelaySessionManager;
+import com.nighthunt.realtime.service.RealtimeOutboxService;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +61,10 @@ public class MatchResultService {
     private final RoomResponseAssembler        roomResponseAssembler;
     private final RedisMatchPresenceCache      matchPresenceCache;
     private final PlayerStatusService          playerStatusService;
+    private final RealtimeOutboxService         realtimeOutboxService;
+    private final PartyMemberRepository        partyMemberRepository;
+    private final PartyRepository              partyRepository;
+    private final MessageBrokerService         messageBrokerService;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
     @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
@@ -208,6 +217,9 @@ public class MatchResultService {
                 .ifPresent(s -> relaySessionManager.finishSession(s.getSessionToken()));
 
         clearPresenceCache(req.getMatchId(), req.getPlayerResults());
+        resetRankedPartyState(req.getPlayerResults().stream()
+                .map(MatchEndRequest.PlayerResultEntry::getUserId)
+                .toList());
 
         // 6. Broadcast match_ended WS event to all participants
         MatchEndResponse response = MatchEndResponse.builder()
@@ -220,6 +232,7 @@ public class MatchResultService {
         for (var entry : req.getPlayerResults()) {
             connectionManager.sendToUser(entry.getUserId(), "match_ended", response);
         }
+        realtimeOutboxService.enqueue("events.match.ended", response);
 
         log.info("[MatchEnd] Processed match {} winner={} reason={} players={}",
                 req.getMatchId(), req.getWinnerTeamId(), req.getEndReason(), req.getPlayerResults().size());
@@ -238,6 +251,39 @@ public class MatchResultService {
     private void clearPresenceCache(String matchId, List<MatchEndRequest.PlayerResultEntry> results) {
         for (MatchEndRequest.PlayerResultEntry entry : results) {
             matchPresenceCache.delete(matchId, entry.getUserId());
+        }
+    }
+
+    private void resetRankedPartyState(Collection<Long> userIds) {
+        try {
+            Set<Long> partyIds = userIds.stream()
+                    .map(userId -> partyMemberRepository.findByUserId(userId)
+                            .map(PartyMember::getPartyId)
+                            .orElse(null))
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+
+            for (Long partyId : partyIds) {
+                partyRepository.findById(partyId).ifPresent(party -> {
+                    if (!"RANKED".equals(party.getPartyMode())
+                            && !"IN_GAME".equals(party.getPartyStatus())
+                            && !"IN_QUEUE".equals(party.getPartyStatus())) {
+                        return;
+                    }
+
+                    String oldStatus = party.getPartyStatus();
+                    party.setPartyStatus("IDLE");
+                    party.setPartyMode("NONE");
+                    partyRepository.save(party);
+                    try {
+                        messageBrokerService.publishPartyStatusChanged(partyId, oldStatus, "IDLE");
+                    } catch (Exception ex) {
+                        log.warn("[MatchEnd] Failed to publish party {} IDLE status: {}", partyId, ex.getMessage());
+                    }
+                });
+            }
+        } catch (Exception ex) {
+            log.warn("[MatchEnd] Failed to reset ranked party state: {}", ex.getMessage());
         }
     }
 

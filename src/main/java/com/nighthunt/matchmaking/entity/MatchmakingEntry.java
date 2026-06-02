@@ -17,7 +17,8 @@ import java.time.LocalDateTime;
 @Table(name = "matchmaking_queue", indexes = {
         @Index(name = "idx_mmq_user_id",   columnList = "userId",   unique = true),
         @Index(name = "idx_mmq_game_mode", columnList = "gameMode"),
-        @Index(name = "idx_mmq_status",    columnList = "status")
+        @Index(name = "idx_mmq_status",    columnList = "status"),
+        @Index(name = "idx_mmq_queue_group", columnList = "queueGroupId")
 })
 @Data
 @NoArgsConstructor
@@ -78,8 +79,39 @@ public class MatchmakingEntry {
     @Column(name = "platform", length = 20)
     private String platform;
 
+    /**
+     * Matchmaking unit identity. Solo players use {@code solo:<userId>};
+     * premade parties use {@code party:<partyId>}. The matcher keeps entries
+     * with the same group on the same team.
+     */
+    @Column(name = "queue_group_id", length = 64)
+    private String queueGroupId;
+
+    /** Original premade party id, null for solo/fill players. */
+    @Column(name = "party_id")
+    private Long partyId;
+
+    /** Number of members in this queue unit at enqueue time. */
+    @Column(name = "party_size", nullable = false)
+    @Builder.Default
+    private int partySize = 1;
+
+    /**
+     * True if the unit accepts temporary fill teammates for this match.
+     * False means the unit occupies a team by itself even if under the mode's
+     * team size.
+     */
+    @Column(name = "allow_fill", nullable = false)
+    @Builder.Default
+    private boolean allowFill = true;
+
+    /** Runtime-only team assignment produced by the matcher before room creation. */
+    @Transient
+    private Integer assignedTeam;
+
     @PrePersist
     protected void onCreate() {
         if (queuedAt == null) queuedAt = LocalDateTime.now();
+        if (partySize <= 0) partySize = 1;
     }
 }

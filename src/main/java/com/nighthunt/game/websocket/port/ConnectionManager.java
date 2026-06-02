@@ -1,5 +1,7 @@
 package com.nighthunt.game.websocket.port;
 
+import java.util.Collection;
+
 /**
  * Port (interface) for managing real-time client connections.
  * Decouples business logic from the WebSocket transport layer.
@@ -16,6 +18,14 @@ public interface ConnectionManager {
      * Broadcast a typed message to all users in a room.
      */
     void broadcastToRoom(Long roomId, String eventType, Object data);
+
+    /**
+     * Broadcast a typed message to an explicit collection of user IDs.
+     * Prefer this over broadcastToRoom when the caller already holds the member list,
+     * to avoid a redundant room-index lookup.
+     * (P1-2 addition)
+     */
+    void broadcastToUsers(Collection<Long> userIds, String eventType, Object data);
 
     /**
      * Track which room a user is currently in (for broadcast routing).

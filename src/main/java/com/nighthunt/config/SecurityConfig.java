@@ -58,7 +58,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Auth endpoints (public) - now with /api prefix via context-path
-                .requestMatchers("/auth/**", "/actuator/**", "/dashboard.html", "/dashboard/**", "/ws/**").permitAll()
+                .requestMatchers("/auth/**", "/actuator/**", "/dashboard.html", "/dashboard/**").permitAll()
                 // DS containers dùng X-DS-Secret header thay vì JWT
                 .requestMatchers("/ds/**").permitAll()
                 // DS gọi /match/end/ranked bằng X-DS-Secret, không có JWT

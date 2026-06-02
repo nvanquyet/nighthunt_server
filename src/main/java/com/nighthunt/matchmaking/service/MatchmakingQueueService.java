@@ -10,6 +10,7 @@ import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.gamemode.dto.GameModeDTO;
 import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.map.service.GameMapService;
+import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.matchmaking.entity.MatchmakingEntry;
 import com.nighthunt.matchmaking.repository.MatchmakingEntryRepository;
 import com.nighthunt.party.repository.PartyMemberRepository;
@@ -29,9 +30,12 @@ import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -55,6 +59,21 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MatchmakingQueueService {
 
+    private static final String MATCHER_LOCK_KEY = "lock:matchmaking:tick";
+    private static final Duration MATCHER_LOCK_TTL = Duration.ofMinutes(2);
+    private static final RedisScript<Long> RENEW_MATCHER_LOCK_SCRIPT = RedisScript.of("""
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+              return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+            end
+            return 0
+            """, Long.class);
+    private static final RedisScript<Long> RELEASE_MATCHER_LOCK_SCRIPT = RedisScript.of("""
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+              return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """, Long.class);
+
     // ── Dependencies ─────────────────────────────────────────────────────────
     private final MatchmakingEntryRepository entryRepository;
     private final UserRepository              userRepository;
@@ -69,6 +88,8 @@ public class MatchmakingQueueService {
     private final GameMapService              gameMapService;
     private final PlayerStatusService         playerStatusService;
     private final RuntimeConfigService        runtimeConfig;
+    private final MessageBrokerService        messageBrokerService;
+    private final StringRedisTemplate         redisTemplate;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -97,7 +118,7 @@ public class MatchmakingQueueService {
                     "Leave or disband your ranked party before joining solo matchmaking");
         }
 
-        enqueueInternal(userId, gameMode, mapId, platform);
+        enqueueInternal(userId, gameMode, mapId, platform, null, 1, true);
     }
 
     @Retryable(retryFor = CannotAcquireLockException.class, maxAttempts = 3,
@@ -105,15 +126,44 @@ public class MatchmakingQueueService {
     @Transactional
     public void enqueuePartyMember(Long userId, String gameMode, String mapId, String platform) {
         ensureUserCanEnterMatchmaking(userId);
-        enqueueInternal(userId, gameMode, mapId, platform);
+        enqueueInternal(userId, gameMode, mapId, platform, null, 1, true);
     }
 
-    private void enqueueInternal(Long userId, String gameMode, String mapId, String platform) {
+    @Retryable(retryFor = CannotAcquireLockException.class, maxAttempts = 3,
+               backoff = @Backoff(delay = 100, multiplier = 2))
+    @Transactional
+    public void enqueuePartyMember(
+            Long userId,
+            String gameMode,
+            String mapId,
+            String platform,
+            Long partyId,
+            int partySize,
+            boolean allowFill
+    ) {
+        ensureUserCanEnterMatchmaking(userId);
+        enqueueInternal(userId, gameMode, mapId, platform, partyId, partySize, allowFill);
+    }
+
+    private void enqueueInternal(
+            Long userId,
+            String gameMode,
+            String mapId,
+            String platform,
+            Long partyId,
+            int partySize,
+            boolean allowFill
+    ) {
         // Validate mode against DB — rejects modes not in the DB or disabled
         GameModeDTO mode = gameModeService.getGameModeByKey(gameMode);
         if (!"AVAILABLE".equalsIgnoreCase(mode.getModeStatus()) || !mode.isMatchmakingEnabled()) {
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Game mode not available for matchmaking: " + gameMode);
+        }
+        int normalizedPartySize = Math.max(1, partySize);
+        if (normalizedPartySize > mode.getPlayersPerTeam()) {
+            throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH,
+                    "Queue unit size exceeds team size for " + gameMode);
         }
 
         // Enforce platform restriction set on the game mode
@@ -149,6 +199,10 @@ public class MatchmakingQueueService {
                 .gameMode(gameMode.toLowerCase())
                 .mapId(mapId)
                 .platform(platform)
+                .queueGroupId(partyId == null ? "solo:" + userId : "party:" + partyId)
+                .partyId(partyId)
+                .partySize(normalizedPartySize)
+                .allowFill(allowFill)
                 .queuedAt(LocalDateTime.now())
                 .searchMinElo(Math.max(0, elo - runtimeConfig.getInt("matchmaking.elo.initialRange", 100)))
                 .searchMaxElo(elo + runtimeConfig.getInt("matchmaking.elo.initialRange", 100))
@@ -156,7 +210,8 @@ public class MatchmakingQueueService {
                 .build();
 
         entryRepository.save(entry);
-        log.info("[MM] User {} (ELO={}) queued for {} map={} platform={}", userId, elo, gameMode, mapId, platform);
+        log.info("[MM] User {} (ELO={}) queued for {} map={} platform={} group={} partySize={} allowFill={}",
+                userId, elo, gameMode, mapId, platform, entry.getQueueGroupId(), normalizedPartySize, allowFill);
     }
 
     private void ensureUserCanEnterMatchmaking(Long userId) {
@@ -264,18 +319,25 @@ public class MatchmakingQueueService {
      */
     @Scheduled(fixedDelayString = "${matchmaking.tick.interval-ms:5000}")
     public void processTick() {
-        expandWindows();
+        String lockToken = acquireMatcherLock();
+        if (lockToken == null) {
+            return;
+        }
 
-        // Process each DB-configured mode where matchmaking is enabled
-        for (GameModeDTO mode : gameModeService.getMatchmakingEnabledModes()) {
-            List<MatchmakingEntry> candidates = entryRepository.findSearchingByMode(mode.getModeKey());
+        try {
+            expandWindows();
 
-            // Dev/test modes: allow single-player match formation so DS container boot
-            // can be tested without waiting for a full lobby.
-            int minRequired = mode.isDevMode() ? 1 : mode.getTotalPlayers();
-            if (candidates.size() < minRequired) continue;
-
-            tryFormMatches(candidates, mode);
+            // Process each DB-configured mode where matchmaking is enabled
+            for (GameModeDTO mode : gameModeService.getMatchmakingEnabledModes()) {
+                if (!renewMatcherLock(lockToken)) {
+                    log.warn("[MM] Matcher lock expired before mode={}; stopping tick", mode.getModeKey());
+                    return;
+                }
+                List<MatchmakingEntry> candidates = entryRepository.findSearchingByMode(mode.getModeKey());
+                tryFormMatches(candidates, mode, lockToken);
+            }
+        } finally {
+            releaseMatcherLock(lockToken);
         }
     }
 
@@ -341,32 +403,35 @@ public class MatchmakingQueueService {
      * Greedy match formation: iterate candidates in queue order; try to build a
      * full lobby where all players' ELO windows overlap around a common midpoint.
      */
-    private void tryFormMatches(List<MatchmakingEntry> candidates, GameModeDTO mode) {
-        // Dev modes only need 1 player to form a "match" (DS boot test, no opponent)
-        int needed = mode.isDevMode() ? 1 : mode.getTotalPlayers();
-        Set<Long> used = new HashSet<>();
+    private void tryFormMatches(List<MatchmakingEntry> candidates, GameModeDTO mode, String lockToken) {
+        List<MatchUnit> units = buildUnits(candidates);
+        Set<String> usedGroups = new HashSet<>();
 
-        for (MatchmakingEntry anchor : candidates) {
-            if (used.contains(anchor.getUserId())) continue;
+        for (MatchUnit anchor : units) {
+            if (usedGroups.contains(anchor.groupId())) continue;
 
-            // Collect compatible players (dev mode: anchor alone is sufficient)
-            List<MatchmakingEntry> group = new ArrayList<>();
-            group.add(anchor);
+            MatchBuild build = new MatchBuild(mode.getPlayersPerTeam(), mode.isDevMode());
+            if (!build.tryAdd(anchor)) continue;
 
             if (!mode.isDevMode()) {
-                for (MatchmakingEntry other : candidates) {
-                    if (used.contains(other.getUserId())) continue;
-                    if (other.getUserId().equals(anchor.getUserId())) continue;
+                for (MatchUnit other : units) {
+                    if (usedGroups.contains(other.groupId())) continue;
+                    if (other.groupId().equals(anchor.groupId())) continue;
+                    if (build.isComplete()) break;
                     if (isCompatible(anchor, other)) {
-                        group.add(other);
-                        if (group.size() == needed) break;
+                        build.tryAdd(other);
                     }
                 }
             }
 
-            if (group.size() >= needed) {
+            if (build.isComplete()) {
+                if (!renewMatcherLock(lockToken)) {
+                    log.warn("[MM] Matcher lock expired while forming mode={}; stopping tick", mode.getModeKey());
+                    return;
+                }
+                List<MatchmakingEntry> group = build.entriesWithAssignedTeams();
                 formMatch(group, mode);
-                group.forEach(e -> used.add(e.getUserId()));
+                build.units().forEach(unit -> usedGroups.add(unit.groupId()));
             }
         }
     }
@@ -392,6 +457,17 @@ public class MatchmakingQueueService {
             return false;
         }
 
+        return true;
+    }
+
+    private boolean isCompatible(MatchUnit a, MatchUnit b) {
+        for (MatchmakingEntry left : a.entries()) {
+            for (MatchmakingEntry right : b.entries()) {
+                if (!isCompatible(left, right)) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -481,7 +557,8 @@ public class MatchmakingQueueService {
             entryRepository.save(e);
             // Re-queue anyone who isn't the decliner and was still in-lobby
             if (!e.getUserId().equals(userId)) {
-                enqueueInternal(e.getUserId(), prevMode, e.getMapId(), e.getPlatform());
+                enqueueInternal(e.getUserId(), prevMode, e.getMapId(), e.getPlatform(),
+                        e.getPartyId(), e.getPartySize(), e.isAllowFill());
             }
         }
 
@@ -503,9 +580,17 @@ public class MatchmakingQueueService {
         String lToken    = group.get(0).getLobbyToken();
         String mapId     = group.get(0).getMapId(); // unified mapId set in formMatch()
 
+        Map<Long, Integer> teamByUserId = group.stream()
+                .filter(e -> e.getAssignedTeam() != null)
+                .collect(Collectors.toMap(
+                        MatchmakingEntry::getUserId,
+                        MatchmakingEntry::getAssignedTeam,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+
         RoomResponse room = null;
         try {
-            room = roomService.createRankedRoom(userIds, modeKey, mapId);
+            room = roomService.createRankedRoom(userIds, modeKey, mapId, teamByUserId);
             ServerAllocateResponse ds = dsService.allocateServerForMatch("vn", mapId, group.size(), room.getMatchId());
 
             Map<String, Object> payload = new HashMap<>();
@@ -547,6 +632,7 @@ public class MatchmakingQueueService {
                 try { playerStatusService.setInGame(uid); } catch (Exception ignored) {}
             }
             roomService.markRankedRoomInGame(room.getMatchId());
+            markRankedPartiesInGame(group);
 
             log.info("[MM] Match ready: room={}, mode={}, ds={}:{}, players={}",
                     room.getRoomCode(), modeKey, ds.getIp(), ds.getPort(), userIds);
@@ -563,7 +649,180 @@ public class MatchmakingQueueService {
             }
             // Re-queue all players on failure
             for (MatchmakingEntry e : group) {
-                try { enqueueInternal(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform()); } catch (Exception ignored) {}
+                try {
+                    enqueueInternal(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform(),
+                            e.getPartyId(), e.getPartySize(), e.isAllowFill());
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private List<MatchUnit> buildUnits(List<MatchmakingEntry> candidates) {
+        return candidates.stream()
+                .collect(Collectors.groupingBy(
+                        e -> e.getQueueGroupId() != null ? e.getQueueGroupId() : "solo:" + e.getUserId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()))
+                .entrySet()
+                .stream()
+                .map(e -> new MatchUnit(
+                        e.getKey(),
+                        e.getValue().stream()
+                                .sorted(Comparator.comparing(MatchmakingEntry::getQueuedAt))
+                                .toList()))
+                .sorted(Comparator.comparing(MatchUnit::queuedAt))
+                .toList();
+    }
+
+    private String acquireMatcherLock() {
+        String token = UUID.randomUUID().toString();
+        try {
+            Boolean acquired = redisTemplate.opsForValue()
+                    .setIfAbsent(MATCHER_LOCK_KEY, token, MATCHER_LOCK_TTL);
+            return Boolean.TRUE.equals(acquired) ? token : null;
+        } catch (Exception ex) {
+            log.error("[MM] Cannot acquire matcher lock; skipping tick: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    private boolean renewMatcherLock(String token) {
+        try {
+            Long renewed = redisTemplate.execute(
+                    RENEW_MATCHER_LOCK_SCRIPT,
+                    List.of(MATCHER_LOCK_KEY),
+                    token,
+                    String.valueOf(MATCHER_LOCK_TTL.toMillis()));
+            return renewed != null && renewed == 1L;
+        } catch (Exception ex) {
+            log.error("[MM] Cannot renew matcher lock: {}", ex.getMessage());
+            return false;
+        }
+    }
+
+    private void releaseMatcherLock(String token) {
+        try {
+            redisTemplate.execute(RELEASE_MATCHER_LOCK_SCRIPT, List.of(MATCHER_LOCK_KEY), token);
+        } catch (Exception ex) {
+            log.warn("[MM] Cannot release matcher lock token={}: {}", token, ex.getMessage());
+        }
+    }
+
+    private void markRankedPartiesInGame(List<MatchmakingEntry> group) {
+        try {
+            group.stream()
+                    .map(MatchmakingEntry::getPartyId)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .forEach(partyId -> partyRepository.findById(partyId).ifPresent(party -> {
+                        String oldStatus = party.getPartyStatus();
+                        party.setPartyStatus("IN_GAME");
+                        party.setPartyMode("RANKED");
+                        partyRepository.save(party);
+                        try {
+                            messageBrokerService.publishPartyStatusChanged(partyId, oldStatus, "IN_GAME");
+                        } catch (Exception ex) {
+                            log.warn("[MM] Failed to publish party {} IN_GAME status: {}", partyId, ex.getMessage());
+                        }
+                    }));
+        } catch (Exception ex) {
+            log.warn("[MM] Failed to mark ranked parties IN_GAME: {}", ex.getMessage());
+        }
+    }
+
+    private record MatchUnit(String groupId, List<MatchmakingEntry> entries) {
+        int size() {
+            return entries.size();
+        }
+
+        boolean lockedTeam() {
+            return entries.stream().anyMatch(e -> !e.isAllowFill());
+        }
+
+        LocalDateTime queuedAt() {
+            return entries.stream()
+                    .map(MatchmakingEntry::getQueuedAt)
+                    .filter(Objects::nonNull)
+                    .min(Comparator.naturalOrder())
+                    .orElse(LocalDateTime.MIN);
+        }
+    }
+
+    private static final class MatchBuild {
+        private final int teamCapacity;
+        private final boolean devMode;
+        private final List<MatchUnit> team1 = new ArrayList<>();
+        private final List<MatchUnit> team2 = new ArrayList<>();
+
+        MatchBuild(int teamCapacity, boolean devMode) {
+            this.teamCapacity = Math.max(1, teamCapacity);
+            this.devMode = devMode;
+        }
+
+        boolean tryAdd(MatchUnit unit) {
+            if (canAdd(team1, unit)) {
+                team1.add(unit);
+                return true;
+            }
+            if (!devMode && isTeamValid(team1) && canAdd(team2, unit)) {
+                team2.add(unit);
+                return true;
+            }
+            return false;
+        }
+
+        boolean isComplete() {
+            if (devMode) {
+                return teamSize(team1) > 0;
+            }
+            return isTeamValid(team1) && isTeamValid(team2);
+        }
+
+        List<MatchmakingEntry> entriesWithAssignedTeams() {
+            List<MatchmakingEntry> entries = new ArrayList<>();
+            appendAssigned(entries, team1, GameConstants.TEAM_1);
+            appendAssigned(entries, team2, GameConstants.TEAM_2);
+            return entries;
+        }
+
+        List<MatchUnit> units() {
+            List<MatchUnit> units = new ArrayList<>(team1);
+            units.addAll(team2);
+            return units;
+        }
+
+        private boolean canAdd(List<MatchUnit> team, MatchUnit unit) {
+            if (teamLocked(team)) {
+                return false;
+            }
+            if (unit.lockedTeam() && !team.isEmpty()) {
+                return false;
+            }
+            return teamSize(team) + unit.size() <= teamCapacity;
+        }
+
+        private boolean isTeamValid(List<MatchUnit> team) {
+            if (team.isEmpty()) {
+                return false;
+            }
+            int size = teamSize(team);
+            return size == teamCapacity || teamLocked(team);
+        }
+
+        private boolean teamLocked(List<MatchUnit> team) {
+            return team.stream().anyMatch(MatchUnit::lockedTeam);
+        }
+
+        private int teamSize(List<MatchUnit> team) {
+            return team.stream().mapToInt(MatchUnit::size).sum();
+        }
+
+        private void appendAssigned(List<MatchmakingEntry> target, List<MatchUnit> team, int teamId) {
+            for (MatchUnit unit : team) {
+                for (MatchmakingEntry entry : unit.entries()) {
+                    entry.setAssignedTeam(teamId);
+                    target.add(entry);
+                }
             }
         }
     }

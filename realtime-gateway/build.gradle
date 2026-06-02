@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.nighthunt'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'io.netty:netty-all:4.1.118.Final'
+    implementation 'io.lettuce:lettuce-core:6.5.5.RELEASE'
+    implementation 'io.nats:jnats:2.20.6'
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    runtimeOnly 'io.netty:netty-transport-native-epoll:4.1.118.Final:linux-x86_64'
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.assertj:assertj-core:3.27.3'
+}
+
+application {
+    mainClass = 'com.nighthunt.gateway.RealtimeGatewayApplication'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

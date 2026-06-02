@@ -175,9 +175,7 @@ public class DashboardService {
      */
     private int getWebSocketConnectionCount(Long roomId) {
         try {
-            // Get total active connections (GameWebSocketHandler tracks all user sessions)
-            // For room-specific count, we can count users in that room who have active WebSocket
-            // For now, return total active connections as estimate
+            // Route-backed estimate; gateway metrics remain the authoritative CCU source.
             return connectionManager.getActiveConnectionCount();
         } catch (Exception e) {
             log.warn("Error getting WebSocket connection count for room {}: {}", roomId, e.getMessage());

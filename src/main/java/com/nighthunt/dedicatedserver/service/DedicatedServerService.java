@@ -8,6 +8,7 @@ import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.room.entity.RoomPlayer;
 import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.repository.RoomRepository;
+import com.nighthunt.realtime.service.RealtimeOutboxService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class DedicatedServerService {
     private final ConnectionManager         connectionManager;
     private final RoomRepository            roomRepository;
     private final RoomPlayerRepository      roomPlayerRepository;
+    private final RealtimeOutboxService     realtimeOutboxService;
 
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(10);
 
@@ -279,6 +281,7 @@ public class DedicatedServerService {
         }
         log.info("[DS-Svc] ds_ready broadcast complete — sent={}/{} matchId={} ds={}:{}",
                 sent, players.size(), matchId, server.getIp(), server.getPort());
+        realtimeOutboxService.enqueue("events.ds.ready", payload);
     }
 
     @Transactional

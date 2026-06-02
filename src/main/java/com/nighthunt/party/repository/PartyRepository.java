@@ -1,7 +1,9 @@
 package com.nighthunt.party.repository;
 
 import com.nighthunt.party.entity.Party;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -16,6 +18,14 @@ public interface PartyRepository extends JpaRepository<Party, Long> {
      * Find party by host user ID.
      */
     Optional<Party> findByHostUserId(Long hostUserId);
+
+    /**
+     * Serialize queue/cancel mutations for one party so duplicate host requests
+     * cannot both observe IDLE and enqueue the same members concurrently.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Party p WHERE p.id = :partyId")
+    Optional<Party> findByIdForUpdate(@Param("partyId") Long partyId);
 
     /**
      * Find all parties in specific status (IDLE, IN_QUEUE, IN_ROOM, IN_GAME).

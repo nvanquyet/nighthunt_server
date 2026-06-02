@@ -120,10 +120,9 @@ public class RequestQueueInterceptor implements HandlerInterceptor {
      * Check if endpoint should skip queue
      */
     private boolean shouldSkipQueue(String endpoint) {
-        // Skip queue for health checks, static resources, WebSocket, etc.
+        // Skip queue for health checks, static resources, etc.
         if (endpoint.startsWith("/actuator") ||
                endpoint.startsWith("/dashboard") ||
-               endpoint.startsWith("/ws/") ||
                endpoint.startsWith("/static") ||
                endpoint.equals("/health")) {
             return true;

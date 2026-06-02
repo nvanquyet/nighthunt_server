@@ -71,8 +71,8 @@ else {
 }
 
 if ($allOk) {
-    Step "Running tests..."
-    $testOut = & .\gradlew.bat test --no-daemon 2>&1
+    Step "Running backend + realtime gateway tests..."
+    $testOut = & .\gradlew.bat :test :realtime-gateway:test --no-daemon 2>&1
     if ($LASTEXITCODE -eq 0) { OK "All tests passed" }
     else {
         FAIL "Tests FAILED"
