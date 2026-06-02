@@ -268,7 +268,7 @@ recipient deliveries/s = logical events/s * average recipients per event
 
 ## 9. Required Cutover Order
 
-1. Deploy staging with `REALTIME_NATS_ENABLED=true` and `JETSTREAM_OUTBOX_ENABLED=true`.
+1. Deploy staging with the required NATS and JetStream services running; the migrated backend no longer supports disabling them.
 2. Confirm `/api/ws/game` is served by `nighthunt-realtime-gateway`, not backend.
 3. Confirm ticket issue, first WSS `101`, replay rejection and Unity reconnect.
 4. Validate `connected`, `disconnected`, `ds_ready`, `match_ended`, room and force-logout delivery through the gateway.

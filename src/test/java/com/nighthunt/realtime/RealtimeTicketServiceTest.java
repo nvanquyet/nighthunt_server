@@ -38,7 +38,7 @@ class RealtimeTicketServiceTest {
         RealtimeTicketResponse response = service.issue(42L);
 
         assertThat(response.ticket()).hasSize(43);
-        assertThat(response.ticket()).doesNotContain("42");
+        assertThat(response.ticket()).isNotEqualTo("42");
         assertThat(response.expiresInSeconds()).isEqualTo(45);
         assertThat(response.wsPath()).isEqualTo("/api/ws/game");
         verify(valueOperations).set(

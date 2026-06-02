@@ -72,7 +72,7 @@
 
 ## Must Run Before Production Cutover
 
-- [ ] Deploy to staging with `REALTIME_NATS_ENABLED=true` and `JETSTREAM_OUTBOX_ENABLED=true`.
+- [ ] Deploy staging with the required NATS and JetStream services running; the migrated backend no longer supports disabling them.
 - [ ] Confirm NATS JetStream stream `NIGHTHUNT_EVENTS` is created and persists events.
 - [ ] Confirm `/api/ws/game` is served by `nighthunt-realtime-gateway`, not backend.
 - [ ] Confirm Unity login connects through ticket flow on a fresh install.

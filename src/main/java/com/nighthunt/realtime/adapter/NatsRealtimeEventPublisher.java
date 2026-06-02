@@ -10,7 +10,6 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -19,7 +18,6 @@ import java.time.Duration;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(value = "nighthunt.realtime.nats.enabled", havingValue = "true")
 public class NatsRealtimeEventPublisher implements RealtimeEventPublisher {
     private final RealtimeRouteStore routeStore;
 

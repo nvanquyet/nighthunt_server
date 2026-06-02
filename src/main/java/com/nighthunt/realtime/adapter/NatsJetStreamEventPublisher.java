@@ -14,7 +14,6 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -22,7 +21,6 @@ import java.time.Duration;
 
 @Slf4j
 @Component
-@ConditionalOnProperty(value = "nighthunt.realtime.jetstream.enabled", havingValue = "true")
 public class NatsJetStreamEventPublisher implements DurableEventPublisher {
     @Value("${nighthunt.realtime.nats.url:nats://localhost:4222}")
     private String natsUrl;
