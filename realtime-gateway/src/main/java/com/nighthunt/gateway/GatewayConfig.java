@@ -28,7 +28,7 @@ public record GatewayConfig(
                 integer(env, "GATEWAY_METRICS_PORT", 9091),
                 integer(env, "WS_ACCEPT_BACKLOG", 8192),
                 redisUri(env),
-                value(env, "NATS_URL", "nats://localhost:4222"),
+                natsUrl(env),
                 value(env, "NATS_SUBJECT_PREFIX", "rt.gateway"),
                 value(env, "WS_PATH", "/api/ws/game"),
                 integer(env, "WS_MAX_FRAME_BYTES", 4096),
@@ -56,6 +56,10 @@ public record GatewayConfig(
             return "redis://" + host + ":" + port;
         }
         return "redis://:" + password + "@" + host + ":" + port;
+    }
+
+    private static String natsUrl(Map<String, String> env) {
+        return value(env, "GATEWAY_NATS_URL", value(env, "NATS_URL", "nats://localhost:4222"));
     }
 
     private static int integer(Map<String, String> env, String key, int fallback) {

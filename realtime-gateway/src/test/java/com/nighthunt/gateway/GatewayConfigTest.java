@@ -22,4 +22,14 @@ class GatewayConfigTest {
         assertThat(config.presenceLease().toSeconds()).isEqualTo(90);
         assertThat(config.wsPath()).isEqualTo("/api/ws/game");
     }
+
+    @Test
+    void prefersContainerSpecificNatsUrlOverHostLocalUrl() {
+        GatewayConfig config = GatewayConfig.from(Map.of(
+                "NATS_URL", "nats://localhost:4222",
+                "GATEWAY_NATS_URL", "nats://nats:4222"
+        ));
+
+        assertThat(config.natsUrl()).isEqualTo("nats://nats:4222");
+    }
 }

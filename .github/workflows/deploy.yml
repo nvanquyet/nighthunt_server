@@ -293,6 +293,13 @@ jobs:
               docker inspect nighthunt-backend \
                 --format 'backend state={{.State.Status}} restart={{.RestartCount}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}} error={{.State.Error}}' \
                 2>/dev/null || true
+              echo "=== Effective NATS env ==="
+              docker inspect nighthunt-backend \
+                --format '{{range .Config.Env}}{{println .}}{{end}}' \
+                2>/dev/null | grep -E '^(NATS_URL|NIGHTHUNT_REALTIME_NATS_URL|NATS_SUBJECT_PREFIX|JETSTREAM_)=' || true
+              docker inspect nighthunt-realtime-gateway \
+                --format '{{range .Config.Env}}{{println .}}{{end}}' \
+                2>/dev/null | grep -E '^(NATS_URL|GATEWAY_NATS_URL|NATS_SUBJECT_PREFIX)=' || true
               echo "=== Backend logs (tail 240) ==="
               compose logs backend --tail=240 || true
               echo "=== Dependency logs (tail 80) ==="

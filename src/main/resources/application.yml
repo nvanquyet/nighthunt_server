@@ -221,7 +221,7 @@ nighthunt:
     ticket-ttl-seconds: ${WS_TICKET_TTL_SECONDS:45}
     ws-path: ${WS_PATH:/api/ws/game}
     nats:
-      url: ${NATS_URL:nats://localhost:4222}
+      url: ${NIGHTHUNT_REALTIME_NATS_URL:${NATS_URL:nats://localhost:4222}}
       subject-prefix: ${NATS_SUBJECT_PREFIX:rt.gateway}
     jetstream:
       stream-name: ${JETSTREAM_STREAM_NAME:NIGHTHUNT_EVENTS}
