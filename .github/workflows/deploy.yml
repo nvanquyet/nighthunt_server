@@ -214,6 +214,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           envs: GHCR_TOKEN,GH_ACTOR,DEPLOY_DIR,COMPOSE_PROJECT_NAME
+          command_timeout: 20m
           script: |
             set -e
             : "${DEPLOY_DIR:=/opt/nighthunt}"
@@ -286,24 +287,43 @@ jobs:
               "UPDATE dedicated_server SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
               2>/dev/null && echo "Stale DS records cleaned." || echo "WARN: DB cleanup failed (non-fatal)"
 
-            echo "=== Health check (30s timeout) ==="
+            dump_backend_diagnostics() {
+              echo "=== Backend diagnostics ==="
+              compose ps backend mysql redis nats || true
+              docker inspect nighthunt-backend \
+                --format 'backend state={{.State.Status}} restart={{.RestartCount}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}} error={{.State.Error}}' \
+                2>/dev/null || true
+              echo "=== Backend logs (tail 240) ==="
+              compose logs backend --tail=240 || true
+              echo "=== Dependency logs (tail 80) ==="
+              compose logs mysql redis nats --tail=80 || true
+            }
+
+            echo "=== Health check (180s timeout) ==="
             BACKEND_PORT=$(grep ^SERVER_PORT "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             BACKEND_PORT=${BACKEND_PORT:-8080}
             BACKEND_UP=false
-            for i in $(seq 1 6); do
+            for i in $(seq 1 36); do
               sleep 5
-              STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/actuator/health" | grep -o '"status":"[A-Z]*"' | head -1 || true)
+              STATE=$(docker inspect nighthunt-backend \
+                --format '{{.State.Status}} restart={{.RestartCount}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' \
+                2>/dev/null || echo "missing")
+              STATUS=$(curl -fsS "http://localhost:${BACKEND_PORT}/api/actuator/health" \
+                | grep -o '"status":"[A-Z]*"' | head -1 || true)
               if [ "$STATUS" = '"status":"UP"' ]; then
                 echo "Backend UP"
                 BACKEND_UP=true
                 break
               fi
-              echo "Waiting... ($i/6)"
+              echo "Waiting... ($i/36) backend=${STATE} health=${STATUS:-none}"
+              if [ $((i % 6)) -eq 0 ]; then
+                compose logs backend --tail=80 || true
+              fi
             done
 
             if [ "$BACKEND_UP" != "true" ]; then
               echo "Health check failed"
-              compose logs backend --tail=80
+              dump_backend_diagnostics
               exit 1
             fi
 
@@ -359,6 +379,8 @@ jobs:
             docker system df
 
       - name: Push git tag
+        if: github.ref_type == 'branch' && github.ref_name == 'main'
+        continue-on-error: true
         run: |
           DATE=$(date +%Y%m%d)
           SHA="${GITHUB_SHA:0:7}"
