@@ -46,9 +46,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+try:
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+except ImportError:
+    requests = None
+    HTTPAdapter = None
+    Retry = None
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -146,6 +151,11 @@ def derive_ws_url(api_base: str) -> str:
 
 
 def build_retry_session(insecure: bool) -> requests.Session:
+    if requests is None or HTTPAdapter is None or Retry is None:
+        raise RuntimeError(
+            "Missing Python load-test dependencies. "
+            "Install them with: pip install -r load-tests/requirements.txt"
+        )
     session = requests.Session()
     retry = Retry(
         total=2,
@@ -230,6 +240,26 @@ def auth_headers(ctx: LoginContext) -> dict[str, str]:
     }
 
 
+def issue_realtime_ticket(ctx: LoginContext, args: argparse.Namespace) -> str:
+    with build_retry_session(args.insecure) as session:
+        status, payload, _elapsed = request_json(
+            session,
+            "POST",
+            f"{args.api_base}/realtime/tickets",
+            timeout=args.request_timeout,
+            headers=auth_headers(ctx),
+        )
+    if status != 200:
+        raise RuntimeError(f"realtime ticket failed for {ctx.username}: http={status} payload={payload}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"realtime ticket returned non-JSON payload for {ctx.username}: {payload}")
+    response_data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    ticket = response_data.get("ticket")
+    if not ticket:
+        raise RuntimeError(f"realtime ticket missing for {ctx.username}: payload={payload}")
+    return str(ticket)
+
+
 def run_authenticated_http_probe(ctx: LoginContext, args: argparse.Namespace) -> dict[str, Any]:
     session = build_retry_session(args.insecure)
     endpoints = [
@@ -299,21 +329,29 @@ async def open_ws_connection(ctx: LoginContext, args: argparse.Namespace) -> dic
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-    uri = f"{args.ws_url}?{urlencode({'token': ctx.access_token})}"
+    ticket = issue_realtime_ticket(ctx, args)
+    uri = f"{args.ws_url}?{urlencode({'ticket': ticket})}"
     start = time.perf_counter()
     async with websockets.connect(uri, ssl=ssl_context, open_timeout=args.request_timeout) as ws:
         first_message = await asyncio.wait_for(ws.recv(), timeout=args.request_timeout)
         await ws.send(json.dumps({"type": "ping"}))
         pong_message = await asyncio.wait_for(ws.recv(), timeout=args.request_timeout)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        return {
-            "username": ctx.username,
-            "connected": "\"type\":\"connected\"" in first_message or '"type":"connected"' in first_message,
-            "pong": "\"type\":\"pong\"" in pong_message or '"type":"pong"' in pong_message,
-            "firstMessage": first_message,
-            "pongMessage": pong_message,
-            "elapsedMs": round(elapsed_ms, 2),
-        }
+    replay_rejected = False
+    try:
+        async with websockets.connect(uri, ssl=ssl_context, open_timeout=args.request_timeout):
+            pass
+    except Exception:
+        replay_rejected = True
+    return {
+        "username": ctx.username,
+        "connected": "\"type\":\"connected\"" in first_message or '"type":"connected"' in first_message,
+        "pong": "\"type\":\"pong\"" in pong_message or '"type":"pong"' in pong_message,
+        "ticketReplayRejected": replay_rejected,
+        "firstMessage": first_message,
+        "pongMessage": pong_message,
+        "elapsedMs": round(elapsed_ms, 2),
+    }
 
 
 async def force_logout_probe(ctx: LoginContext, args: argparse.Namespace) -> dict[str, Any]:
@@ -329,7 +367,8 @@ async def force_logout_probe(ctx: LoginContext, args: argparse.Namespace) -> dic
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-    uri = f"{args.ws_url}?{urlencode({'token': ctx.access_token})}"
+    ticket = issue_realtime_ticket(ctx, args)
+    uri = f"{args.ws_url}?{urlencode({'ticket': ticket})}"
     session = build_retry_session(args.insecure)
     async with websockets.connect(uri, ssl=ssl_context, open_timeout=args.request_timeout) as ws:
         await asyncio.wait_for(ws.recv(), timeout=args.request_timeout)
@@ -372,7 +411,10 @@ def run_ws_phase(contexts: list[LoginContext], args: argparse.Namespace) -> dict
     force_logout_result = None
     if selected:
         force_logout_result = asyncio.run(force_logout_probe(selected[0], args))
-    failures = [item for item in connect_results if not (item["connected"] and item["pong"])]
+    failures = [
+        item for item in connect_results
+        if not (item["connected"] and item["pong"] and item["ticketReplayRejected"])
+    ]
     return {
         "users": len(selected),
         "connectProbe": connect_results,

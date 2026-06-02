@@ -15,7 +15,7 @@
  *   SCENARIO=smoke|connection_ramp|ping_storm|soak
  *   SESSION_DURATION_SECONDS=3600
  *   INSECURE_TLS=true                    for local self-signed HTTPS/WSS only
- *   ALLOW_CREDENTIAL_REUSE=true          explicit functional-only override
+ *   ALLOW_CREDENTIAL_REUSE=true          smoke-only functional override
  *
  * Examples:
  *   k6 run load-tests/k6/ws_load_test.js -e HOST=vawnwuyest.me -e AUTH_TOKENS=... -e SESSION_IDS=...
@@ -30,6 +30,7 @@ import { Counter, Gauge, Rate, Trend } from 'k6/metrics';
 const wsConnectErrors = new Counter('nighthunt_ws_connect_errors');
 const wsMessagesSent = new Counter('nighthunt_ws_messages_sent');
 const wsMessagesReceived = new Counter('nighthunt_ws_messages_received');
+const wsSkippedOverlappingPings = new Counter('nighthunt_ws_skipped_overlapping_pings');
 const wsPongLatency = new Trend('nighthunt_ws_pong_latency_ms', true);
 const wsActiveConns = new Gauge('nighthunt_ws_active_connections');
 const wsConnectRate = new Rate('nighthunt_ws_connect_success_rate');
@@ -64,6 +65,12 @@ export function setup() {
     if (TOKENS.length === 0 || SESSION_IDS.length === 0) {
         throw new Error('AUTH_TOKENS/JWT_TOKEN and SESSION_IDS/SESSION_ID are required.');
     }
+    if (ALLOW_CREDENTIAL_REUSE && SCENARIO !== 'smoke') {
+        throw new Error(
+            'ALLOW_CREDENTIAL_REUSE=true is smoke-only. ' +
+            `${SCENARIO} capacity certification requires one unique token and session id per VU.`
+        );
+    }
     if (!ALLOW_CREDENTIAL_REUSE && (TOKENS.length < requiredCredentials || SESSION_IDS.length < requiredCredentials)) {
         throw new Error(
             `Scenario ${SCENARIO} needs ${requiredCredentials} unique credentials; ` +
@@ -96,6 +103,7 @@ export default function () {
     const state = {
         opened: false,
         failed: false,
+        awaitingPong: false,
         pingAt: 0,
         intervalId: null,
         timeoutId: null,
@@ -154,7 +162,11 @@ function handleMessage(data, state) {
     try {
         const msg = JSON.parse(data);
         if (msg.type === 'pong') {
-            wsPongLatency.add(state.pingAt ? Date.now() - state.pingAt : 0);
+            if (state.awaitingPong && state.pingAt) {
+                wsPongLatency.add(Date.now() - state.pingAt);
+                state.awaitingPong = false;
+                state.pingAt = 0;
+            }
         }
         if (msg.type === 'connected') {
             check(msg, { 'got connected event': value => value.type === 'connected' });
@@ -166,6 +178,11 @@ function handleMessage(data, state) {
 
 function sendPing(socket, state) {
     if (socket.readyState !== 1) return;
+    if (state.awaitingPong) {
+        wsSkippedOverlappingPings.add(1);
+        return;
+    }
+    state.awaitingPong = true;
     state.pingAt = Date.now();
     socket.send(JSON.stringify({ type: 'ping' }));
     wsMessagesSent.add(1);

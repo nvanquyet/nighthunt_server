@@ -120,6 +120,7 @@ class MatchmakingQueueServiceTest {
                 .displayName("1 vs 1")
                 .modeStatus("AVAILABLE")
                 .matchmakingEnabled(true)
+                .allowFill(true)
                 .isDevMode(devMode)
                 .totalPlayers(2)
                 .playersPerTeam(1)
@@ -133,6 +134,7 @@ class MatchmakingQueueServiceTest {
                 .displayName("4 vs 4")
                 .modeStatus("AVAILABLE")
                 .matchmakingEnabled(true)
+                .allowFill(true)
                 .totalPlayers(8)
                 .playersPerTeam(4)
                 .platformFilter("ALL")
@@ -196,7 +198,7 @@ class MatchmakingQueueServiceTest {
     void enqueue_upsertDeletesOldEntry() {
         when(userRepo.findById(USER_A)).thenReturn(Optional.of(makeUser(USER_A, 1000)));
         when(gameModeService.getGameModeByKey(MODE)).thenReturn(make1v1Mode(false));
-        when(gameMapService.isMapValid(any())).thenReturn(true);
+        when(gameMapService.isMapValidForMatchmaking(any(), any(), anyInt())).thenReturn(true);
         when(partyMemberRepo.existsByUserId(USER_A)).thenReturn(false);
 
         service.enqueue(USER_A, MODE, null, null);
@@ -212,7 +214,7 @@ class MatchmakingQueueServiceTest {
     void enqueuePartyMember_storesPartyMetadata() {
         when(userRepo.findById(USER_A)).thenReturn(Optional.of(makeUser(USER_A, 1000)));
         when(gameModeService.getGameModeByKey("4v4")).thenReturn(make4v4Mode());
-        when(gameMapService.isMapValid("map_01")).thenReturn(true);
+        when(gameMapService.isMapValidForMatchmaking("map_01", "4v4", 8)).thenReturn(true);
 
         service.enqueuePartyMember(USER_A, "4v4", "map_01", "PC", 55L, 2, false);
 
@@ -225,6 +227,21 @@ class MatchmakingQueueServiceTest {
         assertThat(saved.getPartySize()).isEqualTo(2);
         assertThat(saved.isAllowFill()).isFalse();
         assertThat(saved.getPlatform()).isEqualTo("PC");
+    }
+
+    @Test
+    @DisplayName("enqueuePartyMember rejects client fill override when mode config disables Fill Party")
+    void enqueuePartyMember_rejectsDisabledFillOverride() {
+        GameModeDTO mode = make4v4Mode();
+        mode.setAllowFill(false);
+        when(gameModeService.getGameModeByKey("4v4")).thenReturn(mode);
+
+        assertThatThrownBy(() ->
+                service.enqueuePartyMember(USER_A, "4v4", "map_01", "PC", 55L, 2, true))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Fill Party is disabled");
+
+        verifyNoInteractions(userRepo);
     }
 
     @Test

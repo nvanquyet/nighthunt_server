@@ -8,6 +8,38 @@
 
 ---
 
+## 0. Audit Corrections (June 2, 2026)
+
+The first test run proved that the production routes are reachable, but it did **not** certify the maximum Netty WebSocket CCU.
+
+| Item | Correct interpretation |
+|---|---|
+| JMeter `500 / 1000 / 2000 VU` | Active REST request generators. These values measure the Spring Boot business API under request load, not online player CCU and not Netty socket capacity. |
+| k6 `ping_storm` with 100 accounts reused above 100 VU | Functional reconnect churn only. It is not a valid concurrent-player capacity test because the gateway applies single-device replacement for the same user. |
+| Previous `<= ~400` WebSocket conclusion | Withdrawn. A maximum stable WebSocket CCU has not been certified yet. |
+| Valid WebSocket certification | Run `connection_ramp`, `ping_storm`, and `soak` with one unique access token and session ID per concurrent VU, long-lived sockets, external load generator, and recorded CPU/RAM/Redis/NATS metrics. |
+
+Production public-route probes performed on June 2, 2026:
+
+| Probe | Result |
+|---|---|
+| `http://vawnwuyest.me/` | `301` redirect to HTTPS |
+| `GET /api/actuator/health` | `200`, backend reports healthy |
+| `GET /api/game-modes/available` | `200` |
+| `GET /api/maps/available` | `200` |
+| `POST /api/realtime/tickets` without auth | `403`, protected by backend |
+| `GET /api/ws/game` without ticket | `401 Unauthorized`, served by Netty gateway contract |
+
+Production config drift found during the same audit:
+
+| Config | Current VPS before V42 deploy | Corrected by |
+|---|---|---|
+| `4v4` ranked mode | `COMING_SOON`, `matchmakingEnabled=false`, `allowFill=false` | `V42__enable_4v4_party_fill_and_align_map_counts.sql` |
+| `map_01.supportedPlayerCounts` | `[4,6]`, missing the 8-player count for declared `4v4` support | `V42__enable_4v4_party_fill_and_align_map_counts.sql` |
+| Backend ranked map validation | Checked only active/unlocked map state | `GameMapService.isMapValidForMatchmaking(...)` now validates mode and total-player compatibility |
+
+Use `scripts/test-vps-api.ps1` to repeat the public probes. Provide a disposable login or a token/session pair to also test ticket creation, WSS connection, the initial `connected` frame, and single-use ticket replay rejection.
+
 ## 1. System Architecture
 
 ### 1.1 Two-Layer Service Design
@@ -129,6 +161,8 @@ Spring Boot ──► realtime_outbox_event table (MySQL) ──► OutboxPublis
 ```
 
 **Durability**: Events are persisted in MySQL before publishing. If NATS is unavailable, events accumulate in the outbox and are retried. JetStream provides at-least-once delivery guarantees.
+
+**Runtime audit correction**: the direct gateway push hot path uses NATS Core subjects shaped as `rt.gateway.<gatewayId>.user.<userId>`. JetStream `NIGHTHUNT_EVENTS` is the durable outbox path for persisted business events. Do not describe every WebSocket push as a direct JetStream delivery.
 
 ### 2.4 Session Dual-Header Auth
 
@@ -260,7 +294,13 @@ wss://vawnwuyest.me/api/ws/game?ticket={ticket}
 
 **Result**: Backend in severe saturation. Login timeout rate 33%, avg latency 12.5s. Only a small fraction of VUs complete login and reach business endpoints. System is not operational at this load.
 
-### 4.3 Resource Utilization (Peak, 2000VU Load)
+### 4.3 REST Versus RESTful
+
+`REST` and `RESTful` are not two different network protocols. The current Spring Boot business API already uses HTTP JSON REST endpoints. Some routes are resource-oriented and some are action-oriented, which is normal for authentication, matchmaking, and dedicated-server lifecycle operations.
+
+Renaming routes does not improve VU capacity. Capacity work must target measured bottlenecks such as login hashing concurrency, backend CPU, connection pools, request rate limits, and horizontal backend replicas. Any future URI cleanup should be released as a versioned API contract so existing Unity builds are not broken.
+
+### 4.4 Resource Utilization (Peak, 2000VU Load)
 
 | Service | CPU % | Memory Used | Memory Limit | Memory % |
 |---|---|---|---|---|
@@ -273,7 +313,7 @@ wss://vawnwuyest.me/api/ws/game?ticket={ticket}
 
 **Bottleneck**: The Spring Boot backend CPU is the primary limiting factor. At 2000 VU the backend reaches ~85% CPU, causing request queue buildup and timeout errors. MySQL is healthy (51% RAM). Redis is well within limits.
 
-### 4.4 Capacity Summary
+### 4.5 Capacity Summary
 
 | Metric | 500 VU | 1 000 VU | 2 000 VU |
 |---|---|---|---|
@@ -289,12 +329,12 @@ wss://vawnwuyest.me/api/ws/game?ticket={ticket}
 
 | Overall summary | Value |
 |---|---|
-| **Safe concurrent users (REST)** | ≤ 500 |
+| **Validated REST load point** | 500 active JMeter VU at 0% business errors |
 | **Peak REST throughput** | ~175 req/s at 500 VU |
-| **WS connections (pong p95 <250ms)** | ≤ ~400 concurrent |
-| **WS connections (99.99% connect success)** | tested to 575 (gateway OK, backend bottleneck) |
+| **Maximum stable WebSocket CCU** | Not certified yet |
+| **Previous 575-VU WebSocket observation** | Functional reconnect churn only; not a CCU result |
 | **Bottleneck** | Spring Boot CPU (85% at 2000 VU) |
-| **Scale recommendation** | Add backend replica or increase vCPU allocation above 500 CCU |
+| **Scale recommendation** | Optimize or scale business API above 500 active REST VU; certify Netty separately with unique identities |
 
 ---
 
@@ -325,7 +365,7 @@ ws_connect_success:   100%
 
 ### 5.3 ping_storm Scenario (ramp 100→1000 VU over 10 min)
 
-**Test stopped early** — k6 halted at 2m38s / 575 VU when `nighthunt_ws_pong_latency_ms p(95)` exceeded the 250ms threshold. This pinpoints the latency inflection at ~500 concurrent WS sessions.
+**Test stopped early** — k6 halted at 2m38s / 575 VU when `nighthunt_ws_pong_latency_ms p(95)` exceeded the 250ms threshold. This records a latency failure under reconnect churn. It does not pinpoint the maximum stable concurrent WebSocket session count.
 
 | Metric | Value | Threshold | Status |
 |---|---|---|---|
@@ -344,7 +384,7 @@ ws_connect_success:   100%
 | Msgs sent | 28 513 | — | — |
 | Msgs received | 44 795 | — | — |
 
-**Root cause of pong latency degradation**: The ticket endpoint (`POST /api/realtime/tickets`) routes through the already-loaded Spring Boot backend. At 500+ concurrent WS sessions each fetching a new ticket on reconnect, ticket fetch latency rose to avg 634ms (p95 1.42s), which inflated pong round-trips because the session loop couples ticket fetch and WS lifetime. The gateway itself (Netty) handled connections at 99.99% success — the backend REST layer is the bottleneck for both REST and WS session establishment.
+**Root-cause status**: Not isolated by this run. Ticket fetch latency did degrade because `POST /api/realtime/tickets` routes through Spring Boot, but this scenario also reused 100 identities, triggered single-device socket replacement churn, repeatedly fetched tickets, and used an overlapping-ping measurement. Run the corrected unique-identity scenarios before attributing pong RTT degradation to one component.
 
 ### 5.4 WS Resource Profile
 
@@ -354,11 +394,24 @@ The Netty gateway is designed for high connection counts:
 |---|---|---|---|
 | Gateway RAM | 512 MiB | 112.9 MiB | ~399 MiB free |
 | OS file descriptors | 200 000 | — | large |
-| WS connect success | target >99% | **99.99%** at 575 VU | ✓ |
+| WS connect success | target >99% | **99.99%** during reconnect churn | functional observation only |
 | WS connect latency avg | target <50ms smoke | avg 13ms (smoke), 1.13s (575VU) | — |
 | Pong latency p(95) | target <250ms | 601ms at ~500 VU | ✗ exceeded |
 
-**Conclusion**: The Netty gateway itself is not the WS bottleneck. All 12 592 connection attempts succeeded (99.99%). The pong latency degradation is caused by the ticket-fetch step routing through the saturated Spring Boot backend, not by the gateway. Under a pure keep-alive WS workload (no ticket re-fetch), the gateway would support significantly more connections.
+**Conclusion**: This run proves that the deployed ticket-to-WSS flow works and survived heavy reconnect churn. It is insufficient to prove the Netty maximum CCU or assign the RTT failure to a single component.
+
+### 5.5 Certification Correction
+
+The metrics above remain useful as a reconnect-churn observation, but they must not be published as Netty CCU capacity. The run reused 100 credentials while ramping above 100 VU, and the gateway intentionally replaces an older connection when the same user reconnects. The original k6 script also allowed a new ping timestamp to overwrite an earlier unanswered ping timestamp.
+
+The corrected k6 script now:
+
+- rejects `ALLOW_CREDENTIAL_REUSE=true` for every capacity scenario;
+- requires one unique token and session ID per concurrent VU;
+- records at most one outstanding application-level ping per socket;
+- exposes skipped overlapping pings as `nighthunt_ws_skipped_overlapping_pings`.
+
+The existing `connection_ramp` scenario is configured to hold sockets while ramping through `100`, `1000`, `3000`, `5000`, and `10000` VU. A production capacity number must be recorded only after that run completes from an external generator with enough unique accounts.
 
 ---
 
@@ -375,7 +428,7 @@ The Netty gateway is designed for high connection counts:
 
 ### 6.2 Known Limitations
 
-- Single-node deployment — no horizontal backend scaling configured (scale-out needed above 500 CCU).
+- Single-node deployment — no horizontal backend scaling configured (scale-out should be evaluated above the validated 500 active REST VU load point).
 - nginx RAM limit is 64 MiB (at 81% during load) — consider raising to 128 MiB.
 - MySQL connection pool is the secondary bottleneck after backend CPU.
 
@@ -390,6 +443,7 @@ The Netty gateway is designed for high connection counts:
 | V39 | Create realtime outbox table | 2026-06-02 |
 | V40 | Add matchmaking group metadata | 2026-06-02 |
 | V41 | Fix `realtime_outbox_event.status` ENUM for Hibernate 6 | 2026-06-02 |
+| V42 | Enable ranked 4v4 Fill Party and align map player-count metadata | Pending deploy |
 
 ---
 
@@ -433,4 +487,18 @@ TICKET=$(curl -sf -X POST "$BASE/realtime/tickets" \
   python3 -c "import sys,json; print(json.load(sys.stdin)['data']['ticket'])")
 echo "Ticket: $TICKET"
 # Connect: wss://vawnwuyest.me/api/ws/game?ticket=$TICKET
+```
+
+### 8.5 Repeatable Local VPS Probe
+
+Run public route probes from a local Windows machine:
+
+```powershell
+.\scripts\test-vps-api.ps1
+```
+
+Run the authenticated ticket and WSS replay checks with a disposable staging account:
+
+```powershell
+.\scripts\test-vps-api.ps1 -Username "<username>" -Password "<password>"
 ```

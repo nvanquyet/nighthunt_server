@@ -723,7 +723,7 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO game_modes (mode_key, display_name, players_per_team, total_players, mode_status, display_order, description, allow_fill, matchmaking_enabled, min_elo, max_elo, is_active, is_dev_mode, platform_filter) VALUES
 ('2v2', '2 vs 2', 2,  4,  'AVAILABLE',   1, 'Duo match — team of two',         1, 1, 0, 9999, 1, 0, 'ALL'),
 ('3v3', '3 vs 3', 3,  6,  'AVAILABLE',   2, 'Squad match — team of three',     1, 1, 0, 9999, 1, 0, 'ALL'),
-('4v4', '4 vs 4', 4,  8,  'COMING_SOON', 3, 'Full squad — team of four',       0, 0, 0, 9999, 1, 0, 'ALL'),
+('4v4', '4 vs 4', 4,  8,  'AVAILABLE',   3, 'Full squad — team of four',       1, 1, 0, 9999, 1, 0, 'ALL'),
 ('5v5', '5 vs 5', 5,  10, 'AVAILABLE',   4, 'Large battle — five per side',    1, 0, 0, 9999, 1, 0, 'ALL'),
 ('1v1', '1 vs 1', 1,  2,  'AVAILABLE',   0, '1v1 ranked test mode — 2 players, 1 per team.', 1, 1, 0, 9999, 1, 0, 'ALL')
 ON DUPLICATE KEY UPDATE
@@ -756,7 +756,7 @@ INSERT INTO game_maps (map_id, display_name, description, scene_name, supported_
             JSON_OBJECT('zoneIndex',4,'startRadius',25.0,'endRadius',10.0,'waitBeforeShrink',30.0,'shrinkDuration',30.0,'damagePerSecond',25.0,'damageTick',1.0,'isScoreBonusZone',FALSE,'zoneBonusMultiplier',1.5,'minRadiusOverride',10.0)
         )
     ),
-    '[4,6]'),
+    '[2,4,6,8,10]'),
 ('map_02', 'Arctic Base', 'Close-quarters in a frozen research facility.', 'GameMap_02',
     '["2v2","3v3","1v1"]', 0, 1, 2,
     JSON_OBJECT(
@@ -772,7 +772,7 @@ INSERT INTO game_maps (map_id, display_name, description, scene_name, supported_
             JSON_OBJECT('zoneIndex',2,'startRadius',25.0,'endRadius',10.0,'waitBeforeShrink',20.0,'shrinkDuration',20.0,'damagePerSecond',25.0,'damageTick',1.0,'isScoreBonusZone',FALSE,'zoneBonusMultiplier',1.5,'minRadiusOverride',10.0)
         )
     ),
-    '[4]')
+    '[2,4,6]')
 ON DUPLICATE KEY UPDATE
     display_name = VALUES(display_name),
     supported_modes = VALUES(supported_modes),

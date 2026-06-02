@@ -34,6 +34,11 @@
 - [x] Require unique credentials per k6 VU so single-device replacement cannot falsify CCU results.
 - [x] Upgrade realtime load generation to the recommended `k6/websockets` global event-loop API.
 - [x] Add k6 realtime certification runner.
+- [x] Reject credential reuse for k6 capacity scenarios and prevent overlapping pong timestamps.
+- [x] Add k6 runner preflight for the unique identity count required by each scenario.
+- [x] Migrate full HTTPS runner from JWT query-string WSS auth to one-time ticket WSS auth.
+- [x] Add consumed-ticket replay rejection to the full HTTPS runner.
+- [x] Add repeatable local VPS public-route probe: `scripts/test-vps-api.ps1`.
 - [x] Add NATS and realtime-gateway to compose.
 - [x] Route `/api/ws/` through realtime-gateway in Nginx.
 - [x] Redact query string from Nginx access logs by logging `$uri` instead of `$request`.
@@ -61,6 +66,9 @@
 - [x] Add matchmaking queue metadata migration `V40__add_matchmaking_group_metadata.sql`.
 - [x] Guard cluster-wide matchmaking ticks with Redis token lock, Lua renew and compare-delete release.
 - [x] Serialize party queue/cancel mutations with MySQL pessimistic row lock.
+- [x] Add Flyway `V42` to enable ranked `4v4` Fill Party and align map player-count metadata.
+- [x] Reject ranked queue requests when the selected map does not support the requested mode and total player count.
+- [x] Filter Unity ranked map selection by mode and total player count; block queue when no compatible map exists.
 
 ## Must Run Before Production Cutover
 
@@ -69,6 +77,7 @@
 - [ ] Confirm `/api/ws/game` is served by `nighthunt-realtime-gateway`, not backend.
 - [ ] Confirm Unity login connects through ticket flow on a fresh install.
 - [ ] Confirm reconnect gets a new ticket every attempt.
+- [ ] Run `scripts/test-vps-api.ps1` with a disposable VPS credential and confirm ticket issue, WSS connect and replay rejection.
 - [ ] Confirm `ds_ready` and `match_ended` events reach clients through gateway.
 - [ ] Run `load-tests/k6/run-realtime-certification.ps1` from an external generator.
 - [ ] Run JMeter REST tests while k6 WS test is holding connections.
@@ -78,6 +87,7 @@
 - [ ] Run Redis outage behavior test.
 - [ ] Validate Docker Compose on VPS because local workstation currently has no Docker CLI.
 - [ ] Run party Fill Party staging scenarios: locked underfilled team, temporary fill team, match-end party reset.
+- [ ] Confirm VPS applies Flyway `V42`: `4v4` is AVAILABLE with Fill Party and `map_01` advertises 8-player support.
 
 ## Remaining Migration Work
 

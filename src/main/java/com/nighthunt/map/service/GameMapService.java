@@ -50,6 +50,21 @@ public class GameMapService {
                 .orElse(false);
     }
 
+    /**
+     * Validate ranked matchmaking compatibility against the same map metadata
+     * consumed by Unity. Null mapId means that the matcher may select any map.
+     */
+    @Transactional(readOnly = true)
+    public boolean isMapValidForMatchmaking(String mapId, String modeKey, int totalPlayers) {
+        if (mapId == null || mapId.isBlank()) return true;
+        return mapRepository.findByMapId(mapId)
+                .map(map -> map.isActive()
+                        && !map.isLocked()
+                        && supportsMode(map, modeKey)
+                        && supportsPlayerCount(map, totalPlayers))
+                .orElse(false);
+    }
+
     /** Resolve a map's scene name from its mapId. Used by DS allocation. */
     @Transactional(readOnly = true)
     public String getSceneName(String mapId) {
@@ -226,6 +241,20 @@ public class GameMapService {
             log.warn("[GameMapService] Failed to parse supportedPlayerCountsJson: {}", json);
             return Collections.emptyList();
         }
+    }
+
+    private boolean supportsMode(GameMap map, String modeKey) {
+        List<String> supportedModes = parseSupportedModes(map.getSupportedModesJson());
+        return supportedModes == null
+                || supportedModes.isEmpty()
+                || supportedModes.stream().anyMatch(mode -> mode.equalsIgnoreCase(modeKey));
+    }
+
+    private boolean supportsPlayerCount(GameMap map, int totalPlayers) {
+        List<Integer> supportedPlayerCounts = parseSupportedPlayerCounts(map.getSupportedPlayerCountsJson());
+        return supportedPlayerCounts == null
+                || supportedPlayerCounts.isEmpty()
+                || supportedPlayerCounts.contains(totalPlayers);
     }
 
     private JsonNode parseJsonNode(String json) {

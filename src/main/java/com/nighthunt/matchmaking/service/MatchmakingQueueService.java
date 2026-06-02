@@ -165,6 +165,10 @@ public class MatchmakingQueueService {
             throw new BusinessException(ErrorCodes.PARTY_SIZE_MISMATCH,
                     "Queue unit size exceeds team size for " + gameMode);
         }
+        if (partyId != null && allowFill && !mode.isAllowFill()) {
+            throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
+                    "Fill Party is disabled for game mode: " + gameMode);
+        }
 
         // Enforce platform restriction set on the game mode
         if (platform != null && !"ALL".equalsIgnoreCase(mode.getPlatformFilter())) {
@@ -174,9 +178,10 @@ public class MatchmakingQueueService {
             }
         }
 
-        if (mapId != null && !mapId.isBlank() && !gameMapService.isMapValid(mapId)) {
+        if (mapId != null && !mapId.isBlank()
+                && !gameMapService.isMapValidForMatchmaking(mapId, gameMode, mode.getTotalPlayers())) {
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
-                    "Map not available for matchmaking: " + mapId);
+                    "Map does not support matchmaking mode: " + mapId + " / " + gameMode);
         }
 
         User user = userRepository.findById(userId)

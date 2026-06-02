@@ -43,6 +43,7 @@ No kiem tra:
 - ket noi thanh cong
 - nhan su kien `connected`
 - gui `{"type":"ping"}` va nhan `{"type":"pong"}`
+- thu dung lai ticket da consume va xac nhan gateway reject
 - dang nhap lai cung user de xac nhan `force_logout` tren ket noi cu
 
 Muc tieu:
@@ -108,6 +109,15 @@ Day la moc HTTP REST stress, khong phai gioi han WS CCU. Realtime CCU phai do ba
 
 Khi tang VU manh, chay JMeter REST song song voi k6 WS de do ca REST request-serving va realtime connection-holding.
 
+Moi k6 VU capacity phai co mot access token va session ID rieng. Khong dung credential reuse de ket luan CCU. Runner `run-realtime-certification.ps1` se fail preflight neu thieu identity:
+
+| Scenario | Unique identities bat buoc | Muc dich |
+|---|---:|---|
+| `smoke` | 1 | Contract check |
+| `ping_storm` | 1000 | Ping RTT stress |
+| `soak` | 1000 | Long-held socket stability |
+| `connection_ramp` | 10000 | CCU ladder `100 -> 1000 -> 3000 -> 5000 -> 10000` |
+
 ### E. Party fill / no-fill acceptance
 
 Client that gui party queue payload:
@@ -160,6 +170,12 @@ Hai bai nay do:
 - failure after kill / no-heartbeat
 
 ## 2. Lenh chay full suite
+
+Setup Python dependency:
+
+```bash
+pip install -r load-tests/requirements.txt
+```
 
 Lenh toi thieu:
 

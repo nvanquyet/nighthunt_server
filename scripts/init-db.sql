@@ -840,7 +840,7 @@ INSERT IGNORE INTO `role_permissions` (`role`, `permission`) VALUES
 INSERT INTO `game_modes` (`mode_key`, `display_name`, `description`, `players_per_team`, `total_players`, `allow_fill`, `matchmaking_enabled`, `min_elo`, `max_elo`, `mode_status`, `display_order`, `is_active`, `is_dev_mode`, `platform_filter`) VALUES
 ('2v2', '2 vs 2', 'Duo match — team of two',                2, 4,  1, 1, 0, 9999, 'AVAILABLE',   1, 1, 0, 'ALL'),
 ('3v3', '3 vs 3', 'Squad match — team of three',            3, 6,  1, 1, 0, 9999, 'AVAILABLE',   2, 1, 0, 'ALL'),
-('4v4', '4 vs 4', 'Full squad — team of four',              4, 8,  0, 0, 0, 9999, 'COMING_SOON', 3, 1, 0, 'ALL'),
+('4v4', '4 vs 4', 'Full squad — team of four',              4, 8,  1, 1, 0, 9999, 'AVAILABLE',   3, 1, 0, 'ALL'),
 ('5v5', '5 vs 5', 'Large battle — five per side',           5, 10, 1, 0, 0, 9999, 'AVAILABLE',   4, 1, 0, 'ALL'),
 ('1v1', '1 vs 1', '1v1 ranked test mode — 2 players, 1 per team.', 1, 2, 1, 1, 0, 9999, 'AVAILABLE', 0, 1, 1, 'ALL')
 ON DUPLICATE KEY UPDATE
@@ -865,7 +865,7 @@ INSERT INTO `game_maps` (`map_id`, `display_name`, `description`, `scene_name`, 
   '02_Map_01',
   '["2v2", "3v3", "4v4", "5v5", "1v1"]',
   '{"phases": [{"endRadius": 200.0, "zoneIndex": 0, "damageTick": 1.0, "startRadius": 400.0, "shrinkDuration": 180.0, "damagePerSecond": 0.0, "isScoreBonusZone": false, "waitBeforeShrink": 120.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 1.5}, {"endRadius": 100.0, "zoneIndex": 1, "damageTick": 1.0, "startRadius": 200.0, "shrinkDuration": 120.0, "damagePerSecond": 3.0, "isScoreBonusZone": false, "waitBeforeShrink": 90.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 1.5}, {"endRadius": 50.0, "zoneIndex": 2, "damageTick": 1.0, "startRadius": 100.0, "shrinkDuration": 90.0, "damagePerSecond": 8.0, "isScoreBonusZone": true, "waitBeforeShrink": 60.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 2.0}, {"endRadius": 25.0, "zoneIndex": 3, "damageTick": 1.0, "startRadius": 50.0, "shrinkDuration": 60.0, "damagePerSecond": 15.0, "isScoreBonusZone": false, "waitBeforeShrink": 45.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 1.5}, {"endRadius": 10.0, "zoneIndex": 4, "damageTick": 1.0, "startRadius": 25.0, "shrinkDuration": 30.0, "damagePerSecond": 25.0, "isScoreBonusZone": false, "waitBeforeShrink": 30.0, "minRadiusOverride": 10.0, "zoneBonusMultiplier": 1.5}], "killScore": 100.0, "centerMode": 0, "bossKillScore": 300.0, "initialRadius": 400.0, "finalZoneMinRadius": 10.0, "killScoreStealPercent": 0.15, "maxCenterShiftPercent": 0.6, "minCenterShiftPercent": 0.1, "baseSurvivalPtsPerSecond": 1.0, "beaconAllowedInFinalZone": false, "captureZoneScorePerSecond": 20.0}',
-  '[4, 6]',
+  '[2, 4, 6, 8, 10]',
   0, 1, 1
 ),
 (
@@ -875,7 +875,7 @@ INSERT INTO `game_maps` (`map_id`, `display_name`, `description`, `scene_name`, 
   '02_Map_02',
   '["2v2", "3v3", "1v1"]',
   '{"phases": [{"endRadius": 50.0, "zoneIndex": 0, "damageTick": 1.0, "startRadius": 100.0, "shrinkDuration": 45.0, "damagePerSecond": 8.0, "isScoreBonusZone": true, "waitBeforeShrink": 45.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 2.0}, {"endRadius": 25.0, "zoneIndex": 1, "damageTick": 1.0, "startRadius": 50.0, "shrinkDuration": 30.0, "damagePerSecond": 15.0, "isScoreBonusZone": false, "waitBeforeShrink": 30.0, "minRadiusOverride": 0.0, "zoneBonusMultiplier": 1.5}, {"endRadius": 10.0, "zoneIndex": 2, "damageTick": 1.0, "startRadius": 25.0, "shrinkDuration": 20.0, "damagePerSecond": 25.0, "isScoreBonusZone": false, "waitBeforeShrink": 20.0, "minRadiusOverride": 10.0, "zoneBonusMultiplier": 1.5}], "killScore": 100.0, "centerMode": 2, "bossKillScore": 300.0, "initialRadius": 100.0, "finalZoneMinRadius": 10.0, "killScoreStealPercent": 0.15, "maxCenterShiftPercent": 0.0, "minCenterShiftPercent": 0.0, "baseSurvivalPtsPerSecond": 1.0, "beaconAllowedInFinalZone": false, "captureZoneScorePerSecond": 20.0}',
-  '[4]',
+  '[2, 4, 6]',
   0, 1, 2
 )
 ON DUPLICATE KEY UPDATE
