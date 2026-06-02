@@ -1,4 +1,4 @@
-﻿spring:
+spring:
   application:
     name: nighthunt-backend
 
@@ -41,7 +41,7 @@
   data:
     redis:
       repositories:
-        enabled: false   # KhÃ´ng dÃ¹ng @RedisHash repos, chá»‰ dÃ¹ng RedisTemplate
+        enabled: false   # Khng dng @RedisHash repos, ch dng RedisTemplate
       host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
@@ -49,13 +49,13 @@
       lettuce:
         pool:
           enabled: true
-          max-active: 100     # Default 8 â†’ bottleneck with concurrent auth/session checks
+          max-active: 100     # Default 8  bottleneck with concurrent auth/session checks
           max-idle: 50
           min-idle: 20
           max-wait: 5000ms
 
 jwt:
-  secret: ${JWT_SECRET:}  # MUST be set via env var â€” no fallback in production
+  secret: ${JWT_SECRET:}  # MUST be set via env var  no fallback in production
   expiration: ${JWT_EXPIRATION:900000} # 15 minutes in milliseconds
 
 # Auth configuration
@@ -77,13 +77,13 @@ server:
     include-stacktrace: on_param
   tomcat:
     threads:
-      max: 500       # Default 200 â†’ not enough for 500-VU stress test
+      max: 500       # Default 200  not enough for 500-VU stress test
       min-spare: 50
     accept-count: 500  # Queue length when all threads are busy
     connection-timeout: 20000
 
 ---
-# SSL profile â€” only loaded by local dev (.env.local: SPRING_PROFILES_ACTIVE=dev,ssl)
+# SSL profile  only loaded by local dev (.env.local: SPRING_PROFILES_ACTIVE=dev,ssl)
 # Production uses nginx for TLS termination; Spring Boot runs plain HTTP internally.
 spring:
   config:
@@ -101,7 +101,7 @@ api:
   base-url: ${API_BASE_URL:https://localhost:8443}
   use-https: ${USE_HTTPS:true}
 
-# CORS Configuration â€” set CORS_ALLOWED_ORIGINS env var in production
+# CORS Configuration  set CORS_ALLOWED_ORIGINS env var in production
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:https://localhost:3000,https://localhost:8443}
@@ -110,7 +110,7 @@ app:
     csrf-enabled: ${CSRF_ENABLED:false}
   rate-limit:
     # Set RATE_LIMIT_ENABLED=false in docker-compose for load testing / bypass
-    # Never disable in production â€” prevents IP spam / brute-force attacks
+    # Never disable in production  prevents IP spam / brute-force attacks
     enabled: ${RATE_LIMIT_ENABLED:true}
 
 logging:
@@ -120,7 +120,7 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 
-# â”€â”€ Dedicated Server Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Dedicated Server Configuration 
 ds:
   vps:
     public-ip: ${VPS_PUBLIC_IP:127.0.0.1}
@@ -134,44 +134,44 @@ ds:
   # Hard cap: max simultaneously active DS containers (starting + ready + in_game).
   # Prevents VPS OOM when many matches are requested at once.
   # Budget formula: (VPS_RAM_MB - infra_MB) / DS_MAX_MEMORY_MB
-  #   8192 - 3000 (infra) = 5192 / 512 (per DS) = ~10  â†’  8 with headroom
+  #   8192 - 3000 (infra) = 5192 / 512 (per DS) = ~10    8 with headroom
   # Set to 0 to disable (not recommended in production).
   max-concurrent: ${DS_MAX_CONCURRENT:8}
 
   docker:
-    # Docker image full ref (cáº­p nháº­t bá»Ÿi CI/CD qua /api/admin/ds/update-image)
+    # Docker image full ref (cp nht bi CI/CD qua /api/admin/ds/update-image)
     image-ref:           ${DS_IMAGE_REF:ghcr.io/nvanquyet/nighthunt-ds:latest}
-    # URL backend mÃ  DS dÃ¹ng Ä‘á»ƒ gá»i vá».
-    # Docker internal (khuyáº¿n nghá»‹): http://nighthunt-backend:8080 â€” ~0.1ms, khÃ´ng SSL
-    # Fallback public domain:        https://vawnwuyest.me         â€” ~50ms, qua nginx
+    # URL backend m DS dng  gi v.
+    # Docker internal (khuyn ngh): http://nighthunt-backend:8080  ~0.1ms, khng SSL
+    # Fallback public domain:        https://vawnwuyest.me          ~50ms, qua nginx
     backend-internal-url: ${DS_BACKEND_INTERNAL_URL:http://nighthunt-backend:8080}
     max-memory-mb:       ${DS_MAX_MEMORY_MB:1024}
-    # false = skip docker run (dÃ¹ng khi test local, khÃ´ng cÃ³ DS image)
+    # false = skip docker run (dng khi test local, khng c DS image)
     enabled:             ${DS_DOCKER_ENABLED:true}
-    # GHCR credentials Ä‘á»ƒ docker login trÆ°á»›c khi pull private image
+    # GHCR credentials  docker login trc khi pull private image
     ghcr-token:          ${GHCR_TOKEN:}
     ghcr-owner:          ${GHCR_OWNER:}
 
   admin:
-    # Secret dÃ¹ng cho CI/CD webhook (POST /api/admin/ds/update-image)
+    # Secret dng cho CI/CD webhook (POST /api/admin/ds/update-image)
     # NOTE: Controllers read ${ADMIN_SECRET} directly to bypass nested-placeholder resolution.
     secret: ${ADMIN_SECRET:change-me-in-production}
 
-# â”€â”€ Custom Game / Relay Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Custom Game / Relay Configuration 
 # Three modes (evaluated in order):
 #
-# Mode A â€” Full relay server (RECOMMENDED for production):
+# Mode A  Full relay server (RECOMMENDED for production):
 #   Set relay.server.url to the relay server's internal HTTP API URL.
 #   The relay server (relay/relay_server.py) allocates a unique UDP port per session.
-#   All players (host + clients) connect outbound to relay â†’ works on any network/NAT.
+#   All players (host + clients) connect outbound to relay  works on any network/NAT.
 #   relay.host = public IP/hostname of the relay server (sent to clients).
 #   REQUIRES: relay_server.py running on VPS (see docker-compose.yml nighthunt-relay service).
 #
-# Mode B â€” Static host + fixed port (single concurrent game, no relay process):
+# Mode B  Static host + fixed port (single concurrent game, no relay process):
 #   Set relay.host to VPS public IP, leave relay.server.url blank.
 #   Only 1 custom game can run at a time (all use same port).
 #
-# Mode C â€” Direct P2P (LAN / port-forward):
+# Mode C  Direct P2P (LAN / port-forward):
 #   Leave both relay.server.url and relay.host blank.
 #   Backend detects host player's IP from WebSocket connection.
 #   Works on LAN; internet requires host to open RELAY_PORT on their router.
@@ -183,7 +183,7 @@ relay:
   session:
     ttl-hours: ${RELAY_SESSION_TTL_HOURS:2}
 
-# â”€â”€ Spring Actuator (internal metrics â€” NOT exposed publicly via nginx) â”€â”€â”€â”€â”€â”€â”€â”€
+#  Spring Actuator (internal metrics  NOT exposed publicly via nginx) 
 management:
   endpoints:
     web:
@@ -211,7 +211,7 @@ management:
           autotime:
             enabled: true
 
-# â”€â”€ WebSocket gateway capacity (P2-2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  WebSocket gateway capacity (P2-2) 
 # Soft warning threshold for active connections alert.
 # Alert fires when active_connections > ws.capacity-warning-threshold.
 nighthunt:
@@ -232,5 +232,5 @@ nighthunt:
       poll-delay-millis: ${JETSTREAM_OUTBOX_POLL_DELAY_MILLIS:500}
   ws:
     capacity-warning-threshold: ${WS_CAPACITY_WARNING:8000}
-    # Max inbound payload bytes â€” frames larger than this are silently dropped
+    # Max inbound payload bytes  frames larger than this are silently dropped
     max-payload-bytes: ${WS_MAX_PAYLOAD_BYTES:4096}
