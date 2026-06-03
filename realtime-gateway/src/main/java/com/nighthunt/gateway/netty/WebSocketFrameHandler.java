@@ -72,7 +72,9 @@ public final class WebSocketFrameHandler extends SimpleChannelInboundHandler<Web
         Long userId = context.channel().attr(TicketHandshakeHandler.USER_ID).get();
         if (userId != null) {
             String reason = context.channel().attr(DISCONNECT_REASON).get();
-            registry.unregister(userId, context.channel(), reason == null ? "TRANSPORT_DROP" : reason);
+            String resolvedReason = reason == null ? "TRANSPORT_DROP" : reason;
+            metrics.disconnected(resolvedReason);
+            registry.unregister(userId, context.channel(), resolvedReason);
         }
         context.fireChannelInactive();
     }

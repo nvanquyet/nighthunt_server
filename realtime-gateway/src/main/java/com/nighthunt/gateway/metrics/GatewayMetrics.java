@@ -16,6 +16,9 @@ public final class GatewayMetrics implements AutoCloseable {
     private final AtomicLong inboundFrames = new AtomicLong();
     private final AtomicLong outboundFrames = new AtomicLong();
     private final AtomicLong slowConsumers = new AtomicLong();
+    private final AtomicLong staleDisconnects = new AtomicLong();
+    private final AtomicLong clientDisconnects = new AtomicLong();
+    private final AtomicLong transportDrops = new AtomicLong();
     private final HttpServer server;
     private volatile IntSupplier activeConnections = () -> 0;
 
@@ -43,6 +46,15 @@ public final class GatewayMetrics implements AutoCloseable {
     public void inboundFrame() { inboundFrames.incrementAndGet(); }
     public void outboundFrame() { outboundFrames.incrementAndGet(); }
     public void slowConsumer() { slowConsumers.incrementAndGet(); }
+    public void disconnected(String reason) {
+        if ("STALE_CONNECTION".equals(reason)) {
+            staleDisconnects.incrementAndGet();
+        } else if ("CLIENT_CLOSE".equals(reason)) {
+            clientDisconnects.incrementAndGet();
+        } else {
+            transportDrops.incrementAndGet();
+        }
+    }
 
     String scrape() {
         return """
@@ -58,13 +70,20 @@ public final class GatewayMetrics implements AutoCloseable {
                 nighthunt_gateway_outbound_frames_total %d
                 # TYPE nighthunt_gateway_slow_consumers_total counter
                 nighthunt_gateway_slow_consumers_total %d
+                # TYPE nighthunt_gateway_disconnects_total counter
+                nighthunt_gateway_disconnects_total{reason="STALE_CONNECTION"} %d
+                nighthunt_gateway_disconnects_total{reason="CLIENT_CLOSE"} %d
+                nighthunt_gateway_disconnects_total{reason="TRANSPORT_DROP"} %d
                 """.formatted(
                 activeConnections.getAsInt(),
                 accepted.get(),
                 rejectedTickets.get(),
                 inboundFrames.get(),
                 outboundFrames.get(),
-                slowConsumers.get()
+                slowConsumers.get(),
+                staleDisconnects.get(),
+                clientDisconnects.get(),
+                transportDrops.get()
         );
     }
 
