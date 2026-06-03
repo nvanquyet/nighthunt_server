@@ -257,7 +257,10 @@ services:
       realtime-gateway:
         condition: service_started
     restart: unless-stopped
-    mem_limit: 64m
+    # WebSocket fan-out keeps many TLS/proxy connections resident. 64 MiB caused
+    # nginx worker SIGKILL under 500 VU certification, which surfaced as
+    # gateway TRANSPORT_DROP disconnects.
+    mem_limit: ${NGINX_MEM_LIMIT:-512m}
     ulimits:
       nofile:
         soft: 200000

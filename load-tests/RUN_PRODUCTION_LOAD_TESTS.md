@@ -79,6 +79,23 @@ Chay 3 scenario:
 Neu vua co login storm hoac server tra `AUTH_011`, dung tiep test tu IP do cho den khi
 het thoi gian khoa trong response. Chay tiep truoc khi het khoa se chi tao report sai.
 
+Neu `ws_500` fail voi nhieu `nighthunt_ws_early_closes` / `nighthunt_ws_runtime_errors`,
+kiem tra VPS ngay:
+
+```bash
+docker stats --no-stream nighthunt-nginx nighthunt-realtime-gateway nighthunt-backend
+docker exec nighthunt-realtime-gateway wget -qO- http://localhost:9091/metrics
+docker logs nighthunt-nginx --since 15m --tail 200
+```
+
+Doc nhanh:
+
+```text
+nighthunt_gateway_disconnects_total{reason="STALE_CONNECTION"} tang  -> heartbeat/idle timeout.
+nighthunt_gateway_disconnects_total{reason="TRANSPORT_DROP"} tang     -> nginx/TCP/network/generator drop.
+nginx "worker process ... exited on signal 9"                         -> nginx bi OOM; tang NGINX_MEM_LIMIT.
+```
+
 Xem bang ket qua:
 
 ```powershell
