@@ -41,6 +41,8 @@ from typing import Dict, Optional, Tuple
 
 from aiohttp import web
 
+HOST_REGISTRATION_MAGIC = b"NH_RELAY_HOST"
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +65,7 @@ class RelaySession:
         self.clients:    Dict[Tuple[str, int], float] = {}
         # all known endpoints (host + clients) for fast lookup
         self.all_known:  Dict[Tuple[str, int], float] = {}
+        self.client_relays: Dict[Tuple[str, int], object] = {}
         self.created_at  = time.time()
         self.last_pkt    = time.time()
 
@@ -75,20 +78,65 @@ class RelaySession:
     def client_count(self) -> int:
         return len(self.clients)
 
+    def register_host(self, addr: Tuple[str, int]):
+        self.all_known[addr] = time.time()
+        if addr in self.clients:
+            self.remove_client(addr)
+        self.host_addr = addr
+        log.info("[Relay] Host registered: session=%s addr=%s:%d",
+                 self.token[:8], addr[0], addr[1])
+
     def register_endpoint(self, addr: Tuple[str, int]):
-        """Register a new endpoint. First one becomes host if no host assigned yet."""
         now = time.time()
         self.all_known[addr] = now
-        if self.host_addr is None:
-            # First connection → host
-            self.host_addr = addr
-            log.info("[Relay] Host auto-registered: session=%s addr=%s:%d",
-                     self.token[:8], addr[0], addr[1])
-        elif addr != self.host_addr:
+        if addr != self.host_addr:
             self.clients[addr] = now
+
+    def remove_client(self, addr: Tuple[str, int]):
+        self.clients.pop(addr, None)
+        self.all_known.pop(addr, None)
+        relay_transport = self.client_relays.pop(addr, None)
+        if relay_transport is not None:
+            try:
+                relay_transport.close()
+            except Exception:
+                pass
+
+    def close_relays(self):
+        for relay_transport in list(self.client_relays.values()):
+            try:
+                relay_transport.close()
+            except Exception:
+                pass
+        self.client_relays.clear()
 
 
 # ── UDP Relay Protocol ─────────────────────────────────────────────────────────
+class ClientRelayProtocol(asyncio.DatagramProtocol):
+    """One upstream UDP socket mapping host replies back to one client."""
+
+    def __init__(self, session: RelaySession, client_addr: Tuple[str, int], downstream_transport):
+        self.session = session
+        self.client_addr = client_addr
+        self.downstream_transport = downstream_transport
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: Tuple[str, int]):
+        self.session.touch()
+        self.session.clients[self.client_addr] = time.time()
+        self.session.all_known[self.client_addr] = time.time()
+        try:
+            self.downstream_transport.sendto(data, self.client_addr)
+        except Exception as e:
+            log.debug("[Relay] Downstream send error to %s: %s", self.client_addr, e)
+
+    def error_received(self, exc):
+        log.debug("[Relay] Upstream UDP error for client %s: %s", self.client_addr, exc)
+
+
 class RelayProtocol(asyncio.DatagramProtocol):
     """Asyncio UDP protocol bound to one relay session port."""
 
@@ -104,6 +152,10 @@ class RelayProtocol(asyncio.DatagramProtocol):
         session = self.session
         session.touch()
 
+        if data == HOST_REGISTRATION_MAGIC:
+            session.register_host(addr)
+            return
+
         is_new = addr not in session.all_known
         if is_new:
             session.register_endpoint(addr)
@@ -115,8 +167,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
             stale = [c for c, t in list(session.clients.items())
                      if (time.time() - t) > CLIENT_IDLE_SECS]
             for s in stale:
-                del session.clients[s]
-                del session.all_known[s]
+                session.remove_client(s)
 
             for client_addr in list(session.clients):
                 self._send(data, client_addr)
@@ -124,8 +175,35 @@ class RelayProtocol(asyncio.DatagramProtocol):
             # ── Client → forward to host ───────────────────────────────────
             session.clients[addr] = time.time()
             if session.host_addr is not None:
-                self._send(data, session.host_addr)
+                asyncio.create_task(self._forward_client_packet(data, addr))
             # else: host not connected yet → buffer? For now just drop.
+
+    async def _forward_client_packet(self, data: bytes, client_addr: Tuple[str, int]):
+        session = self.session
+        if session.host_addr is None:
+            return
+
+        transport = session.client_relays.get(client_addr)
+        if transport is None:
+            try:
+                loop = asyncio.get_running_loop()
+                transport, _ = await loop.create_datagram_endpoint(
+                    lambda: ClientRelayProtocol(session, client_addr, self.transport),
+                    local_addr=("0.0.0.0", 0),
+                )
+                session.client_relays[client_addr] = transport
+                log.info("[Relay] Client upstream created: session=%s client=%s:%d host=%s:%d",
+                         session.token[:8], client_addr[0], client_addr[1],
+                         session.host_addr[0], session.host_addr[1])
+            except Exception as e:
+                log.warning("[Relay] Could not create upstream for client %s: %s", client_addr, e)
+                return
+
+        try:
+            transport.sendto(data, session.host_addr)
+        except Exception as e:
+            log.debug("[Relay] Upstream send error from %s to host %s: %s",
+                      client_addr, session.host_addr, e)
 
     def _send(self, payload: bytes, addr):
         try:
@@ -188,6 +266,7 @@ class RelayManager:
         session = self.sessions.pop(token, None)
         if session is None:
             return
+        session.close_relays()
         self.port_map.pop(session.port, None)
         self._free_port(session.port)
         try:
@@ -260,8 +339,7 @@ async def handle_set_host(request: web.Request) -> web.Response:
         try:
             ip, port_str = host_addr.rsplit(":", 1)
             parsed_addr  = (ip, int(port_str))
-            session.host_addr = parsed_addr
-            session.all_known[parsed_addr] = time.time()
+            session.register_host(parsed_addr)
             log.info("[Relay] Host overridden via API: session=%s addr=%s:%d",
                      token[:8], parsed_addr[0], parsed_addr[1])
         except (ValueError, IndexError):

@@ -81,10 +81,10 @@ class TestRelaySession:
         s = RelaySession("token-fresh", 17777)
         assert s.is_idle() is False
 
-    def test_register_endpoint_first_becomes_host(self):
+    def test_register_host_sets_host_addr(self):
         s = RelaySession("tok12345678", 17777)
         addr = ("1.2.3.4", 9000)
-        s.register_endpoint(addr)
+        s.register_host(addr)
         assert s.host_addr == addr
         assert addr in s.all_known
         assert len(s.clients) == 0  # Host not in clients dict
@@ -93,7 +93,7 @@ class TestRelaySession:
         s = RelaySession("tok12345678", 17777)
         host = ("1.2.3.4", 9000)
         client = ("5.6.7.8", 9001)
-        s.register_endpoint(host)
+        s.register_host(host)
         s.register_endpoint(client)
         assert s.host_addr == host
         assert client in s.clients
@@ -102,13 +102,13 @@ class TestRelaySession:
     def test_register_endpoint_host_reregisters_does_not_add_to_clients(self):
         s = RelaySession("tok12345678", 17777)
         host = ("1.2.3.4", 9000)
-        s.register_endpoint(host)
-        s.register_endpoint(host)  # Same host, second time
+        s.register_host(host)
+        s.register_host(host)  # Same host, second time
         assert len(s.clients) == 0
 
     def test_client_count(self):
         s = RelaySession("tok12345678", 17777)
-        s.register_endpoint(("h", 1))
+        s.register_host(("h", 1))
         s.register_endpoint(("c1", 2))
         s.register_endpoint(("c2", 3))
         assert s.client_count() == 2
