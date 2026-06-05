@@ -212,6 +212,16 @@ jobs:
               fi
             done
 
+            echo "=== Cleanup DS image cache: keep latest plus one fallback ==="
+            docker images "ghcr.io/nvanquyet/nighthunt-ds" --format "{{.CreatedAt}}\t{{.ID}}\t{{.Repository}}:{{.Tag}}" \
+              | sort -rk1 \
+              | awk '!seen[$2]++ {count++; if (count > 2) print $2}' \
+              | sort -u \
+              | xargs -r docker rmi -f 2>/dev/null && echo "Old DS image IDs pruned" || true
+
+            echo "=== DS image cache after prune ==="
+            docker images "ghcr.io/nvanquyet/nighthunt-ds" --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}"
+
       - name: Push DS git tag
         run: |
           DATE=$(date +%Y%m%d)

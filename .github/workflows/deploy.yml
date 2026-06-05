@@ -373,8 +373,10 @@ jobs:
               | sort -rk1 | awk 'NR>2{print $NF}' | sort -u \
               | xargs -r docker rmi -f 2>/dev/null && echo "Old backend images pruned" || true
             # Keep only 2 most recent DS images (latest + 1 SHA backup)
-            docker images "ghcr.io/nvanquyet/nighthunt-ds" --format "{{.CreatedAt}}\t{{.ID}}" \
-              | sort -rk1 | awk 'NR>2{print $NF}' | sort -u \
+            docker images "ghcr.io/nvanquyet/nighthunt-ds" --format "{{.CreatedAt}}\t{{.ID}}\t{{.Repository}}:{{.Tag}}" \
+              | sort -rk1 \
+              | awk '!seen[$2]++ {count++; if (count > 2) print $2}' \
+              | sort -u \
               | xargs -r docker rmi -f 2>/dev/null && echo "Old DS images pruned" || true
             # Remove dangling (untagged) image layers
             docker image prune -f 2>/dev/null || true
