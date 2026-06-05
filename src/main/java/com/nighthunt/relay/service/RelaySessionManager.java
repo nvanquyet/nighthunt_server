@@ -54,6 +54,14 @@ public class RelaySessionManager {
     @Value("${RELAY_HOST:}")
     private String configuredRelayHost;
 
+    /** Public VPS IP used when RELAY_HOST is missing on the deployed host. */
+    @Value("${VPS_PUBLIC_IP:}")
+    private String vpsPublicIp;
+
+    /** Public API URL; its host is a final fallback for client-facing relay host. */
+    @Value("${API_BASE_URL:}")
+    private String apiBaseUrl;
+
     /** Fallback port used in single-port direct-IP mode (no relay server). */
     @Value("${RELAY_PORT:7777}")
     private int defaultRelayPort;
@@ -98,25 +106,26 @@ public class RelaySessionManager {
         // ── Resolve relay host and port ──────────────────────────────────────
         String resolvedHost;
         int    resolvedPort;
+        String relayServer = normalizeConfigValue(relayServerUrl);
+        String relayHost = normalizeHostValue(configuredRelayHost);
 
-        if (!relayServerUrl.isBlank()) {
+        if (!relayServer.isBlank()) {
             // ── Mode A: Full relay server (works across any network) ─────────
             // Call the relay server's HTTP API to allocate a unique UDP port.
-            int allocatedPort = allocatePortFromRelayServer(token);
+            int allocatedPort = allocatePortFromRelayServer(relayServer, token);
+            resolvedHost = resolveClientRelayHost(relayServer);
             if (allocatedPort <= 0) {
                 log.error("[Relay] Failed to allocate port from relay server — falling back to default port");
-                resolvedHost = configuredRelayHost.isBlank() ? extractHost(relayServerUrl) : configuredRelayHost;
                 resolvedPort = defaultRelayPort;
                 log.warn("[Relay] Relay fallback: host={}:{} — single concurrent game only", resolvedHost, resolvedPort);
             } else {
-                resolvedHost = configuredRelayHost.isBlank() ? extractHost(relayServerUrl) : configuredRelayHost;
                 resolvedPort = allocatedPort;
                 log.info("[Relay] Mode A (relay server): host={}:{} session={}", resolvedHost, resolvedPort, token);
             }
-        } else if (!configuredRelayHost.isBlank()) {
+        } else if (!relayHost.isBlank()) {
             // ── Mode B: Static relay host IP (VPS, but no relay server process) ──
             // All sessions share the same port — only works for 1 concurrent game.
-            resolvedHost = configuredRelayHost;
+            resolvedHost = relayHost;
             resolvedPort = defaultRelayPort;
             log.warn("[Relay] Mode B (static host, single port={}): only 1 concurrent game supported", resolvedPort);
         } else if (hostIp != null && !hostIp.isBlank()) {
@@ -144,9 +153,9 @@ public class RelaySessionManager {
      *
      * @return allocated port (> 0), or 0 on failure
      */
-    private int allocatePortFromRelayServer(String token) {
+    private int allocatePortFromRelayServer(String relayServer, String token) {
         try {
-            String url  = relayServerUrl.replaceAll("/+$", "") + "/session/create";
+            String url  = relayServer.replaceAll("/+$", "") + "/session/create";
             Map<String, Object> body = Map.of("token", token);
             @SuppressWarnings("unchecked")
             Map<String, Object> resp = rest.postForObject(url, body, Map.class);
@@ -164,9 +173,10 @@ public class RelaySessionManager {
      * Returns null when relay.server.url is not configured (LAN/direct mode).
      */
     public Map<String, Object> checkRelayServerHealth() {
-        if (relayServerUrl.isBlank()) return null;
+        String relayServer = normalizeConfigValue(relayServerUrl);
+        if (relayServer.isBlank()) return null;
         try {
-            String url = relayServerUrl.replaceAll("/+$", "") + "/health";
+            String url = relayServer.replaceAll("/+$", "") + "/health";
             @SuppressWarnings("unchecked")
             Map<String, Object> result = rest.getForObject(url, Map.class);
             return result;
@@ -181,9 +191,10 @@ public class RelaySessionManager {
      * Called on match end.
      */
     public void closeRelayServerSession(String token) {
-        if (relayServerUrl.isBlank()) return;
+        String relayServer = normalizeConfigValue(relayServerUrl);
+        if (relayServer.isBlank()) return;
         try {
-            String url = relayServerUrl.replaceAll("/+$", "") + "/session/close";
+            String url = relayServer.replaceAll("/+$", "") + "/session/close";
             rest.postForObject(url, Map.of("token", token), Map.class);
             log.info("[Relay] Relay server session closed: token={}", token);
         } catch (Exception e) {
@@ -208,12 +219,94 @@ public class RelaySessionManager {
 
     /** Extract host from a URL like http://nighthunt-relay:7776 → "nighthunt-relay" */
     private static String extractHost(String url) {
-        try {
-            java.net.URI uri = java.net.URI.create(url);
-            return uri.getHost();
-        } catch (Exception e) {
-            return url;
+        String value = normalizeConfigValue(url);
+        if (value.isBlank()) {
+            return "";
         }
+        try {
+            java.net.URI uri = java.net.URI.create(value);
+            String host = uri.getHost();
+            if (host != null && !host.isBlank()) {
+                return host;
+            }
+        } catch (Exception ignored) {
+            // Fall back to plain host[:port] parsing below.
+        }
+
+        int slash = value.indexOf('/');
+        String hostPort = slash >= 0 ? value.substring(0, slash) : value;
+        int colon = hostPort.indexOf(':');
+        return colon >= 0 ? hostPort.substring(0, colon) : hostPort;
+    }
+
+    private String resolveClientRelayHost(String relayServer) {
+        String explicitHost = firstPublicHost(
+                configuredRelayHost,
+                vpsPublicIp,
+                extractHost(apiBaseUrl));
+        if (!explicitHost.isBlank()) {
+            return explicitHost;
+        }
+
+        String relayServerHost = normalizeHostValue(extractHost(relayServer));
+        if (!isInternalHost(relayServerHost)) {
+            return relayServerHost;
+        }
+
+        throw new IllegalStateException("[Relay] relay.server.url points to internal host '"
+                + relayServerHost
+                + "' but no public RELAY_HOST/VPS_PUBLIC_IP/API_BASE_URL is configured. "
+                + "Clients cannot resolve Docker-only relay hostnames.");
+    }
+
+    private static String firstPublicHost(String... candidates) {
+        for (String candidate : candidates) {
+            String host = normalizeHostValue(candidate);
+            if (!host.isBlank() && !isInternalHost(host)) {
+                return host;
+            }
+        }
+        return "";
+    }
+
+    private static String normalizeHostValue(String value) {
+        String normalized = normalizeConfigValue(value);
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+            normalized = extractHost(normalized);
+        }
+        return normalized;
+    }
+
+    private static String normalizeConfigValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        int inlineComment = trimmed.indexOf(" #");
+        if (inlineComment >= 0) {
+            trimmed = trimmed.substring(0, inlineComment).trim();
+        }
+        return trimmed;
+    }
+
+    private static boolean isInternalHost(String host) {
+        String value = normalizeConfigValue(host).toLowerCase();
+        if (value.isBlank()) {
+            return true;
+        }
+        if ("localhost".equals(value) || "0.0.0.0".equals(value) || "::1".equals(value)) {
+            return true;
+        }
+        if (value.startsWith("127.") || value.startsWith("10.") || value.startsWith("192.168.")) {
+            return true;
+        }
+        if (value.matches("^172\\.(1[6-9]|2\\d|3[0-1])\\..*")) {
+            return true;
+        }
+        if (value.endsWith(".local")) {
+            return true;
+        }
+        return !value.contains(".") && !value.contains(":");
     }
 
     // ── Lookup ────────────────────────────────────────────────────────────────

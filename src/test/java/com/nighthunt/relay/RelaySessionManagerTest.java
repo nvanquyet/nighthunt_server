@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for RelaySessionManager — covers all four relay modes and
@@ -30,6 +31,8 @@ class RelaySessionManagerTest {
         ReflectionTestUtils.setField(manager, "ttlHours", 2);
         ReflectionTestUtils.setField(manager, "relayServerUrl", "");
         ReflectionTestUtils.setField(manager, "configuredRelayHost", "");
+        ReflectionTestUtils.setField(manager, "vpsPublicIp", "");
+        ReflectionTestUtils.setField(manager, "apiBaseUrl", "");
         ReflectionTestUtils.setField(manager, "defaultRelayPort", 7777);
     }
 
@@ -235,6 +238,48 @@ class RelaySessionManagerTest {
         void isExpired_freshSession() {
             RelaySession s = manager.createSession(16L, "match-016", "11.0.0.1");
             assertThat(s.isExpired()).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("Mode A — Full relay server")
+    class ModeATests {
+
+        @BeforeEach
+        void setRelayServer() {
+            // Port 1 fails immediately, so tests cover fallback host resolution
+            // without requiring a real relay_server.py process.
+            ReflectionTestUtils.setField(manager, "relayServerUrl", "http://127.0.0.1:1");
+        }
+
+        @Test
+        @DisplayName("createSession uses VPS_PUBLIC_IP when RELAY_HOST is blank")
+        void createSession_modeA_usesVpsPublicIpFallback() {
+            ReflectionTestUtils.setField(manager, "vpsPublicIp", "20.2.235.140");
+
+            RelaySession session = manager.createSession(17L, "match-017", "192.168.1.23");
+
+            assertThat(session.getRelayHost()).isEqualTo("20.2.235.140");
+            assertThat(session.getRelayPort()).isEqualTo(7777);
+        }
+
+        @Test
+        @DisplayName("createSession strips inline comments from RELAY_HOST")
+        void createSession_modeA_stripsInlineCommentFromRelayHost() {
+            ReflectionTestUtils.setField(manager, "configuredRelayHost",
+                    "20.2.235.140          # VPS IP sent to clients");
+
+            RelaySession session = manager.createSession(18L, "match-018", "192.168.1.23");
+
+            assertThat(session.getRelayHost()).isEqualTo("20.2.235.140");
+        }
+
+        @Test
+        @DisplayName("createSession rejects internal relay URL without a public host")
+        void createSession_modeA_rejectsInternalRelayHostWithoutPublicFallback() {
+            assertThatThrownBy(() -> manager.createSession(19L, "match-019", "192.168.1.23"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("no public RELAY_HOST");
         }
     }
 }

@@ -415,17 +415,15 @@ public class MatchmakingQueueService {
         for (MatchUnit anchor : units) {
             if (usedGroups.contains(anchor.groupId())) continue;
 
-            MatchBuild build = new MatchBuild(mode.getPlayersPerTeam(), mode.isDevMode());
+            MatchBuild build = new MatchBuild(mode.getPlayersPerTeam());
             if (!build.tryAdd(anchor)) continue;
 
-            if (!mode.isDevMode()) {
-                for (MatchUnit other : units) {
-                    if (usedGroups.contains(other.groupId())) continue;
-                    if (other.groupId().equals(anchor.groupId())) continue;
-                    if (build.isComplete()) break;
-                    if (isCompatible(anchor, other)) {
-                        build.tryAdd(other);
-                    }
+            for (MatchUnit other : units) {
+                if (usedGroups.contains(other.groupId())) continue;
+                if (other.groupId().equals(anchor.groupId())) continue;
+                if (build.isComplete()) break;
+                if (isCompatible(anchor, other)) {
+                    build.tryAdd(other);
                 }
             }
 
@@ -755,13 +753,11 @@ public class MatchmakingQueueService {
 
     private static final class MatchBuild {
         private final int teamCapacity;
-        private final boolean devMode;
         private final List<MatchUnit> team1 = new ArrayList<>();
         private final List<MatchUnit> team2 = new ArrayList<>();
 
-        MatchBuild(int teamCapacity, boolean devMode) {
+        MatchBuild(int teamCapacity) {
             this.teamCapacity = Math.max(1, teamCapacity);
-            this.devMode = devMode;
         }
 
         boolean tryAdd(MatchUnit unit) {
@@ -769,7 +765,7 @@ public class MatchmakingQueueService {
                 team1.add(unit);
                 return true;
             }
-            if (!devMode && isTeamValid(team1) && canAdd(team2, unit)) {
+            if (isTeamValid(team1) && canAdd(team2, unit)) {
                 team2.add(unit);
                 return true;
             }
@@ -777,9 +773,6 @@ public class MatchmakingQueueService {
         }
 
         boolean isComplete() {
-            if (devMode) {
-                return teamSize(team1) > 0;
-            }
             return isTeamValid(team1) && isTeamValid(team2);
         }
 
