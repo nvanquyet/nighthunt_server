@@ -43,6 +43,7 @@ from typing import Dict, Optional, Tuple
 from aiohttp import web
 
 HOST_REGISTRATION_MAGIC = b"NH_RELAY_HOST"
+LITENET_UNCONNECTED_PROPERTY = 8
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -59,14 +60,16 @@ CLIENT_IDLE_SECS  = 60     # seconds — unresponsive endpoints are pruned
 def is_host_registration_packet(data: bytes) -> bool:
     """
     Unity sends the registration through LiteNetLib SendUnconnectedMessage.
-    LiteNetLib prepends its own packet header, so the relay must inspect the
+    LiteNetLib prepends its own packet header, so the relay scans the packet
     payload instead of requiring byte-for-byte equality with the magic string.
     """
-    if data == HOST_REGISTRATION_MAGIC:
-        return True
-    if len(data) <= len(HOST_REGISTRATION_MAGIC) + 8 and data.endswith(HOST_REGISTRATION_MAGIC):
-        return True
-    return False
+    return HOST_REGISTRATION_MAGIC in data
+
+
+def litenet_packet_property(data: bytes) -> Optional[int]:
+    if not data:
+        return None
+    return data[0] & 0x1F
 
 
 # ── Session State ──────────────────────────────────────────────────────────────
@@ -80,6 +83,7 @@ class RelaySession:
         # all known endpoints (host + clients) for fast lookup
         self.all_known:  Dict[Tuple[str, int], float] = {}
         self.client_relays: Dict[Tuple[str, int], object] = {}
+        self.packets_before_host_logged = 0
         self.created_at  = time.time()
         self.last_pkt    = time.time()
 
@@ -168,6 +172,35 @@ class RelayProtocol(asyncio.DatagramProtocol):
 
         if is_host_registration_packet(data):
             session.register_host(addr)
+            return
+
+        if session.host_addr is None:
+            prop = litenet_packet_property(data)
+            if prop == LITENET_UNCONNECTED_PROPERTY:
+                session.register_host(addr)
+                log.warning(
+                    "[Relay] Host registered by unconnected-packet fallback: session=%s addr=%s:%d len=%d head=%s tail=%s",
+                    session.token[:8],
+                    addr[0],
+                    addr[1],
+                    len(data),
+                    data[:16].hex(),
+                    data[-16:].hex(),
+                )
+                return
+
+            session.packets_before_host_logged += 1
+            if session.packets_before_host_logged <= 8:
+                log.warning(
+                    "[Relay] Dropping packet before host registration: session=%s addr=%s:%d len=%d prop=%s head=%s tail=%s",
+                    session.token[:8],
+                    addr[0],
+                    addr[1],
+                    len(data),
+                    prop,
+                    data[:16].hex(),
+                    data[-16:].hex(),
+                )
             return
 
         is_new = addr not in session.all_known
