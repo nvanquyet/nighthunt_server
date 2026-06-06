@@ -12,7 +12,8 @@ The relay is TRANSPARENT — it does NOT modify FishNet/Tugboat packets.
 Session identification is by port (each session gets its own UDP port), not by packet header.
 
 Host identification:
-  - The FIRST endpoint to connect to a session port is registered as the HOST.
+  - The Unity host sends NH_RELAY_HOST through LiteNetLib SendUnconnectedMessage.
+    LiteNetLib prepends a small packet header; the relay matches the magic payload.
   - Or: the backend calls POST /session/set-host { "token": "...", "host_addr": "ip:port" }
     after the host registers via the relay's heartbeat.
 
@@ -53,6 +54,19 @@ log = logging.getLogger("relay")
 
 SESSION_IDLE_TTL  = 7200   # seconds — sessions idle this long auto-expire
 CLIENT_IDLE_SECS  = 60     # seconds — unresponsive endpoints are pruned
+
+
+def is_host_registration_packet(data: bytes) -> bool:
+    """
+    Unity sends the registration through LiteNetLib SendUnconnectedMessage.
+    LiteNetLib prepends its own packet header, so the relay must inspect the
+    payload instead of requiring byte-for-byte equality with the magic string.
+    """
+    if data == HOST_REGISTRATION_MAGIC:
+        return True
+    if len(data) <= len(HOST_REGISTRATION_MAGIC) + 8 and data.endswith(HOST_REGISTRATION_MAGIC):
+        return True
+    return False
 
 
 # ── Session State ──────────────────────────────────────────────────────────────
@@ -152,7 +166,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
         session = self.session
         session.touch()
 
-        if data == HOST_REGISTRATION_MAGIC:
+        if is_host_registration_packet(data):
             session.register_host(addr)
             return
 
