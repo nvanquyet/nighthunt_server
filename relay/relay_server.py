@@ -222,7 +222,11 @@ class RelayProtocol(asyncio.DatagramProtocol):
             # ── Client → forward to host ───────────────────────────────────
             session.clients[addr] = time.time()
             if session.host_addr is not None:
-                asyncio.create_task(self._forward_client_packet(data, addr))
+                # Keep packets to the host on the session transport. Some host NATs only
+                # accept inbound UDP from the relay session port they already sent to.
+                # Per-client upstream sockets use random source ports and can be dropped,
+                # which made remote guests start then immediately stop/retry.
+                self._send(data, session.host_addr)
             # else: host not connected yet → buffer? For now just drop.
 
     async def _forward_client_packet(self, data: bytes, client_addr: Tuple[str, int]):
