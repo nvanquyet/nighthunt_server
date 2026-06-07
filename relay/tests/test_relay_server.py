@@ -19,6 +19,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import relay_server
 from relay_server import (
     HOST_REGISTRATION_MAGIC,
+    HANDSHAKE_RELAY_GRACE_SECS,
+    LITENET_CONNECT_REQUEST_PROPERTY,
+    LITENET_DISCONNECT_PROPERTY,
     RelaySession,
     RelayManager,
     RelayProtocol,
@@ -147,9 +150,10 @@ class TestRelaySession:
         upstream.datagram_received(HOST_REGISTRATION_MAGIC, upstream_host)
 
         relay = RelayProtocol(s)
-        await relay._forward_client_packet(b"fishnet-connect", client)
+        packet = bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"fishnet-connect"
+        await relay._forward_client_packet(packet, client)
 
-        upstream_transport.sendto.assert_called_once_with(b"fishnet-connect", upstream_host)
+        upstream_transport.sendto.assert_called_once_with(packet, upstream_host)
 
     @pytest.mark.asyncio
     async def test_recycles_oldest_client_when_upstreams_are_exhausted(self):
@@ -165,8 +169,11 @@ class TestRelaySession:
         upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
 
         relay = RelayProtocol(s)
-        await relay._forward_client_packet(b"first-connect", first_client)
-        await relay._forward_client_packet(b"retry-connect", retry_client)
+        first_packet = bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"first-connect"
+        retry_packet = bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"retry-connect"
+        await relay._forward_client_packet(first_packet, first_client)
+        upstream.client_assigned_at -= HANDSHAKE_RELAY_GRACE_SECS + 1
+        await relay._forward_client_packet(retry_packet, retry_client)
 
         assert first_client not in s.clients
         assert first_client not in s.client_relays
@@ -174,7 +181,83 @@ class TestRelaySession:
         assert s.client_relays[retry_client] is upstream
         assert upstream.client_addr == retry_client
         assert s.upstream_recycle_count == 1
-        assert upstream_transport.sendto.call_args_list[-1].args == (b"retry-connect", host)
+        assert upstream_transport.sendto.call_args_list[-1].args == (retry_packet, host)
+
+    @pytest.mark.asyncio
+    async def test_active_client_upstream_is_not_recycled(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        first_client = ("198.51.100.50", 51000)
+        retry_client = ("198.51.100.50", 51001)
+        s.register_host(host)
+
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, MagicMock())
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"first-connect", first_client)
+        await relay._forward_client_packet(bytes([0]) + b"game-data", first_client)
+        upstream.client_assigned_at -= HANDSHAKE_RELAY_GRACE_SECS + 1
+        await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"retry-connect", retry_client)
+
+        assert s.client_relays[first_client] is upstream
+        assert retry_client not in s.client_relays
+        assert retry_client not in s.clients
+        assert upstream.client_addr == first_client
+        assert s.upstream_recycle_count == 0
+
+    @pytest.mark.asyncio
+    async def test_host_disconnect_releases_client_upstream(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        client = ("198.51.100.50", 51000)
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect", client)
+        assert s.free_host_ports == []
+
+        disconnect_packet = bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye"
+        upstream.datagram_received(disconnect_packet, host)
+
+        downstream.sendto.assert_called_with(disconnect_packet, client)
+        assert client not in s.clients
+        assert client not in s.client_relays
+        assert s.free_host_ports == [17778]
+        assert upstream.client_addr is None
+
+    @pytest.mark.asyncio
+    async def test_client_disconnect_releases_client_upstream(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        client = ("198.51.100.50", 51000)
+        s.register_host(host)
+
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, MagicMock())
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect", client)
+        assert s.free_host_ports == []
+
+        disconnect_packet = bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye"
+        await relay._forward_client_packet(disconnect_packet, client)
+
+        upstream_transport.sendto.assert_any_call(disconnect_packet, host)
+        assert client not in s.clients
+        assert client not in s.client_relays
+        assert s.free_host_ports == [17778]
+        assert upstream.client_addr is None
 
 
 # ── RelayManager unit tests ───────────────────────────────────────────────────

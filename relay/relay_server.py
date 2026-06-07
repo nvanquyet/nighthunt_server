@@ -43,6 +43,9 @@ from typing import Dict, List, Optional, Tuple
 from aiohttp import web
 
 HOST_REGISTRATION_MAGIC = b"NH_RELAY_HOST"
+LITENET_CONNECT_REQUEST_PROPERTY = 5
+LITENET_CONNECT_ACCEPT_PROPERTY = 6
+LITENET_DISCONNECT_PROPERTY = 7
 LITENET_UNCONNECTED_PROPERTY = 8
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -55,6 +58,7 @@ log = logging.getLogger("relay")
 
 SESSION_IDLE_TTL  = 7200   # seconds — sessions idle this long auto-expire
 CLIENT_IDLE_SECS  = 60     # seconds — unresponsive endpoints are pruned
+HANDSHAKE_RELAY_GRACE_SECS = 12
 
 
 def is_host_registration_packet(data: bytes) -> bool:
@@ -133,11 +137,19 @@ class RelaySession:
                 self.free_host_ports.sort()
 
     def recycle_oldest_client_relay(self) -> Optional["HostUpstreamProtocol"]:
-        relay_clients = [addr for addr in self.client_relays if addr in self.clients]
+        now = time.time()
+        relay_clients = [
+            (addr, relay)
+            for addr, relay in self.client_relays.items()
+            if addr in self.clients and relay.can_recycle(now)
+        ]
         if not relay_clients:
             return None
 
-        oldest = min(relay_clients, key=lambda a: self.clients.get(a, 0))
+        oldest, _ = min(
+            relay_clients,
+            key=lambda item: item[1].client_assigned_at or self.clients.get(item[0], 0),
+        )
         relay = self.client_relays.pop(oldest, None)
         self.clients.pop(oldest, None)
         self.all_known.pop(oldest, None)
@@ -180,6 +192,11 @@ class RelaySession:
             if relay is None:
                 log.warning("[Relay] Host upstream port not bound: session=%s port=%d",
                             self.token[:8], host_port)
+                if host_port not in self.free_host_ports:
+                    self.free_host_ports.append(host_port)
+                    self.free_host_ports.sort()
+                self.clients.pop(client_addr, None)
+                self.all_known.pop(client_addr, None)
                 return None
         else:
             relay = self.recycle_oldest_client_relay()
@@ -187,6 +204,8 @@ class RelaySession:
                 log.warning("[Relay] No host upstream ports left: session=%s client=%s:%d clients=%d assigned=%d",
                             self.token[:8], client_addr[0], client_addr[1],
                             len(self.clients), len(self.client_relays))
+                self.clients.pop(client_addr, None)
+                self.all_known.pop(client_addr, None)
                 return None
             host_port = relay.host_port
 
@@ -213,6 +232,11 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self._fallback_logged = False
         self._client_forward_logged = False
         self._host_forward_logged = False
+        self.client_assigned_at: Optional[float] = None
+        self.client_last_seen_at: Optional[float] = None
+        self.host_last_seen_at: Optional[float] = None
+        self._client_saw_game_packet = False
+        self._host_saw_game_packet = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -221,14 +245,42 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
                  self.session.token[:8], self.host_port)
 
     def assign_client(self, client_addr: Tuple[str, int]):
+        now = time.time()
         self.client_addr = client_addr
+        self.client_assigned_at = now
+        self.client_last_seen_at = now
+        self.host_last_seen_at = None
+        self._client_saw_game_packet = False
+        self._host_saw_game_packet = False
         self._client_forward_logged = False
         self._host_forward_logged = False
 
     def release_client(self):
         self.client_addr = None
+        self.client_assigned_at = None
+        self.client_last_seen_at = None
+        self.host_last_seen_at = None
+        self._client_saw_game_packet = False
+        self._host_saw_game_packet = False
         self._client_forward_logged = False
         self._host_forward_logged = False
+
+    def mark_client_packet(self, prop: Optional[int]):
+        self.client_last_seen_at = time.time()
+        if prop not in (LITENET_CONNECT_REQUEST_PROPERTY, LITENET_DISCONNECT_PROPERTY):
+            self._client_saw_game_packet = True
+
+    def mark_host_packet(self, prop: Optional[int]):
+        self.host_last_seen_at = time.time()
+        if prop not in (LITENET_CONNECT_ACCEPT_PROPERTY, LITENET_DISCONNECT_PROPERTY):
+            self._host_saw_game_packet = True
+
+    def can_recycle(self, now: float) -> bool:
+        if self.client_addr is None or self.client_assigned_at is None:
+            return False
+        if self._client_saw_game_packet or self._host_saw_game_packet:
+            return False
+        return (now - self.client_assigned_at) >= HANDSHAKE_RELAY_GRACE_SECS
 
     def close(self):
         if self.transport is not None:
@@ -298,18 +350,26 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
                       self.session.token[:8], self.host_port)
             return
 
-        self.session.clients[self.client_addr] = time.time()
-        self.session.all_known[self.client_addr] = time.time()
+        prop = litenet_packet_property(data)
+        client_addr = self.client_addr
+        self.mark_host_packet(prop)
+        self.session.clients[client_addr] = time.time()
+        self.session.all_known[client_addr] = time.time()
         try:
-            self.downstream_transport.sendto(data, self.client_addr)
+            self.downstream_transport.sendto(data, client_addr)
             if not self._host_forward_logged:
                 self._host_forward_logged = True
                 log.info("[Relay] Host packet forwarded: session=%s hostPort=%d client=%s:%d len=%d prop=%s",
                          self.session.token[:8], self.host_port,
-                         self.client_addr[0], self.client_addr[1],
-                         len(data), litenet_packet_property(data))
+                         client_addr[0], client_addr[1],
+                         len(data), prop)
         except Exception as e:
-            log.debug("[Relay] Downstream send error to %s: %s", self.client_addr, e)
+            log.debug("[Relay] Downstream send error to %s: %s", client_addr, e)
+        finally:
+            if prop == LITENET_DISCONNECT_PROPERTY and self.session.client_relays.get(client_addr) is self:
+                self.session.remove_client(client_addr)
+                log.info("[Relay] Released client upstream after host disconnect: session=%s client=%s:%d hostPort=%d",
+                         self.session.token[:8], client_addr[0], client_addr[1], self.host_port)
 
     def error_received(self, exc):
         log.debug("[Relay] Host upstream UDP error port=%d client=%s: %s",
@@ -393,6 +453,8 @@ class RelayProtocol(asyncio.DatagramProtocol):
         if relay is None or relay.transport is None:
             return
 
+        prop = litenet_packet_property(data)
+        relay.mark_client_packet(prop)
         host_addr = relay.get_host_addr()
         if host_addr is None:
             log.warning("[Relay] Cannot forward client packet before host endpoint is known: "
@@ -407,10 +469,15 @@ class RelayProtocol(asyncio.DatagramProtocol):
                 log.info("[Relay] Client packet forwarded: session=%s client=%s:%d hostPort=%d host=%s:%d len=%d prop=%s",
                          session.token[:8], client_addr[0], client_addr[1],
                          relay.host_port, host_addr[0], host_addr[1],
-                         len(data), litenet_packet_property(data))
+                         len(data), prop)
         except Exception as e:
             log.debug("[Relay] Upstream send error from %s to host %s: %s",
                       client_addr, host_addr, e)
+        finally:
+            if prop == LITENET_DISCONNECT_PROPERTY and session.client_relays.get(client_addr) is relay:
+                session.remove_client(client_addr)
+                log.info("[Relay] Released client upstream after client disconnect: session=%s client=%s:%d hostPort=%d",
+                         session.token[:8], client_addr[0], client_addr[1], relay.host_port)
 
     def _send(self, payload: bytes, addr):
         try:
