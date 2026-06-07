@@ -87,6 +87,7 @@ class RelaySession:
         self.client_relays: Dict[Tuple[str, int], "HostUpstreamProtocol"] = {}
         self.host_upstreams: Dict[int, "HostUpstreamProtocol"] = {}
         self.packets_before_host_logged = 0
+        self.upstream_recycle_count = 0
         self.created_at  = time.time()
         self.last_pkt    = time.time()
 
@@ -131,6 +132,24 @@ class RelaySession:
                 self.free_host_ports.append(relay.host_port)
                 self.free_host_ports.sort()
 
+    def recycle_oldest_client_relay(self) -> Optional["HostUpstreamProtocol"]:
+        relay_clients = [addr for addr in self.client_relays if addr in self.clients]
+        if not relay_clients:
+            return None
+
+        oldest = min(relay_clients, key=lambda a: self.clients.get(a, 0))
+        relay = self.client_relays.pop(oldest, None)
+        self.clients.pop(oldest, None)
+        self.all_known.pop(oldest, None)
+        if relay is None:
+            return None
+
+        self.upstream_recycle_count += 1
+        relay.release_client()
+        log.warning("[Relay] Recycled oldest client upstream: session=%s oldClient=%s:%d hostPort=%d recycleCount=%d",
+                    self.token[:8], oldest[0], oldest[1], relay.host_port, self.upstream_recycle_count)
+        return relay
+
     def close_relays(self):
         for relay in list(self.host_upstreams.values()):
             try:
@@ -145,21 +164,31 @@ class RelaySession:
         self.host_upstreams[host_port] = protocol
 
     def acquire_host_upstream(self, client_addr: Tuple[str, int]) -> Optional["HostUpstreamProtocol"]:
+        now = time.time()
+        self.clients[client_addr] = now
+        self.all_known[client_addr] = now
+
         relay = self.client_relays.get(client_addr)
         if relay is not None:
             return relay
 
-        if not self.free_host_ports:
-            log.warning("[Relay] No host upstream ports left: session=%s client=%s:%d",
-                        self.token[:8], client_addr[0], client_addr[1])
-            return None
-
-        host_port = self.free_host_ports.pop(0)
-        relay = self.host_upstreams.get(host_port)
-        if relay is None:
-            log.warning("[Relay] Host upstream port not bound: session=%s port=%d",
-                        self.token[:8], host_port)
-            return None
+        relay = None
+        host_port = None
+        if self.free_host_ports:
+            host_port = self.free_host_ports.pop(0)
+            relay = self.host_upstreams.get(host_port)
+            if relay is None:
+                log.warning("[Relay] Host upstream port not bound: session=%s port=%d",
+                            self.token[:8], host_port)
+                return None
+        else:
+            relay = self.recycle_oldest_client_relay()
+            if relay is None:
+                log.warning("[Relay] No host upstream ports left: session=%s client=%s:%d clients=%d assigned=%d",
+                            self.token[:8], client_addr[0], client_addr[1],
+                            len(self.clients), len(self.client_relays))
+                return None
+            host_port = relay.host_port
 
         relay.assign_client(client_addr)
         self.client_relays[client_addr] = relay
@@ -182,6 +211,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.downstream_transport = downstream_transport
         self.transport = None
         self._fallback_logged = False
+        self._client_forward_logged = False
+        self._host_forward_logged = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -191,9 +222,13 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
 
     def assign_client(self, client_addr: Tuple[str, int]):
         self.client_addr = client_addr
+        self._client_forward_logged = False
+        self._host_forward_logged = False
 
     def release_client(self):
         self.client_addr = None
+        self._client_forward_logged = False
+        self._host_forward_logged = False
 
     def close(self):
         if self.transport is not None:
@@ -267,6 +302,12 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.session.all_known[self.client_addr] = time.time()
         try:
             self.downstream_transport.sendto(data, self.client_addr)
+            if not self._host_forward_logged:
+                self._host_forward_logged = True
+                log.info("[Relay] Host packet forwarded: session=%s hostPort=%d client=%s:%d len=%d prop=%s",
+                         self.session.token[:8], self.host_port,
+                         self.client_addr[0], self.client_addr[1],
+                         len(data), litenet_packet_property(data))
         except Exception as e:
             log.debug("[Relay] Downstream send error to %s: %s", self.client_addr, e)
 
@@ -361,6 +402,12 @@ class RelayProtocol(asyncio.DatagramProtocol):
 
         try:
             relay.transport.sendto(data, host_addr)
+            if not relay._client_forward_logged:
+                relay._client_forward_logged = True
+                log.info("[Relay] Client packet forwarded: session=%s client=%s:%d hostPort=%d host=%s:%d len=%d prop=%s",
+                         session.token[:8], client_addr[0], client_addr[1],
+                         relay.host_port, host_addr[0], host_addr[1],
+                         len(data), litenet_packet_property(data))
         except Exception as e:
             log.debug("[Relay] Upstream send error from %s to host %s: %s",
                       client_addr, host_addr, e)
@@ -567,6 +614,8 @@ async def handle_list(request: web.Request) -> web.Response:
             "has_host": s.has_host(),
             "registered_host_upstreams": s.registered_host_upstream_count(),
             "host_upstream_ports": s.host_ports,
+            "free_host_ports": s.free_host_ports,
+            "upstream_recycles": s.upstream_recycle_count,
             "idle_sec": int(time.time() - s.last_pkt),
         }
         for s in manager.sessions.values()

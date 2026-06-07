@@ -151,6 +151,31 @@ class TestRelaySession:
 
         upstream_transport.sendto.assert_called_once_with(b"fishnet-connect", upstream_host)
 
+    @pytest.mark.asyncio
+    async def test_recycles_oldest_client_when_upstreams_are_exhausted(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        first_client = ("198.51.100.50", 51000)
+        retry_client = ("198.51.100.50", 51001)
+        s.register_host(host)
+
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, MagicMock())
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(b"first-connect", first_client)
+        await relay._forward_client_packet(b"retry-connect", retry_client)
+
+        assert first_client not in s.clients
+        assert first_client not in s.client_relays
+        assert retry_client in s.clients
+        assert s.client_relays[retry_client] is upstream
+        assert upstream.client_addr == retry_client
+        assert s.upstream_recycle_count == 1
+        assert upstream_transport.sendto.call_args_list[-1].args == (b"retry-connect", host)
+
 
 # ── RelayManager unit tests ───────────────────────────────────────────────────
 
