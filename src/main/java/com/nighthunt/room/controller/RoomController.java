@@ -112,6 +112,16 @@ public class RoomController {
         return ApiResponse.ok(response);
     }
 
+    @PostMapping("/{roomId}/relay-host-ready")
+    public ApiResponse<RoomResponse> relayHostReady(@PathVariable Long roomId) {
+        Long ownerId = SecurityUtils.getCurrentUserId();
+        if (ownerId == null) {
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
+        }
+        RoomResponse response = roomService.markRelayHostReady(roomId, ownerId);
+        return ApiResponse.ok(response);
+    }
+
     @GetMapping("/{roomId}")
     public ApiResponse<RoomResponse> getRoom(@PathVariable Long roomId) {
         RoomResponse response = roomService.getRoom(roomId);

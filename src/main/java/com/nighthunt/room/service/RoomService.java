@@ -655,6 +655,44 @@ public class RoomService {
         return response;
     }
 
+    @Transactional
+    public RoomResponse markRelayHostReady(Long roomId, Long ownerId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "Room not found"));
+
+        if (!room.getOwnerId().equals(ownerId)) {
+            throw new BusinessException(ErrorCodes.ROOM_NOT_OWNER,
+                    "Only the room owner can mark relay host ready");
+        }
+
+        if (!GameConstants.ROOM_STATUS_IN_GAME.equals(room.getStatus())) {
+            throw new BusinessException(ErrorCodes.ROOM_ALREADY_STARTED,
+                    "Relay host can be marked ready only after the room enters IN_GAME");
+        }
+
+        RelaySession relaySession = relaySessionManager.getByRoomId(roomId)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
+                        "No active relay session for room " + roomId));
+
+        relaySessionManager.addPlayer(relaySession.getSessionToken(), ownerId);
+        relaySessionManager.markStarted(relaySession.getSessionToken());
+
+        RoomResponse response = roomResponseAssembler.toResponse(room, null);
+
+        Map<String, Object> readyPayload = new HashMap<>();
+        readyPayload.put("room", response);
+        readyPayload.put("relayToken", relaySession.getSessionToken());
+        readyPayload.put("relayHost", relaySession.getRelayHost());
+        readyPayload.put("relayPort", relaySession.getRelayPort());
+
+        connectionManager.broadcastToRoom(roomId, "relay_host_ready", readyPayload);
+        log.info("[Relay] Host ready roomId={} matchId={} ownerId={} relay={}:{}",
+                roomId, room.getMatchId(), ownerId, relaySession.getRelayHost(), relaySession.getRelayPort());
+
+        return response;
+    }
+
     public RoomResponse getRoom(Long roomId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
