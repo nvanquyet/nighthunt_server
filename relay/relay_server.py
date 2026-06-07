@@ -421,10 +421,25 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
                       self.session.token[:8], self.host_port, addr[0], addr[1])
             return
 
+        # FIX (same-machine multi-instance): When host and clients run on the same
+        # physical machine (e.g. ParrelSync / editor testing), the OS assigns a
+        # different ephemeral source port for each LiteNetLib socket even though
+        # the IP is identical. Strict IP:port matching breaks in this case.
+        # Solution: if the incoming packet is from the same IP as the registered
+        # host AND we have not yet seen a real game packet on this upstream,
+        # update host_addr to the new port and continue forwarding.
         if addr != host_addr:
-            log.debug("[Relay] Dropping upstream packet from non-host addr=%s:%d expected=%s",
-                      addr[0], addr[1], host_addr)
-            return
+            if addr[0] == host_addr[0]:
+                # Same IP, different port — update the upstream's host addr silently.
+                log.debug("[Relay] Host upstream port migrated (same IP): session=%s port=%d old=%s:%d new=%s:%d",
+                          self.session.token[:8], self.host_port, host_addr[0], host_addr[1], addr[0], addr[1])
+                self.host_addr = addr
+                self.session.all_known[addr] = time.time()
+                host_addr = addr
+            else:
+                log.debug("[Relay] Dropping upstream packet from non-host addr=%s:%d expected=%s",
+                          addr[0], addr[1], host_addr)
+                return
 
         if self.client_addr is None:
             log.debug("[Relay] Dropping host packet on unassigned upstream: session=%s port=%d",
@@ -448,7 +463,15 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         except Exception as e:
             log.debug("[Relay] Downstream send error to %s: %s", client_addr, e)
         finally:
-            if prop == LITENET_DISCONNECT_PROPERTY and self.session.client_relays.get(client_addr) is self:
+            # FIX: Only release the client upstream when BOTH sides have exchanged
+            # real game packets. LiteNetLib sends DISCONNECT packets during the
+            # handshake phase (e.g. ConnectRequest is rejected with a Disconnect
+            # reply for port probing). Releasing on the first DISCONNECT causes
+            # the relay to tear down the connection before it is established,
+            # creating an infinite reconnect loop.
+            if (prop == LITENET_DISCONNECT_PROPERTY
+                    and self._client_saw_game_packet and self._host_saw_game_packet
+                    and self.session.client_relays.get(client_addr) is self):
                 self.session.remove_client(client_addr)
                 log.info("[Relay] Released client upstream after host disconnect: session=%s client=%s:%d hostPort=%d",
                          self.session.token[:8], client_addr[0], client_addr[1], self.host_port)
@@ -558,7 +581,11 @@ class RelayProtocol(asyncio.DatagramProtocol):
             log.debug("[Relay] Upstream send error from %s to host %s: %s",
                       client_addr, host_addr, e)
         finally:
-            if prop == LITENET_DISCONNECT_PROPERTY and session.client_relays.get(client_addr) is relay:
+            # FIX: same guard as HostUpstreamProtocol — only tear down after real
+            # game traffic has been exchanged, not on handshake-phase disconnect packets.
+            if (prop == LITENET_DISCONNECT_PROPERTY
+                    and relay._client_saw_game_packet and relay._host_saw_game_packet
+                    and session.client_relays.get(client_addr) is relay):
                 session.remove_client(client_addr)
                 log.info("[Relay] Released client upstream after client disconnect: session=%s client=%s:%d hostPort=%d",
                          session.token[:8], client_addr[0], client_addr[1], relay.host_port)
