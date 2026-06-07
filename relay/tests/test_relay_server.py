@@ -22,10 +22,15 @@ from relay_server import (
     HANDSHAKE_RELAY_GRACE_SECS,
     LITENET_CONNECT_REQUEST_PROPERTY,
     LITENET_DISCONNECT_PROPERTY,
+    LITENET_UNCONNECTED_PROPERTY,
+    RELAY_IDENTITY_HEADER_SIZE,
+    RELAY_IDENTITY_MAGIC,
+    RELAY_IDENTITY_VERSION,
     RelaySession,
     RelayManager,
     RelayProtocol,
     HostUpstreamProtocol,
+    fnv1a_64,
     handle_create,
     handle_close,
     handle_set_host,
@@ -70,6 +75,16 @@ def _mock_datagram_endpoint():
     return patch.object(
         asyncio.get_event_loop(), "create_datagram_endpoint", side_effect=_fake_endpoint
     )
+
+
+def identity_packet(session_token: str, peer_id: int, nonce: int, payload: bytes) -> bytes:
+    header = bytearray(RELAY_IDENTITY_HEADER_SIZE)
+    header[0:4] = RELAY_IDENTITY_MAGIC
+    header[4] = RELAY_IDENTITY_VERSION
+    header[8:16] = fnv1a_64(session_token).to_bytes(8, "big")
+    header[16:24] = peer_id.to_bytes(8, "big")
+    header[24:32] = nonce.to_bytes(8, "big")
+    return bytes(header) + payload
 
 
 # ── RelaySession unit tests ───────────────────────────────────────────────────
@@ -135,6 +150,28 @@ class TestRelaySession:
         assert s.has_host() is True
         assert s.registered_host_upstream_count() == 1
 
+    def test_wrapped_host_registration_is_detected(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        upstream_host = ("203.0.113.10", 40001)
+        registration = identity_packet(
+            token,
+            peer_id=99,
+            nonce=1,
+            payload=bytes([LITENET_UNCONNECTED_PROPERTY]) + HOST_REGISTRATION_MAGIC,
+        )
+
+        relay = RelayProtocol(s)
+        relay.datagram_received(registration, host)
+
+        upstream = HostUpstreamProtocol(s, 17778, MagicMock())
+        upstream.connection_made(MagicMock())
+        upstream.datagram_received(registration, upstream_host)
+
+        assert s.host_addr == host
+        assert upstream.host_addr == upstream_host
+
     @pytest.mark.asyncio
     async def test_client_packet_uses_upstream_specific_host_endpoint(self):
         s = RelaySession("tok12345678", 17777, host_ports=[17778])
@@ -154,6 +191,67 @@ class TestRelaySession:
         await relay._forward_client_packet(packet, client)
 
         upstream_transport.sendto.assert_called_once_with(packet, upstream_host)
+
+    @pytest.mark.asyncio
+    async def test_identity_peer_reuses_upstream_when_endpoint_changes(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        first_addr = ("198.51.100.50", 51000)
+        rebound_addr = ("198.51.100.50", 51001)
+        peer_id = 42
+        s.register_host(host)
+
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, MagicMock())
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        first_packet = identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect")
+        rebound_packet = identity_packet(token, peer_id, 2, bytes([0]) + b"game-data")
+
+        await relay._forward_client_packet(first_packet, first_addr)
+        await relay._forward_client_packet(rebound_packet, rebound_addr)
+
+        assert first_addr not in s.clients
+        assert first_addr not in s.client_relays
+        assert s.client_relays[rebound_addr] is upstream
+        assert s.client_peer_relays[peer_id] is upstream
+        assert upstream.client_addr == rebound_addr
+        assert upstream.client_peer_id == peer_id
+        assert s.upstream_recycle_count == 0
+        assert upstream_transport.sendto.call_args_list[0].args == (first_packet, host)
+        assert upstream_transport.sendto.call_args_list[-1].args == (rebound_packet, host)
+
+    @pytest.mark.asyncio
+    async def test_identity_wrapped_host_disconnect_releases_upstream(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        client = ("198.51.100.50", 51000)
+        peer_id = 42
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            client)
+
+        disconnect_packet = identity_packet(token, 7, 99, bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye")
+        upstream.datagram_received(disconnect_packet, host)
+
+        downstream.sendto.assert_called_with(disconnect_packet, client)
+        assert client not in s.clients
+        assert client not in s.client_relays
+        assert peer_id not in s.client_peer_relays
+        assert s.free_host_ports == [17778]
 
     @pytest.mark.asyncio
     async def test_recycles_oldest_client_when_upstreams_are_exhausted(self):

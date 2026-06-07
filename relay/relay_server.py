@@ -43,6 +43,9 @@ from typing import Dict, List, Optional, Tuple
 from aiohttp import web
 
 HOST_REGISTRATION_MAGIC = b"NH_RELAY_HOST"
+RELAY_IDENTITY_MAGIC = b"NHR1"
+RELAY_IDENTITY_VERSION = 1
+RELAY_IDENTITY_HEADER_SIZE = 32
 LITENET_CONNECT_REQUEST_PROPERTY = 5
 LITENET_CONNECT_ACCEPT_PROPERTY = 6
 LITENET_DISCONNECT_PROPERTY = 7
@@ -76,10 +79,38 @@ def litenet_packet_property(data: bytes) -> Optional[int]:
     return data[0] & 0x1F
 
 
+def fnv1a_64(value: str) -> int:
+    result = 14695981039346656037
+    for byte in (value or "").encode("utf-8"):
+        result ^= byte
+        result = (result * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return result or 1
+
+
+def parse_relay_identity(data: bytes) -> Optional[Dict[str, int]]:
+    if len(data) < RELAY_IDENTITY_HEADER_SIZE:
+        return None
+    if data[0:4] != RELAY_IDENTITY_MAGIC or data[4] != RELAY_IDENTITY_VERSION:
+        return None
+    return {
+        "flags": data[5],
+        "session_hash": int.from_bytes(data[8:16], "big"),
+        "peer_id": int.from_bytes(data[16:24], "big"),
+        "nonce": int.from_bytes(data[24:32], "big"),
+    }
+
+
+def relay_payload(data: bytes, identity: Optional[Dict[str, int]] = None) -> bytes:
+    if identity is None:
+        identity = parse_relay_identity(data)
+    return data[RELAY_IDENTITY_HEADER_SIZE:] if identity is not None else data
+
+
 # ── Session State ──────────────────────────────────────────────────────────────
 class RelaySession:
     def __init__(self, token: str, port: int, host_ports: Optional[List[int]] = None):
         self.token       = token
+        self.session_hash = fnv1a_64(token)
         self.port        = port
         self.host_ports: List[int] = list(host_ports or [])
         self.free_host_ports: List[int] = list(self.host_ports)
@@ -89,6 +120,7 @@ class RelaySession:
         # all known endpoints (host + clients) for fast lookup
         self.all_known:  Dict[Tuple[str, int], float] = {}
         self.client_relays: Dict[Tuple[str, int], "HostUpstreamProtocol"] = {}
+        self.client_peer_relays: Dict[int, "HostUpstreamProtocol"] = {}
         self.host_upstreams: Dict[int, "HostUpstreamProtocol"] = {}
         self.packets_before_host_logged = 0
         self.upstream_recycle_count = 0
@@ -131,6 +163,8 @@ class RelaySession:
         self.all_known.pop(addr, None)
         relay = self.client_relays.pop(addr, None)
         if relay is not None:
+            if relay.client_peer_id is not None and self.client_peer_relays.get(relay.client_peer_id) is relay:
+                self.client_peer_relays.pop(relay.client_peer_id, None)
             relay.release_client()
             if relay.host_port not in self.free_host_ports:
                 self.free_host_ports.append(relay.host_port)
@@ -157,6 +191,8 @@ class RelaySession:
             return None
 
         self.upstream_recycle_count += 1
+        if relay.client_peer_id is not None and self.client_peer_relays.get(relay.client_peer_id) is relay:
+            self.client_peer_relays.pop(relay.client_peer_id, None)
         relay.release_client()
         log.warning("[Relay] Recycled oldest client upstream: session=%s oldClient=%s:%d hostPort=%d recycleCount=%d",
                     self.token[:8], oldest[0], oldest[1], relay.host_port, self.upstream_recycle_count)
@@ -169,16 +205,43 @@ class RelaySession:
             except Exception:
                 pass
         self.client_relays.clear()
+        self.client_peer_relays.clear()
         self.host_upstreams.clear()
         self.free_host_ports.clear()
 
     def bind_host_upstream(self, host_port: int, protocol: "HostUpstreamProtocol"):
         self.host_upstreams[host_port] = protocol
 
-    def acquire_host_upstream(self, client_addr: Tuple[str, int]) -> Optional["HostUpstreamProtocol"]:
+    def acquire_host_upstream(self, client_addr: Tuple[str, int],
+                              identity: Optional[Dict[str, int]] = None) -> Optional["HostUpstreamProtocol"]:
         now = time.time()
         self.clients[client_addr] = now
         self.all_known[client_addr] = now
+        peer_id = identity.get("peer_id") if identity is not None else None
+        nonce = identity.get("nonce") if identity is not None else None
+
+        if identity is not None and identity.get("session_hash") != self.session_hash:
+            log.warning("[Relay] Relay identity session hash mismatch: session=%s expected=%016x got=%016x peer=%s",
+                        self.token[:8], self.session_hash, identity.get("session_hash", 0), peer_id)
+
+        if peer_id:
+            relay = self.client_peer_relays.get(peer_id)
+            if relay is not None:
+                old_addr = relay.client_addr
+                if old_addr != client_addr:
+                    if old_addr is not None:
+                        self.client_relays.pop(old_addr, None)
+                        self.clients.pop(old_addr, None)
+                        self.all_known.pop(old_addr, None)
+                    log.info("[Relay] Client endpoint updated by identity: session=%s peer=%s old=%s new=%s:%d hostPort=%d",
+                             self.token[:8], peer_id,
+                             f"{old_addr[0]}:{old_addr[1]}" if old_addr else "unset",
+                             client_addr[0], client_addr[1], relay.host_port)
+                relay.refresh_client_endpoint(client_addr, nonce)
+                self.client_relays[client_addr] = relay
+                self.clients[client_addr] = now
+                self.all_known[client_addr] = now
+                return relay
 
         relay = self.client_relays.get(client_addr)
         if relay is not None:
@@ -209,11 +272,14 @@ class RelaySession:
                 return None
             host_port = relay.host_port
 
-        relay.assign_client(client_addr)
+        relay.assign_client(client_addr, peer_id, nonce)
         self.client_relays[client_addr] = relay
+        if peer_id:
+            self.client_peer_relays[peer_id] = relay
         host_addr = relay.get_host_addr()
-        log.info("[Relay] Client upstream assigned: session=%s client=%s:%d hostPort=%d host=%s",
-                 self.token[:8], client_addr[0], client_addr[1], host_port,
+        log.info("[Relay] Client upstream assigned: session=%s client=%s:%d peer=%s hostPort=%d host=%s",
+                 self.token[:8], client_addr[0], client_addr[1],
+                 peer_id if peer_id else "legacy", host_port,
                  f"{host_addr[0]}:{host_addr[1]}" if host_addr else "unset")
         return relay
 
@@ -227,6 +293,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.host_port = host_port
         self.host_addr: Optional[Tuple[str, int]] = None
         self.client_addr: Optional[Tuple[str, int]] = None
+        self.client_peer_id: Optional[int] = None
+        self.client_nonce: Optional[int] = None
         self.downstream_transport = downstream_transport
         self.transport = None
         self._fallback_logged = False
@@ -244,9 +312,13 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         log.info("[Relay] Host upstream listening: session=%s port=%d",
                  self.session.token[:8], self.host_port)
 
-    def assign_client(self, client_addr: Tuple[str, int]):
+    def assign_client(self, client_addr: Tuple[str, int],
+                      peer_id: Optional[int] = None,
+                      nonce: Optional[int] = None):
         now = time.time()
         self.client_addr = client_addr
+        self.client_peer_id = peer_id
+        self.client_nonce = nonce
         self.client_assigned_at = now
         self.client_last_seen_at = now
         self.host_last_seen_at = None
@@ -257,6 +329,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
 
     def release_client(self):
         self.client_addr = None
+        self.client_peer_id = None
+        self.client_nonce = None
         self.client_assigned_at = None
         self.client_last_seen_at = None
         self.host_last_seen_at = None
@@ -264,6 +338,12 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self._host_saw_game_packet = False
         self._client_forward_logged = False
         self._host_forward_logged = False
+
+    def refresh_client_endpoint(self, client_addr: Tuple[str, int], nonce: Optional[int]):
+        self.client_addr = client_addr
+        if nonce is not None:
+            self.client_nonce = nonce
+        self.client_last_seen_at = time.time()
 
     def mark_client_packet(self, prop: Optional[int]):
         self.client_last_seen_at = time.time()
@@ -318,7 +398,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             return
 
         if self.host_addr is None:
-            prop = litenet_packet_property(data)
+            identity = parse_relay_identity(data)
+            prop = litenet_packet_property(relay_payload(data, identity))
             if prop == LITENET_UNCONNECTED_PROPERTY:
                 self.register_host(addr)
                 log.warning(
@@ -350,7 +431,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
                       self.session.token[:8], self.host_port)
             return
 
-        prop = litenet_packet_property(data)
+        identity = parse_relay_identity(data)
+        prop = litenet_packet_property(relay_payload(data, identity))
         client_addr = self.client_addr
         self.mark_host_packet(prop)
         self.session.clients[client_addr] = time.time()
@@ -396,7 +478,8 @@ class RelayProtocol(asyncio.DatagramProtocol):
             return
 
         if session.host_addr is None:
-            prop = litenet_packet_property(data)
+            identity = parse_relay_identity(data)
+            prop = litenet_packet_property(relay_payload(data, identity))
             if prop == LITENET_UNCONNECTED_PROPERTY:
                 session.register_host(addr)
                 log.warning(
@@ -448,12 +531,13 @@ class RelayProtocol(asyncio.DatagramProtocol):
 
     async def _forward_client_packet(self, data: bytes, client_addr: Tuple[str, int]):
         session = self.session
+        identity = parse_relay_identity(data)
 
-        relay = session.acquire_host_upstream(client_addr)
+        relay = session.acquire_host_upstream(client_addr, identity)
         if relay is None or relay.transport is None:
             return
 
-        prop = litenet_packet_property(data)
+        prop = litenet_packet_property(relay_payload(data, identity))
         relay.mark_client_packet(prop)
         host_addr = relay.get_host_addr()
         if host_addr is None:
@@ -678,6 +762,7 @@ async def handle_list(request: web.Request) -> web.Response:
             "host_ports": s.host_ports,
             "clients":  s.client_count(),
             "assigned_upstreams": len(s.client_relays),
+            "identity_clients": len(s.client_peer_relays),
             "has_host": s.has_host(),
             "registered_host_upstreams": s.registered_host_upstream_count(),
             "host_upstream_ports": s.host_ports,
