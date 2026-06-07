@@ -18,8 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # conftest.py adds relay/ to sys.path
 import relay_server
 from relay_server import (
+    HOST_REGISTRATION_MAGIC,
     RelaySession,
     RelayManager,
+    RelayProtocol,
+    HostUpstreamProtocol,
     handle_create,
     handle_close,
     handle_set_host,
@@ -112,6 +115,41 @@ class TestRelaySession:
         s.register_endpoint(("c1", 2))
         s.register_endpoint(("c2", 3))
         assert s.client_count() == 2
+
+    def test_host_upstream_learns_distinct_nat_endpoint(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        main_host = ("203.0.113.10", 40000)
+        upstream_host = ("203.0.113.10", 40001)
+        s.register_host(main_host)
+
+        downstream = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(MagicMock())
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, upstream_host)
+
+        assert s.host_addr == main_host
+        assert upstream.host_addr == upstream_host
+        assert s.has_host() is True
+        assert s.registered_host_upstream_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_client_packet_uses_upstream_specific_host_endpoint(self):
+        s = RelaySession("tok12345678", 17777, host_ports=[17778])
+        main_host = ("203.0.113.10", 40000)
+        upstream_host = ("203.0.113.10", 40001)
+        client = ("198.51.100.50", 51000)
+        s.register_host(main_host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, upstream_host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(b"fishnet-connect", client)
+
+        upstream_transport.sendto.assert_called_once_with(b"fishnet-connect", upstream_host)
 
 
 # ── RelayManager unit tests ───────────────────────────────────────────────────

@@ -99,6 +99,14 @@ class RelaySession:
     def client_count(self) -> int:
         return len(self.clients)
 
+    def has_host(self) -> bool:
+        if self.host_addr is not None:
+            return True
+        return any(relay.host_addr is not None for relay in self.host_upstreams.values())
+
+    def registered_host_upstream_count(self) -> int:
+        return sum(1 for relay in self.host_upstreams.values() if relay.host_addr is not None)
+
     def register_host(self, addr: Tuple[str, int]):
         self.all_known[addr] = time.time()
         if addr in self.clients:
@@ -155,9 +163,10 @@ class RelaySession:
 
         relay.assign_client(client_addr)
         self.client_relays[client_addr] = relay
+        host_addr = relay.get_host_addr()
         log.info("[Relay] Client upstream assigned: session=%s client=%s:%d hostPort=%d host=%s",
                  self.token[:8], client_addr[0], client_addr[1], host_port,
-                 f"{self.host_addr[0]}:{self.host_addr[1]}" if self.host_addr else "unset")
+                 f"{host_addr[0]}:{host_addr[1]}" if host_addr else "unset")
         return relay
 
 
@@ -168,9 +177,11 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
     def __init__(self, session: RelaySession, host_port: int, downstream_transport):
         self.session = session
         self.host_port = host_port
+        self.host_addr: Optional[Tuple[str, int]] = None
         self.client_addr: Optional[Tuple[str, int]] = None
         self.downstream_transport = downstream_transport
         self.transport = None
+        self._fallback_logged = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -188,19 +199,63 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         if self.transport is not None:
             self.transport.close()
 
-    def datagram_received(self, data: bytes, addr: Tuple[str, int]):
-        self.session.touch()
+    def register_host(self, addr: Tuple[str, int]):
+        self.session.all_known[addr] = time.time()
+        if self.host_addr != addr:
+            self.host_addr = addr
+            log.info("[Relay] Host upstream registered: session=%s port=%d addr=%s:%d",
+                     self.session.token[:8], self.host_port, addr[0], addr[1])
+
         if self.session.host_addr is None:
             self.session.register_host(addr)
 
-        if addr != self.session.host_addr:
-            log.debug("[Relay] Dropping upstream packet from non-host addr=%s:%d expected=%s",
-                      addr[0], addr[1], self.session.host_addr)
-            return
+    def get_host_addr(self) -> Optional[Tuple[str, int]]:
+        if self.host_addr is not None:
+            return self.host_addr
+
+        if self.session.host_addr is not None and not self._fallback_logged:
+            self._fallback_logged = True
+            log.warning("[Relay] Host upstream missing punch: session=%s port=%d; "
+                        "falling back to main host endpoint %s:%d",
+                        self.session.token[:8], self.host_port,
+                        self.session.host_addr[0], self.session.host_addr[1])
+        return self.session.host_addr
+
+    def datagram_received(self, data: bytes, addr: Tuple[str, int]):
+        self.session.touch()
 
         if is_host_registration_packet(data):
+            self.register_host(addr)
             log.debug("[Relay] Host upstream punch: session=%s port=%d addr=%s:%d",
                       self.session.token[:8], self.host_port, addr[0], addr[1])
+            return
+
+        if self.host_addr is None:
+            prop = litenet_packet_property(data)
+            if prop == LITENET_UNCONNECTED_PROPERTY:
+                self.register_host(addr)
+                log.warning(
+                    "[Relay] Host upstream registered by unconnected-packet fallback: "
+                    "session=%s port=%d addr=%s:%d len=%d head=%s tail=%s",
+                    self.session.token[:8],
+                    self.host_port,
+                    addr[0],
+                    addr[1],
+                    len(data),
+                    data[:16].hex(),
+                    data[-16:].hex(),
+                )
+                return
+
+        host_addr = self.get_host_addr()
+        if host_addr is None:
+            log.debug("[Relay] Dropping upstream packet before host punch: session=%s port=%d addr=%s:%d",
+                      self.session.token[:8], self.host_port, addr[0], addr[1])
+            return
+
+        if addr != host_addr:
+            log.debug("[Relay] Dropping upstream packet from non-host addr=%s:%d expected=%s",
+                      addr[0], addr[1], host_addr)
             return
 
         if self.client_addr is None:
@@ -292,18 +347,23 @@ class RelayProtocol(asyncio.DatagramProtocol):
 
     async def _forward_client_packet(self, data: bytes, client_addr: Tuple[str, int]):
         session = self.session
-        if session.host_addr is None:
-            return
 
         relay = session.acquire_host_upstream(client_addr)
         if relay is None or relay.transport is None:
             return
 
+        host_addr = relay.get_host_addr()
+        if host_addr is None:
+            log.warning("[Relay] Cannot forward client packet before host endpoint is known: "
+                        "session=%s client=%s:%d hostPort=%d",
+                        session.token[:8], client_addr[0], client_addr[1], relay.host_port)
+            return
+
         try:
-            relay.transport.sendto(data, session.host_addr)
+            relay.transport.sendto(data, host_addr)
         except Exception as e:
             log.debug("[Relay] Upstream send error from %s to host %s: %s",
-                      client_addr, session.host_addr, e)
+                      client_addr, host_addr, e)
 
     def _send(self, payload: bytes, addr):
         try:
@@ -504,7 +564,9 @@ async def handle_list(request: web.Request) -> web.Response:
             "host_ports": s.host_ports,
             "clients":  s.client_count(),
             "assigned_upstreams": len(s.client_relays),
-            "has_host": s.host_addr is not None,
+            "has_host": s.has_host(),
+            "registered_host_upstreams": s.registered_host_upstream_count(),
+            "host_upstream_ports": s.host_ports,
             "idle_sec": int(time.time() - s.last_pkt),
         }
         for s in manager.sessions.values()
