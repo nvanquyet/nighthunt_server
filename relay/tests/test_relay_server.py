@@ -20,8 +20,10 @@ import relay_server
 from relay_server import (
     HOST_REGISTRATION_MAGIC,
     HANDSHAKE_RELAY_GRACE_SECS,
+    LITENET_CHANNELED_PROPERTY,
     LITENET_CONNECT_REQUEST_PROPERTY,
     LITENET_DISCONNECT_PROPERTY,
+    LITENET_UNRELIABLE_PROPERTY,
     LITENET_UNCONNECTED_PROPERTY,
     RELAY_IDENTITY_HEADER_SIZE,
     RELAY_IDENTITY_MAGIC,
@@ -225,7 +227,7 @@ class TestRelaySession:
         assert upstream_transport.sendto.call_args_list[-1].args == (rebound_packet, host)
 
     @pytest.mark.asyncio
-    async def test_identity_wrapped_host_disconnect_releases_upstream(self):
+    async def test_identity_wrapped_handshake_host_disconnect_is_suppressed(self):
         token = "tok12345678"
         s = RelaySession(token, 17777, host_ports=[17778])
         host = ("203.0.113.10", 40000)
@@ -247,11 +249,49 @@ class TestRelaySession:
         disconnect_packet = identity_packet(token, 7, 99, bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye")
         upstream.datagram_received(disconnect_packet, host)
 
+        downstream.sendto.assert_not_called()
+        assert s.clients[client] > 0
+        assert s.client_relays[client] is upstream
+        assert s.client_peer_relays[peer_id] is upstream
+        assert s.free_host_ports == []
+        assert s.cooling_host_ports == {}
+
+    @pytest.mark.asyncio
+    async def test_identity_wrapped_established_host_disconnect_releases_upstream(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        client = ("198.51.100.50", 51000)
+        peer_id = 42
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            client)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CHANNELED_PROPERTY]) + b"client-game"),
+            client)
+        upstream.datagram_received(
+            identity_packet(token, 7, 99, bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game"),
+            host)
+        downstream.reset_mock()
+
+        disconnect_packet = identity_packet(token, 7, 99, bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye")
+        upstream.datagram_received(disconnect_packet, host)
+
         downstream.sendto.assert_called_with(disconnect_packet, client)
         assert client not in s.clients
         assert client not in s.client_relays
         assert peer_id not in s.client_peer_relays
-        assert s.free_host_ports == [17778]
+        assert s.free_host_ports == []
+        assert list(s.cooling_host_ports.keys()) == [17778]
 
     @pytest.mark.asyncio
     async def test_recycles_oldest_client_when_upstreams_are_exhausted(self):
@@ -321,6 +361,9 @@ class TestRelaySession:
 
         relay = RelayProtocol(s)
         await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect", client)
+        await relay._forward_client_packet(bytes([LITENET_UNRELIABLE_PROPERTY]) + b"client-game", client)
+        upstream.datagram_received(bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game", host)
+        downstream.reset_mock()
         assert s.free_host_ports == []
 
         disconnect_packet = bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye"
@@ -329,7 +372,8 @@ class TestRelaySession:
         downstream.sendto.assert_called_with(disconnect_packet, client)
         assert client not in s.clients
         assert client not in s.client_relays
-        assert s.free_host_ports == [17778]
+        assert s.free_host_ports == []
+        assert list(s.cooling_host_ports.keys()) == [17778]
         assert upstream.client_addr is None
 
     @pytest.mark.asyncio
@@ -346,6 +390,8 @@ class TestRelaySession:
 
         relay = RelayProtocol(s)
         await relay._forward_client_packet(bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect", client)
+        await relay._forward_client_packet(bytes([LITENET_UNRELIABLE_PROPERTY]) + b"client-game", client)
+        upstream.datagram_received(bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game", host)
         assert s.free_host_ports == []
 
         disconnect_packet = bytes([LITENET_DISCONNECT_PROPERTY]) + b"bye"
@@ -354,7 +400,8 @@ class TestRelaySession:
         upstream_transport.sendto.assert_any_call(disconnect_packet, host)
         assert client not in s.clients
         assert client not in s.client_relays
-        assert s.free_host_ports == [17778]
+        assert s.free_host_ports == []
+        assert list(s.cooling_host_ports.keys()) == [17778]
         assert upstream.client_addr is None
 
 

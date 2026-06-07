@@ -50,6 +50,9 @@ LITENET_CONNECT_REQUEST_PROPERTY = 5
 LITENET_CONNECT_ACCEPT_PROPERTY = 6
 LITENET_DISCONNECT_PROPERTY = 7
 LITENET_UNCONNECTED_PROPERTY = 8
+LITENET_UNRELIABLE_PROPERTY = 0
+LITENET_CHANNELED_PROPERTY = 1
+LITENET_MERGED_PROPERTY = 12
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -104,6 +107,15 @@ def relay_payload(data: bytes, identity: Optional[Dict[str, int]] = None) -> byt
     if identity is None:
         identity = parse_relay_identity(data)
     return data[RELAY_IDENTITY_HEADER_SIZE:] if identity is not None else data
+
+
+def is_litenet_game_property(prop: Optional[int]) -> bool:
+    """True only for LiteNetLib packet types that can carry FishNet payloads."""
+    return prop in {
+        LITENET_UNRELIABLE_PROPERTY,
+        LITENET_CHANNELED_PROPERTY,
+        LITENET_MERGED_PROPERTY,
+    }
 
 
 # ── Session State ──────────────────────────────────────────────────────────────
@@ -191,8 +203,8 @@ class RelaySession:
             # relay:hostPort has had time to clean up (which causes DISCONNECT).
             port = relay.host_port
             self.cooling_host_ports[port] = time.time()
-            log.debug("[Relay] Upstream port %d cooling for %.1fs: session=%s",
-                      port, UPSTREAM_COOLDOWN_SECS, self.token[:8])
+            log.info("[Relay] Upstream port cooling: session=%s hostPort=%d cooldown=%.1fs",
+                     self.token[:8], port, UPSTREAM_COOLDOWN_SECS)
 
     def recycle_oldest_client_relay(self) -> Optional["HostUpstreamProtocol"]:
         now = time.time()
@@ -373,13 +385,16 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
 
     def mark_client_packet(self, prop: Optional[int]):
         self.client_last_seen_at = time.time()
-        if prop not in (LITENET_CONNECT_REQUEST_PROPERTY, LITENET_DISCONNECT_PROPERTY):
+        if is_litenet_game_property(prop):
             self._client_saw_game_packet = True
 
     def mark_host_packet(self, prop: Optional[int]):
         self.host_last_seen_at = time.time()
-        if prop not in (LITENET_CONNECT_ACCEPT_PROPERTY, LITENET_DISCONNECT_PROPERTY):
+        if is_litenet_game_property(prop):
             self._host_saw_game_packet = True
+
+    def has_established_game_exchange(self) -> bool:
+        return self._client_saw_game_packet and self._host_saw_game_packet
 
     def can_recycle(self, now: float) -> bool:
         if self.client_addr is None or self.client_assigned_at is None:
@@ -475,6 +490,24 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         identity = parse_relay_identity(data)
         prop = litenet_packet_property(relay_payload(data, identity))
         client_addr = self.client_addr
+
+        established = self.has_established_game_exchange()
+        if prop == LITENET_DISCONNECT_PROPERTY and not established:
+            log.info(
+                "[Relay] Suppressed handshake host disconnect: session=%s peer=%s client=%s:%d "
+                "hostPort=%d clientGame=%s hostGame=%s len=%d head=%s",
+                self.session.token[:8],
+                self.client_peer_id if self.client_peer_id is not None else "legacy",
+                client_addr[0],
+                client_addr[1],
+                self.host_port,
+                self._client_saw_game_packet,
+                self._host_saw_game_packet,
+                len(data),
+                relay_payload(data, identity)[:16].hex(),
+            )
+            return
+
         self.mark_host_packet(prop)
         self.session.clients[client_addr] = time.time()
         self.session.all_known[client_addr] = time.time()
@@ -496,11 +529,19 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             # the relay to tear down the connection before it is established,
             # creating an infinite reconnect loop.
             if (prop == LITENET_DISCONNECT_PROPERTY
-                    and self._client_saw_game_packet and self._host_saw_game_packet
+                    and established
                     and self.session.client_relays.get(client_addr) is self):
+                peer_id = self.client_peer_id if self.client_peer_id is not None else "legacy"
                 self.session.remove_client(client_addr)
-                log.info("[Relay] Released client upstream after host disconnect: session=%s client=%s:%d hostPort=%d",
-                         self.session.token[:8], client_addr[0], client_addr[1], self.host_port)
+                log.info(
+                    "[Relay] Released client upstream after host disconnect: session=%s client=%s:%d "
+                    "peer=%s hostPort=%d",
+                    self.session.token[:8],
+                    client_addr[0],
+                    client_addr[1],
+                    peer_id,
+                    self.host_port,
+                )
 
     def error_received(self, exc):
         log.debug("[Relay] Host upstream UDP error port=%d client=%s: %s",
@@ -610,11 +651,19 @@ class RelayProtocol(asyncio.DatagramProtocol):
             # FIX: same guard as HostUpstreamProtocol — only tear down after real
             # game traffic has been exchanged, not on handshake-phase disconnect packets.
             if (prop == LITENET_DISCONNECT_PROPERTY
-                    and relay._client_saw_game_packet and relay._host_saw_game_packet
+                    and relay.has_established_game_exchange()
                     and session.client_relays.get(client_addr) is relay):
+                peer_id = relay.client_peer_id if relay.client_peer_id is not None else "legacy"
                 session.remove_client(client_addr)
-                log.info("[Relay] Released client upstream after client disconnect: session=%s client=%s:%d hostPort=%d",
-                         session.token[:8], client_addr[0], client_addr[1], relay.host_port)
+                log.info(
+                    "[Relay] Released client upstream after client disconnect: session=%s client=%s:%d "
+                    "peer=%s hostPort=%d",
+                    session.token[:8],
+                    client_addr[0],
+                    client_addr[1],
+                    peer_id,
+                    relay.host_port,
+                )
 
     def _send(self, payload: bytes, addr):
         try:
@@ -820,6 +869,7 @@ async def handle_list(request: web.Request) -> web.Response:
             "registered_host_upstreams": s.registered_host_upstream_count(),
             "host_upstream_ports": s.host_ports,
             "free_host_ports": s.free_host_ports,
+            "cooling_host_ports": sorted(s.cooling_host_ports.keys()),
             "upstream_recycles": s.upstream_recycle_count,
             "idle_sec": int(time.time() - s.last_pkt),
         }
