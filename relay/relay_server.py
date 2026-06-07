@@ -38,7 +38,7 @@ import logging
 import argparse
 import sys
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from aiohttp import web
 
@@ -74,15 +74,18 @@ def litenet_packet_property(data: bytes) -> Optional[int]:
 
 # ── Session State ──────────────────────────────────────────────────────────────
 class RelaySession:
-    def __init__(self, token: str, port: int):
+    def __init__(self, token: str, port: int, host_ports: Optional[List[int]] = None):
         self.token       = token
         self.port        = port
+        self.host_ports: List[int] = list(host_ports or [])
+        self.free_host_ports: List[int] = list(self.host_ports)
         self.host_addr:  Optional[Tuple[str, int]] = None
         # non-host endpoints: addr → last_seen timestamp
         self.clients:    Dict[Tuple[str, int], float] = {}
         # all known endpoints (host + clients) for fast lookup
         self.all_known:  Dict[Tuple[str, int], float] = {}
-        self.client_relays: Dict[Tuple[str, int], object] = {}
+        self.client_relays: Dict[Tuple[str, int], "HostUpstreamProtocol"] = {}
+        self.host_upstreams: Dict[int, "HostUpstreamProtocol"] = {}
         self.packets_before_host_logged = 0
         self.created_at  = time.time()
         self.last_pkt    = time.time()
@@ -113,37 +116,98 @@ class RelaySession:
     def remove_client(self, addr: Tuple[str, int]):
         self.clients.pop(addr, None)
         self.all_known.pop(addr, None)
-        relay_transport = self.client_relays.pop(addr, None)
-        if relay_transport is not None:
-            try:
-                relay_transport.close()
-            except Exception:
-                pass
+        relay = self.client_relays.pop(addr, None)
+        if relay is not None:
+            relay.release_client()
+            if relay.host_port not in self.free_host_ports:
+                self.free_host_ports.append(relay.host_port)
+                self.free_host_ports.sort()
 
     def close_relays(self):
-        for relay_transport in list(self.client_relays.values()):
+        for relay in list(self.host_upstreams.values()):
             try:
-                relay_transport.close()
+                relay.close()
             except Exception:
                 pass
         self.client_relays.clear()
+        self.host_upstreams.clear()
+        self.free_host_ports.clear()
+
+    def bind_host_upstream(self, host_port: int, protocol: "HostUpstreamProtocol"):
+        self.host_upstreams[host_port] = protocol
+
+    def acquire_host_upstream(self, client_addr: Tuple[str, int]) -> Optional["HostUpstreamProtocol"]:
+        relay = self.client_relays.get(client_addr)
+        if relay is not None:
+            return relay
+
+        if not self.free_host_ports:
+            log.warning("[Relay] No host upstream ports left: session=%s client=%s:%d",
+                        self.token[:8], client_addr[0], client_addr[1])
+            return None
+
+        host_port = self.free_host_ports.pop(0)
+        relay = self.host_upstreams.get(host_port)
+        if relay is None:
+            log.warning("[Relay] Host upstream port not bound: session=%s port=%d",
+                        self.token[:8], host_port)
+            return None
+
+        relay.assign_client(client_addr)
+        self.client_relays[client_addr] = relay
+        log.info("[Relay] Client upstream assigned: session=%s client=%s:%d hostPort=%d host=%s",
+                 self.token[:8], client_addr[0], client_addr[1], host_port,
+                 f"{self.host_addr[0]}:{self.host_addr[1]}" if self.host_addr else "unset")
+        return relay
 
 
 # ── UDP Relay Protocol ─────────────────────────────────────────────────────────
-class ClientRelayProtocol(asyncio.DatagramProtocol):
-    """One upstream UDP socket mapping host replies back to one client."""
+class HostUpstreamProtocol(asyncio.DatagramProtocol):
+    """One host-facing UDP socket mapping host replies back to one client."""
 
-    def __init__(self, session: RelaySession, client_addr: Tuple[str, int], downstream_transport):
+    def __init__(self, session: RelaySession, host_port: int, downstream_transport):
         self.session = session
-        self.client_addr = client_addr
+        self.host_port = host_port
+        self.client_addr: Optional[Tuple[str, int]] = None
         self.downstream_transport = downstream_transport
         self.transport = None
 
     def connection_made(self, transport):
         self.transport = transport
+        self.session.bind_host_upstream(self.host_port, self)
+        log.info("[Relay] Host upstream listening: session=%s port=%d",
+                 self.session.token[:8], self.host_port)
+
+    def assign_client(self, client_addr: Tuple[str, int]):
+        self.client_addr = client_addr
+
+    def release_client(self):
+        self.client_addr = None
+
+    def close(self):
+        if self.transport is not None:
+            self.transport.close()
 
     def datagram_received(self, data: bytes, addr: Tuple[str, int]):
         self.session.touch()
+        if self.session.host_addr is None:
+            self.session.register_host(addr)
+
+        if addr != self.session.host_addr:
+            log.debug("[Relay] Dropping upstream packet from non-host addr=%s:%d expected=%s",
+                      addr[0], addr[1], self.session.host_addr)
+            return
+
+        if is_host_registration_packet(data):
+            log.debug("[Relay] Host upstream punch: session=%s port=%d addr=%s:%d",
+                      self.session.token[:8], self.host_port, addr[0], addr[1])
+            return
+
+        if self.client_addr is None:
+            log.debug("[Relay] Dropping host packet on unassigned upstream: session=%s port=%d",
+                      self.session.token[:8], self.host_port)
+            return
+
         self.session.clients[self.client_addr] = time.time()
         self.session.all_known[self.client_addr] = time.time()
         try:
@@ -152,7 +216,8 @@ class ClientRelayProtocol(asyncio.DatagramProtocol):
             log.debug("[Relay] Downstream send error to %s: %s", self.client_addr, e)
 
     def error_received(self, exc):
-        log.debug("[Relay] Upstream UDP error for client %s: %s", self.client_addr, exc)
+        log.debug("[Relay] Host upstream UDP error port=%d client=%s: %s",
+                  self.host_port, self.client_addr, exc)
 
 
 class RelayProtocol(asyncio.DatagramProtocol):
@@ -222,11 +287,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
             # ── Client → forward to host ───────────────────────────────────
             session.clients[addr] = time.time()
             if session.host_addr is not None:
-                # Keep packets to the host on the session transport. Some host NATs only
-                # accept inbound UDP from the relay session port they already sent to.
-                # Per-client upstream sockets use random source ports and can be dropped,
-                # which made remote guests start then immediately stop/retry.
-                self._send(data, session.host_addr)
+                asyncio.create_task(self._forward_client_packet(data, addr))
             # else: host not connected yet → buffer? For now just drop.
 
     async def _forward_client_packet(self, data: bytes, client_addr: Tuple[str, int]):
@@ -234,24 +295,12 @@ class RelayProtocol(asyncio.DatagramProtocol):
         if session.host_addr is None:
             return
 
-        transport = session.client_relays.get(client_addr)
-        if transport is None:
-            try:
-                loop = asyncio.get_running_loop()
-                transport, _ = await loop.create_datagram_endpoint(
-                    lambda: ClientRelayProtocol(session, client_addr, self.transport),
-                    local_addr=("0.0.0.0", 0),
-                )
-                session.client_relays[client_addr] = transport
-                log.info("[Relay] Client upstream created: session=%s client=%s:%d host=%s:%d",
-                         session.token[:8], client_addr[0], client_addr[1],
-                         session.host_addr[0], session.host_addr[1])
-            except Exception as e:
-                log.warning("[Relay] Could not create upstream for client %s: %s", client_addr, e)
-                return
+        relay = session.acquire_host_upstream(client_addr)
+        if relay is None or relay.transport is None:
+            return
 
         try:
-            transport.sendto(data, session.host_addr)
+            relay.transport.sendto(data, session.host_addr)
         except Exception as e:
             log.debug("[Relay] Upstream send error from %s to host %s: %s",
                       client_addr, session.host_addr, e)
@@ -271,10 +320,11 @@ class RelayProtocol(asyncio.DatagramProtocol):
 
 # ── Relay Server Manager ───────────────────────────────────────────────────────
 class RelayManager:
-    def __init__(self, port_start: int, port_end: int, loop):
+    def __init__(self, port_start: int, port_end: int, loop, default_host_upstreams: int = 4):
         self.port_start = port_start
         self.port_end   = port_end
         self.loop       = loop
+        self.default_host_upstreams = max(1, default_host_upstreams)
         self.sessions:   Dict[str, RelaySession] = {}   # token → session
         self.port_map:   Dict[int, str]          = {}   # port  → token
         self._free_ports = list(range(port_start, port_end + 1))
@@ -287,30 +337,60 @@ class RelayManager:
             self._free_ports.append(port)
             self._free_ports.sort()
 
-    async def create_session(self, token: str) -> Optional[RelaySession]:
+    def _alloc_ports(self, count: int) -> Optional[List[int]]:
+        ports: List[int] = []
+        for _ in range(count):
+            port = self._alloc_port()
+            if port is None:
+                for allocated in ports:
+                    self._free_port(allocated)
+                return None
+            ports.append(port)
+        return ports
+
+    async def create_session(self, token: str, host_upstream_count: Optional[int] = None) -> Optional[RelaySession]:
         if token in self.sessions:
             return self.sessions[token]  # idempotent
 
-        port = self._alloc_port()
-        if port is None:
+        upstream_count = max(1, host_upstream_count or self.default_host_upstreams)
+        ports = self._alloc_ports(1 + upstream_count)
+        if ports is None:
             log.error("[Relay] No free ports!")
             return None
 
-        session = RelaySession(token, port)
+        port = ports[0]
+        host_ports = ports[1:]
+        session = RelaySession(token, port, host_ports)
+        bound_transports = []
         try:
             transport, _ = await self.loop.create_datagram_endpoint(
                 lambda: RelayProtocol(session),
                 local_addr=("0.0.0.0", port),
             )
+            bound_transports.append(transport)
+            for host_port in host_ports:
+                host_transport, _ = await self.loop.create_datagram_endpoint(
+                    lambda p=host_port: HostUpstreamProtocol(session, p, transport),
+                    local_addr=("0.0.0.0", host_port),
+                )
+                bound_transports.append(host_transport)
         except OSError as e:
-            log.error("[Relay] Cannot bind port %d: %s", port, e)
-            self._free_port(port)
+            log.error("[Relay] Cannot bind session port block %s: %s", ports, e)
+            for bound in bound_transports:
+                try:
+                    bound.close()
+                except Exception:
+                    pass
+            for allocated in ports:
+                self._free_port(allocated)
             return None
 
         session._transport = transport
         self.sessions[token] = session
-        self.port_map[port]  = token
-        log.info("[Relay] Session created: token=%s port=%d", token[:8], port)
+        for allocated in ports:
+            self.port_map[allocated] = token
+        log.info("[Relay] Session created: token=%s port=%d hostPorts=%s",
+                 token[:8], port, host_ports)
         return session
 
     async def close_session(self, token: str):
@@ -318,13 +398,15 @@ class RelayManager:
         if session is None:
             return
         session.close_relays()
-        self.port_map.pop(session.port, None)
-        self._free_port(session.port)
+        for allocated in [session.port] + list(session.host_ports):
+            self.port_map.pop(allocated, None)
+            self._free_port(allocated)
         try:
             session._transport.close()
         except Exception:
             pass
-        log.info("[Relay] Session closed: token=%s port=%d", token[:8], session.port)
+        log.info("[Relay] Session closed: token=%s port=%d hostPorts=%s",
+                 token[:8], session.port, session.host_ports)
 
     async def cleanup_idle(self):
         stale = [t for t, s in self.sessions.items() if s.is_idle()]
@@ -345,11 +427,21 @@ async def handle_create(request: web.Request) -> web.Response:
     if len(token) < 8:
         return web.json_response({"error": "token must be at least 8 chars"}, status=400)
 
-    session = await manager.create_session(token)
+    host_upstream_count = body.get("hostUpstreamCount")
+    try:
+        host_upstream_count = int(host_upstream_count) if host_upstream_count is not None else None
+    except (TypeError, ValueError):
+        return web.json_response({"error": "hostUpstreamCount must be an integer"}, status=400)
+
+    session = await manager.create_session(token, host_upstream_count)
     if session is None:
         return web.json_response({"error": "no free ports"}, status=503)
 
-    return web.json_response({"token": session.token, "port": session.port})
+    return web.json_response({
+        "token": session.token,
+        "port": session.port,
+        "hostPorts": session.host_ports,
+    })
 
 
 async def handle_close(request: web.Request) -> web.Response:
@@ -409,7 +501,9 @@ async def handle_list(request: web.Request) -> web.Response:
         {
             "token":    s.token[:8] + "...",
             "port":     s.port,
+            "host_ports": s.host_ports,
             "clients":  s.client_count(),
+            "assigned_upstreams": len(s.client_relays),
             "has_host": s.host_addr is not None,
             "idle_sec": int(time.time() - s.last_pkt),
         }
@@ -440,13 +534,14 @@ def main():
     parser.add_argument("--http-port",  type=int, default=7776)
     parser.add_argument("--port-start", type=int, default=7777)
     parser.add_argument("--port-end",   type=int, default=7900)
+    parser.add_argument("--host-upstreams", type=int, default=4)
     parser.add_argument("--host",       type=str, default="0.0.0.0")
     args = parser.parse_args()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    manager = RelayManager(args.port_start, args.port_end, loop)
+    manager = RelayManager(args.port_start, args.port_end, loop, args.host_upstreams)
 
     app = web.Application()
     app["manager"] = manager

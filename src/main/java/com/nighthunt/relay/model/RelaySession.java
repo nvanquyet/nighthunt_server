@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -35,6 +36,10 @@ public class RelaySession {
 
     /** UDP join port that clients connect to. */
     private int relayPort;
+
+    /** Host-facing upstream UDP ports; each remote client is mapped to one port. */
+    @Builder.Default
+    private List<Integer> relayHostPorts = List.of();
 
     /** When this session was created. */
     private Instant createdAt;

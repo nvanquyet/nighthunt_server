@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /** Response returned to clients when they query a relay session. */
 @Data
 @Builder
@@ -15,6 +17,7 @@ public class RelaySessionResponse {
     private String matchId;
     private String relayHost;
     private int relayPort;
+    private List<Integer> relayHostPorts;
     private int connectedPlayers;
     private boolean started;
     private boolean finished;

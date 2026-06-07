@@ -11,7 +11,9 @@ import org.springframework.web.client.RestTemplate;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,6 +68,10 @@ public class RelaySessionManager {
     @Value("${RELAY_PORT:7777}")
     private int defaultRelayPort;
 
+    /** Number of host-facing upstream ports reserved for each player-hosted relay session. */
+    @Value("${RELAY_HOST_UPSTREAMS:4}")
+    private int relayHostUpstreams;
+
     /** sessionToken → RelaySession */
     private final ConcurrentMap<String, RelaySession> sessions = new ConcurrentHashMap<>();
 
@@ -106,21 +112,23 @@ public class RelaySessionManager {
         // ── Resolve relay host and port ──────────────────────────────────────
         String resolvedHost;
         int    resolvedPort;
+        List<Integer> resolvedHostPorts = Collections.emptyList();
         String relayServer = normalizeConfigValue(relayServerUrl);
         String relayHost = normalizeHostValue(configuredRelayHost);
 
         if (!relayServer.isBlank()) {
             // ── Mode A: Full relay server (works across any network) ─────────
             // Call the relay server's HTTP API to allocate a unique UDP port.
-            int allocatedPort = allocatePortFromRelayServer(relayServer, token);
+            RelayAllocation allocation = allocatePortFromRelayServer(relayServer, token);
             resolvedHost = resolveClientRelayHost(relayServer);
-            if (allocatedPort <= 0) {
+            if (allocation.port() <= 0) {
                 log.error("[Relay] Failed to allocate port from relay server — falling back to default port");
                 resolvedPort = defaultRelayPort;
                 log.warn("[Relay] Relay fallback: host={}:{} — single concurrent game only", resolvedHost, resolvedPort);
             } else {
-                resolvedPort = allocatedPort;
-                log.info("[Relay] Mode A (relay server): host={}:{} session={}", resolvedHost, resolvedPort, token);
+                resolvedPort = allocation.port();
+                resolvedHostPorts = allocation.hostPorts();
+                log.info("[Relay] Mode A (relay server): host={}:{} hostPorts={} session={}", resolvedHost, resolvedPort, resolvedHostPorts, token);
             }
         } else if (!relayHost.isBlank()) {
             // ── Mode B: Static relay host IP (VPS, but no relay server process) ──
@@ -140,32 +148,47 @@ public class RelaySessionManager {
             log.warn("[Relay] Mode D (loopback fallback) — only same-machine play will work");
         }
 
-        RelaySession session = buildSession(token, roomId, matchId, now, resolvedHost, resolvedPort);
+        RelaySession session = buildSession(token, roomId, matchId, now, resolvedHost, resolvedPort, resolvedHostPorts);
         sessions.put(token, session);
         roomIndex.put(roomId, token);
-        log.info("[Relay] Session created: token={} room={} match={} relayHost={}:{}",
-                token, roomId, matchId, resolvedHost, resolvedPort);
+        log.info("[Relay] Session created: token={} room={} match={} relayHost={}:{} hostPorts={}",
+                token, roomId, matchId, resolvedHost, resolvedPort, resolvedHostPorts);
         return session;
     }
 
     /**
      * Call the relay server HTTP API to allocate a unique UDP port for this session.
      *
-     * @return allocated port (> 0), or 0 on failure
+     * @return allocated relay ports, or port 0 on failure
      */
-    private int allocatePortFromRelayServer(String relayServer, String token) {
+    private RelayAllocation allocatePortFromRelayServer(String relayServer, String token) {
         try {
             String url  = relayServer.replaceAll("/+$", "") + "/session/create";
-            Map<String, Object> body = Map.of("token", token);
+            Map<String, Object> body = Map.of(
+                    "token", token,
+                    "hostUpstreamCount", Math.max(1, relayHostUpstreams));
             @SuppressWarnings("unchecked")
             Map<String, Object> resp = rest.postForObject(url, body, Map.class);
             if (resp != null && resp.containsKey("port")) {
-                return ((Number) resp.get("port")).intValue();
+                int port = ((Number) resp.get("port")).intValue();
+                return new RelayAllocation(port, parseIntegerList(resp.get("hostPorts")));
             }
         } catch (Exception e) {
             log.error("[Relay] HTTP call to relay server failed: {}", e.getMessage());
         }
-        return 0;
+        return new RelayAllocation(0, Collections.emptyList());
+    }
+
+    private static List<Integer> parseIntegerList(Object value) {
+        if (!(value instanceof List<?>)) {
+            return Collections.emptyList();
+        }
+        List<?> raw = (List<?>) value;
+        return raw.stream()
+                .filter(Number.class::isInstance)
+                .map(Number.class::cast)
+                .map(Number::intValue)
+                .collect(java.util.stream.Collectors.toList());
     }
 
     /**
@@ -203,13 +226,15 @@ public class RelaySessionManager {
     }
 
     private RelaySession buildSession(String token, Long roomId, String matchId,
-                                      Instant now, String host, int port) {
+                                      Instant now, String host, int port,
+                                      List<Integer> hostPorts) {
         return RelaySession.builder()
                 .sessionToken(token)
                 .roomId(roomId)
                 .matchId(matchId)
                 .relayHost(host)
                 .relayPort(port)
+                .relayHostPorts(hostPorts == null ? Collections.emptyList() : hostPorts)
                 .createdAt(now)
                 .expiresAt(now.plus(ttlHours, ChronoUnit.HOURS))
                 .started(false)
@@ -371,5 +396,23 @@ public class RelaySessionManager {
         int removed = before - sessions.size();
         if (removed > 0)
             log.info("[Relay] Evicted {} expired session(s)", removed);
+    }
+
+    private static final class RelayAllocation {
+        private final int port;
+        private final List<Integer> hostPorts;
+
+        private RelayAllocation(int port, List<Integer> hostPorts) {
+            this.port = port;
+            this.hostPorts = hostPorts == null ? Collections.emptyList() : hostPorts;
+        }
+
+        private int port() {
+            return port;
+        }
+
+        private List<Integer> hostPorts() {
+            return hostPorts;
+        }
     }
 }

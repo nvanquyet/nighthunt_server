@@ -640,6 +640,7 @@ public class RoomService {
             startPayload.put("relayToken",  relaySession.getSessionToken());
             startPayload.put("relayHost",   relaySession.getRelayHost());
             startPayload.put("relayPort",   relaySession.getRelayPort());
+            startPayload.put("relayHostPorts", relaySession.getRelayHostPorts());
         }
 
         // Broadcast game_starting event via WebSocket
@@ -685,10 +686,12 @@ public class RoomService {
         readyPayload.put("relayToken", relaySession.getSessionToken());
         readyPayload.put("relayHost", relaySession.getRelayHost());
         readyPayload.put("relayPort", relaySession.getRelayPort());
+        readyPayload.put("relayHostPorts", relaySession.getRelayHostPorts());
 
         connectionManager.broadcastToRoom(roomId, "relay_host_ready", readyPayload);
-        log.info("[Relay] Host ready roomId={} matchId={} ownerId={} relay={}:{}",
-                roomId, room.getMatchId(), ownerId, relaySession.getRelayHost(), relaySession.getRelayPort());
+        log.info("[Relay] Host ready roomId={} matchId={} ownerId={} relay={}:{} hostPorts={}",
+                roomId, room.getMatchId(), ownerId, relaySession.getRelayHost(),
+                relaySession.getRelayPort(), relaySession.getRelayHostPorts());
 
         return response;
     }

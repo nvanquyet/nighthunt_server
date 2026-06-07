@@ -146,6 +146,7 @@ public class RelayController {
                 .matchId(s.getMatchId())
                 .relayHost(s.getRelayHost())
                 .relayPort(s.getRelayPort())
+                .relayHostPorts(s.getRelayHostPorts())
                 .connectedPlayers(s.getPlayerCount())
                 .started(s.isStarted())
                 .finished(s.isFinished())

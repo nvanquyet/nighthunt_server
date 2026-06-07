@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * BE-31 — WebSocket event DTO: {@code game_starting}.
  *
@@ -34,6 +36,9 @@ public class GameStartingEventDTO {
 
     /** Relay port (Custom mode). 0 for Ranked/DS mode. */
     private int relayPort;
+
+    /** Host-facing upstream ports for Custom relay. Empty for Ranked/DS mode. */
+    private List<Integer> relayHostPorts;
 
     /** Dedicated server connection address (Ranked mode). Null for Custom. */
     private String dsAddress;
