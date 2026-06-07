@@ -107,6 +107,12 @@ def relay_payload(data: bytes, identity: Optional[Dict[str, int]] = None) -> byt
 
 
 # ── Session State ──────────────────────────────────────────────────────────────
+# Seconds a released upstream port must cool down before reassignment.
+# Gives the host's LiteNetLib time to clean up the old peer at relay:hostPort
+# before a new ConnectRequest arrives on the same address.
+UPSTREAM_COOLDOWN_SECS = 4.0
+
+
 class RelaySession:
     def __init__(self, token: str, port: int, host_ports: Optional[List[int]] = None):
         self.token       = token
@@ -114,6 +120,8 @@ class RelaySession:
         self.port        = port
         self.host_ports: List[int] = list(host_ports or [])
         self.free_host_ports: List[int] = list(self.host_ports)
+        # port → released_at timestamp; ports here are cooling and not yet assignable
+        self.cooling_host_ports: Dict[int, float] = {}
         self.host_addr:  Optional[Tuple[str, int]] = None
         # non-host endpoints: addr → last_seen timestamp
         self.clients:    Dict[Tuple[str, int], float] = {}
@@ -158,6 +166,17 @@ class RelaySession:
         if addr != self.host_addr:
             self.clients[addr] = now
 
+    def _tick_cooling_ports(self):
+        """Move ports that have cooled down back into free_host_ports."""
+        now = time.time()
+        ready = [p for p, t in self.cooling_host_ports.items()
+                 if (now - t) >= UPSTREAM_COOLDOWN_SECS]
+        for p in ready:
+            del self.cooling_host_ports[p]
+            if p not in self.free_host_ports:
+                self.free_host_ports.append(p)
+                self.free_host_ports.sort()
+
     def remove_client(self, addr: Tuple[str, int]):
         self.clients.pop(addr, None)
         self.all_known.pop(addr, None)
@@ -166,9 +185,14 @@ class RelaySession:
             if relay.client_peer_id is not None and self.client_peer_relays.get(relay.client_peer_id) is relay:
                 self.client_peer_relays.pop(relay.client_peer_id, None)
             relay.release_client()
-            if relay.host_port not in self.free_host_ports:
-                self.free_host_ports.append(relay.host_port)
-                self.free_host_ports.sort()
+            # Put port in cooldown instead of immediately back into free pool.
+            # This prevents the relay from reassigning the same upstream port
+            # to a reconnecting client before the host's LiteNetLib peer at
+            # relay:hostPort has had time to clean up (which causes DISCONNECT).
+            port = relay.host_port
+            self.cooling_host_ports[port] = time.time()
+            log.debug("[Relay] Upstream port %d cooling for %.1fs: session=%s",
+                      port, UPSTREAM_COOLDOWN_SECS, self.token[:8])
 
     def recycle_oldest_client_relay(self) -> Optional["HostUpstreamProtocol"]:
         now = time.time()
@@ -249,6 +273,8 @@ class RelaySession:
 
         relay = None
         host_port = None
+        # Move any cooled-down ports back into the free pool before picking one.
+        self._tick_cooling_ports()
         if self.free_host_ports:
             host_port = self.free_host_ports.pop(0)
             relay = self.host_upstreams.get(host_port)
