@@ -268,7 +268,7 @@ class RelaySession:
         nonce = identity.get("nonce") if identity is not None else None
 
         if identity is not None and identity.get("session_hash") != self.session_hash:
-            log.warning("[Relay] Relay identity session hash mismatch: session=%s expected=%016x got=%016x peer=%s",
+            log.warning("[NH_RELAY][IDENTITY] Relay identity session hash mismatch: session=%s expected=%016x got=%016x peer=%s",
                         self.token[:8], self.session_hash, identity.get("session_hash", 0), peer_id)
 
         if peer_id:
@@ -280,7 +280,7 @@ class RelaySession:
                         self.client_relays.pop(old_addr, None)
                         self.clients.pop(old_addr, None)
                         self.all_known.pop(old_addr, None)
-                    log.info("[Relay] Client endpoint updated by identity: session=%s peer=%s old=%s new=%s:%d hostPort=%d",
+                    log.info("[NH_RELAY][REBOUND] Client endpoint updated by identity: session=%s peer=%s old=%s new=%s:%d hostPort=%d",
                              self.token[:8], peer_id,
                              f"{old_addr[0]}:{old_addr[1]}" if old_addr else "unset",
                              client_addr[0], client_addr[1], relay.host_port)
@@ -302,7 +302,7 @@ class RelaySession:
             host_port = self.free_host_ports.pop(0)
             relay = self.host_upstreams.get(host_port)
             if relay is None:
-                log.warning("[Relay] Host upstream port not bound: session=%s port=%d",
+                log.warning("[NH_RELAY][DROP] Host upstream port not bound: session=%s port=%d",
                             self.token[:8], host_port)
                 if host_port not in self.free_host_ports:
                     self.free_host_ports.append(host_port)
@@ -313,7 +313,7 @@ class RelaySession:
         else:
             relay = self.recycle_oldest_client_relay()
             if relay is None:
-                log.warning("[Relay] No host upstream ports left: session=%s client=%s:%d clients=%d assigned=%d",
+                log.warning("[NH_RELAY][DROP] No host upstream ports left: session=%s client=%s:%d clients=%d assigned=%d",
                             self.token[:8], client_addr[0], client_addr[1],
                             len(self.clients), len(self.client_relays))
                 self.clients.pop(client_addr, None)
@@ -326,7 +326,7 @@ class RelaySession:
         if peer_id:
             self.client_peer_relays[peer_id] = relay
         host_addr = relay.get_host_addr()
-        log.info("[Relay] Client upstream assigned: session=%s client=%s:%d peer=%s hostPort=%d host=%s",
+        log.info("[NH_RELAY][ASSIGN] Client upstream assigned: session=%s client=%s:%d peer=%s hostPort=%d host=%s",
                  self.token[:8], client_addr[0], client_addr[1],
                  peer_id if peer_id else "legacy", host_port,
                  f"{host_addr[0]}:{host_addr[1]}" if host_addr else "unset")
@@ -389,10 +389,39 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self._host_forward_logged = False
 
     def refresh_client_endpoint(self, client_addr: Tuple[str, int], nonce: Optional[int]):
+        old_addr = self.client_addr
+        old_nonce = self.client_nonce
+        endpoint_changed = old_addr != client_addr
+        nonce_changed = nonce is not None and old_nonce is not None and old_nonce != nonce
         self.client_addr = client_addr
         if nonce is not None:
             self.client_nonce = nonce
-        self.client_last_seen_at = time.time()
+        now = time.time()
+        self.client_last_seen_at = now
+
+        if endpoint_changed or nonce_changed:
+            # Same authenticated relay peer, new UDP/FishNet attempt. The host may
+            # still emit DISCONNECT for the previous LiteNetLib peer on this same
+            # relay:hostPort; treat the rebound as handshake-phase again so that
+            # stale disconnect does not close the freshly connected client.
+            self.client_assigned_at = now
+            self.host_last_seen_at = None
+            self._client_saw_game_packet = False
+            self._host_saw_game_packet = False
+            self._client_forward_logged = False
+            self._host_forward_logged = False
+            log.info(
+                "[NH_RELAY][REBOUND] Reset relay exchange state: session=%s peer=%s old=%s "
+                "new=%s:%d oldNonce=%s newNonce=%s hostPort=%d",
+                self.session.token[:8],
+                self.client_peer_id if self.client_peer_id is not None else "legacy",
+                f"{old_addr[0]}:{old_addr[1]}" if old_addr else "unset",
+                client_addr[0],
+                client_addr[1],
+                f"{old_nonce:016x}" if old_nonce is not None else "unset",
+                f"{self.client_nonce:016x}" if self.client_nonce is not None else "unset",
+                self.host_port,
+            )
 
     def mark_client_packet(self, prop: Optional[int]):
         self.client_last_seen_at = time.time()
@@ -505,7 +534,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         established = self.has_established_game_exchange()
         if prop == LITENET_DISCONNECT_PROPERTY and not established:
             log.info(
-                "[Relay] Suppressed handshake host disconnect: session=%s peer=%s client=%s:%d "
+                "[NH_RELAY][DROP] Suppressed handshake host disconnect: session=%s peer=%s client=%s:%d "
                 "hostPort=%d clientGame=%s hostGame=%s len=%d head=%s",
                 self.session.token[:8],
                 self.client_peer_id if self.client_peer_id is not None else "legacy",
@@ -526,7 +555,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             self.downstream_transport.sendto(data, client_addr)
             if not self._host_forward_logged:
                 self._host_forward_logged = True
-                log.info("[Relay] Host packet forwarded: session=%s hostPort=%d client=%s:%d len=%d prop=%s",
+                log.info("[NH_RELAY][FORWARD] Host packet forwarded: session=%s hostPort=%d client=%s:%d len=%d prop=%s",
                          self.session.token[:8], self.host_port,
                          client_addr[0], client_addr[1],
                          len(data), prop)
@@ -546,7 +575,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             if prop == LITENET_DISCONNECT_PROPERTY and established:
                 peer_id = self.client_peer_id if self.client_peer_id is not None else "legacy"
                 log.info(
-                    "[Relay] Retained client upstream after host disconnect: session=%s client=%s:%d "
+                    "[NH_RELAY][STICKY] Retained client upstream after host disconnect: session=%s client=%s:%d "
                     "peer=%s hostPort=%d",
                     self.session.token[:8],
                     client_addr[0],
@@ -643,7 +672,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
         relay.mark_client_packet(prop)
         host_addr = relay.get_host_addr()
         if host_addr is None:
-            log.warning("[Relay] Cannot forward client packet before host endpoint is known: "
+            log.warning("[NH_RELAY][DROP] Cannot forward client packet before host endpoint is known: "
                         "session=%s client=%s:%d hostPort=%d",
                         session.token[:8], client_addr[0], client_addr[1], relay.host_port)
             return
@@ -652,7 +681,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
             relay.transport.sendto(data, host_addr)
             if not relay._client_forward_logged:
                 relay._client_forward_logged = True
-                log.info("[Relay] Client packet forwarded: session=%s client=%s:%d hostPort=%d host=%s:%d len=%d prop=%s",
+                log.info("[NH_RELAY][FORWARD] Client packet forwarded: session=%s client=%s:%d hostPort=%d host=%s:%d len=%d prop=%s",
                          session.token[:8], client_addr[0], client_addr[1],
                          relay.host_port, host_addr[0], host_addr[1],
                          len(data), prop)
@@ -665,7 +694,7 @@ class RelayProtocol(asyncio.DatagramProtocol):
             if prop == LITENET_DISCONNECT_PROPERTY and relay.has_established_game_exchange():
                 peer_id = relay.client_peer_id if relay.client_peer_id is not None else "legacy"
                 log.info(
-                    "[Relay] Retained client upstream after client disconnect: session=%s client=%s:%d "
+                    "[NH_RELAY][STICKY] Retained client upstream after client disconnect: session=%s client=%s:%d "
                     "peer=%s hostPort=%d",
                     session.token[:8],
                     client_addr[0],
