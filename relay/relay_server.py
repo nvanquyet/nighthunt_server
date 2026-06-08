@@ -206,6 +206,17 @@ class RelaySession:
             log.info("[Relay] Upstream port cooling: session=%s hostPort=%d cooldown=%.1fs",
                      self.token[:8], port, UPSTREAM_COOLDOWN_SECS)
 
+    def prune_idle_clients(self):
+        now = time.time()
+        stale = [
+            addr for addr, last_seen in list(self.clients.items())
+            if (now - last_seen) > CLIENT_IDLE_SECS
+        ]
+        for addr in stale:
+            log.info("[Relay] Pruning idle client: session=%s client=%s:%d idle=%.1fs",
+                     self.token[:8], addr[0], addr[1], now - self.clients.get(addr, now))
+            self.remove_client(addr)
+
     def recycle_oldest_client_relay(self) -> Optional["HostUpstreamProtocol"]:
         now = time.time()
         relay_clients = [
@@ -522,19 +533,20 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         except Exception as e:
             log.debug("[Relay] Downstream send error to %s: %s", client_addr, e)
         finally:
-            # FIX: Only release the client upstream when BOTH sides have exchanged
-            # real game packets. LiteNetLib sends DISCONNECT packets during the
-            # handshake phase (e.g. ConnectRequest is rejected with a Disconnect
-            # reply for port probing). Releasing on the first DISCONNECT causes
-            # the relay to tear down the connection before it is established,
-            # creating an infinite reconnect loop.
-            if (prop == LITENET_DISCONNECT_PROPERTY
-                    and established
-                    and self.session.client_relays.get(client_addr) is self):
+            # Sticky upstream: do not recycle the relay:hostPort when LiteNetLib
+            # emits DISCONNECT. FishNet/Tugboat can reject and retry peers while
+            # the Unity scene/ownership lifecycle is still settling. If the relay
+            # releases immediately, the next ConnectRequest is assigned to a
+            # different hostPort, so the host sees a brand-new remote endpoint and
+            # the session loops through assigned -> disconnect -> reassigned.
+            #
+            # Free ports via idle pruning/session close instead. Reconnects with
+            # the same relay identity update the client endpoint and keep using
+            # this stable upstream.
+            if prop == LITENET_DISCONNECT_PROPERTY and established:
                 peer_id = self.client_peer_id if self.client_peer_id is not None else "legacy"
-                self.session.remove_client(client_addr)
                 log.info(
-                    "[Relay] Released client upstream after host disconnect: session=%s client=%s:%d "
+                    "[Relay] Retained client upstream after host disconnect: session=%s client=%s:%d "
                     "peer=%s hostPort=%d",
                     self.session.token[:8],
                     client_addr[0],
@@ -650,13 +662,10 @@ class RelayProtocol(asyncio.DatagramProtocol):
         finally:
             # FIX: same guard as HostUpstreamProtocol — only tear down after real
             # game traffic has been exchanged, not on handshake-phase disconnect packets.
-            if (prop == LITENET_DISCONNECT_PROPERTY
-                    and relay.has_established_game_exchange()
-                    and session.client_relays.get(client_addr) is relay):
+            if prop == LITENET_DISCONNECT_PROPERTY and relay.has_established_game_exchange():
                 peer_id = relay.client_peer_id if relay.client_peer_id is not None else "legacy"
-                session.remove_client(client_addr)
                 log.info(
-                    "[Relay] Released client upstream after client disconnect: session=%s client=%s:%d "
+                    "[Relay] Retained client upstream after client disconnect: session=%s client=%s:%d "
                     "peer=%s hostPort=%d",
                     session.token[:8],
                     client_addr[0],
@@ -769,6 +778,8 @@ class RelayManager:
                  token[:8], session.port, session.host_ports)
 
     async def cleanup_idle(self):
+        for session in list(self.sessions.values()):
+            session.prune_idle_clients()
         stale = [t for t, s in self.sessions.items() if s.is_idle()]
         for token in stale:
             log.info("[Relay] Expiring idle session %s", token[:8])
