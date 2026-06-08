@@ -389,14 +389,20 @@ public class MatchmakingQueueService {
         int expandIntervalSec = runtimeConfig.getInt("matchmaking.elo.expandIntervalSec", 15);
         int maxRange          = runtimeConfig.getInt("matchmaking.elo.maxRange", 500);
         int step              = runtimeConfig.getInt("matchmaking.elo.expandStep", 50);
+        int initialRange      = runtimeConfig.getInt("matchmaking.elo.initialRange", 100);
         LocalDateTime threshold = LocalDateTime.now().minus(expandIntervalSec, ChronoUnit.SECONDS);
         List<MatchmakingEntry> stale = entryRepository.findSearchingQueuedBefore(threshold);
 
         for (MatchmakingEntry e : stale) {
-            int currentRange = (e.getSearchMaxElo() - e.getSearchMinElo()) / 2;
-            if (currentRange < maxRange) {
-                e.setSearchMinElo(Math.max(0, e.getSearchMinElo() - step));
-                e.setSearchMaxElo(e.getSearchMaxElo() + step);
+            long secondsQueued = Duration.between(e.getQueuedAt(), LocalDateTime.now()).toSeconds();
+            long intervalsPassed = secondsQueued / expandIntervalSec;
+            int targetHalfRange = Math.min(maxRange, initialRange + (int) (intervalsPassed * step));
+            int currentHalfRange = (e.getSearchMaxElo() - e.getSearchMinElo()) / 2;
+
+            if (targetHalfRange > currentHalfRange) {
+                int baseElo = e.getElo();
+                e.setSearchMinElo(Math.max(0, baseElo - targetHalfRange));
+                e.setSearchMaxElo(baseElo + targetHalfRange);
                 entryRepository.save(e);
                 log.debug("[MM] Expanded window for user {} to [{}, {}]",
                         e.getUserId(), e.getSearchMinElo(), e.getSearchMaxElo());
@@ -411,6 +417,16 @@ public class MatchmakingQueueService {
     private void tryFormMatches(List<MatchmakingEntry> candidates, GameModeDTO mode, String lockToken) {
         List<MatchUnit> units = buildUnits(candidates);
         Set<String> usedGroups = new HashSet<>();
+        int formedCount = 0;
+
+        if (!candidates.isEmpty()) {
+            log.info("[MM][Tick] mode={} candidates={} units={} teamSize={} groups={}",
+                    mode.getModeKey(),
+                    candidates.size(),
+                    units.size(),
+                    mode.getPlayersPerTeam(),
+                    units.stream().map(u -> u.groupId() + ":" + u.size()).toList());
+        }
 
         for (MatchUnit anchor : units) {
             if (usedGroups.contains(anchor.groupId())) continue;
@@ -422,7 +438,7 @@ public class MatchmakingQueueService {
                 if (usedGroups.contains(other.groupId())) continue;
                 if (other.groupId().equals(anchor.groupId())) continue;
                 if (build.isComplete()) break;
-                if (isCompatible(anchor, other)) {
+                if (isCompatible(anchor, other, mode.getPlatformFilter())) {
                     build.tryAdd(other);
                 }
             }
@@ -434,17 +450,21 @@ public class MatchmakingQueueService {
                 }
                 List<MatchmakingEntry> group = build.entriesWithAssignedTeams();
                 formMatch(group, mode);
+                formedCount++;
                 build.units().forEach(unit -> usedGroups.add(unit.groupId()));
             }
         }
+
+        if (!candidates.isEmpty() && formedCount == 0) {
+            log.info("[MM][Tick] mode={} no complete match yet candidates={} units={} teamSize={}",
+                    mode.getModeKey(), candidates.size(), units.size(), mode.getPlayersPerTeam());
+        }
     }
-
-
     /**
      * Two entries are compatible if their ELO windows intersect AND they want the same map
      * (null mapId = any map, compatible with everyone).
      */
-    private boolean isCompatible(MatchmakingEntry a, MatchmakingEntry b) {
+    private boolean isCompatible(MatchmakingEntry a, MatchmakingEntry b, String platformFilter) {
         boolean eloOk = a.getSearchMaxElo() >= b.getSearchMinElo()
                 && b.getSearchMaxElo() >= a.getSearchMinElo();
         if (!eloOk) return false;
@@ -454,19 +474,21 @@ public class MatchmakingQueueService {
             return false;
         }
 
-        // Platform: two known platforms must match; null = "any", always compatible
-        if (a.getPlatform() != null && b.getPlatform() != null
-                && !a.getPlatform().equalsIgnoreCase(b.getPlatform())) {
-            return false;
+        // Platform: check compatibility only if the mode does NOT allow cross-play (ALL)
+        if (platformFilter != null && !"ALL".equalsIgnoreCase(platformFilter)) {
+            if (a.getPlatform() != null && b.getPlatform() != null
+                    && !a.getPlatform().equalsIgnoreCase(b.getPlatform())) {
+                return false;
+            }
         }
 
         return true;
     }
 
-    private boolean isCompatible(MatchUnit a, MatchUnit b) {
+    private boolean isCompatible(MatchUnit a, MatchUnit b, String platformFilter) {
         for (MatchmakingEntry left : a.entries()) {
             for (MatchmakingEntry right : b.entries()) {
-                if (!isCompatible(left, right)) {
+                if (!isCompatible(left, right, platformFilter)) {
                     return false;
                 }
             }

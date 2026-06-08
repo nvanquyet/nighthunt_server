@@ -150,6 +150,9 @@ class MatchmakingQueueServiceTest {
                 .queuedAt(queuedAt)
                 .searchMinElo(900)
                 .searchMaxElo(1100)
+                .queueGroupId("solo:" + userId)
+                .partySize(1)
+                .allowFill(true)
                 .build();
     }
 
@@ -310,11 +313,49 @@ class MatchmakingQueueServiceTest {
     // ── Test 2: processTick matches 2 SEARCHING entries ───────────────────────
 
     @Test
-    @DisplayName("processTick forms a match when 2 players queue 1v1")
-    @org.junit.jupiter.api.Disabled("Integration-level: requires full RoomService + DS wiring; covered by E2E tests")
+    @DisplayName("processTick forms 1v1, allocates DS, and broadcasts match_ready")
     void processTick_formMatchWhen2PlayersQueued() {
-        // This test requires a real Spring context to properly stub the room/DS pipeline.
-        // Covered by manual 2-player test sessions and future @SpringBootTest integration tests.
+        LocalDateTime queuedAt = LocalDateTime.now().minusSeconds(1);
+        MatchmakingEntry entryA = makeEntry(USER_A, "SEARCHING", queuedAt);
+        MatchmakingEntry entryB = makeEntry(USER_B, "SEARCHING", queuedAt.plusNanos(1));
+
+        when(entryRepo.findSearchingQueuedBefore(any())).thenReturn(List.of());
+        when(gameModeService.getMatchmakingEnabledModes()).thenReturn(List.of(make1v1Mode(false)));
+        when(entryRepo.findSearchingByMode(MODE)).thenReturn(List.of(entryA, entryB));
+        when(roomService.createRankedRoom(anyList(), eq(MODE), isNull(), anyMap()))
+                .thenReturn(RoomResponse.builder()
+                        .roomId(99L)
+                        .roomCode("ROOM01")
+                        .matchId("match-1")
+                        .players(List.of())
+                        .build());
+        when(dsService.allocateServerForMatch("vn", null, 2, "match-1"))
+                .thenReturn(ServerAllocateResponse.builder()
+                        .ip("127.0.0.1")
+                        .port(7777)
+                        .sessionToken("session")
+                        .build());
+
+        service.processTick();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<Long, Integer>> teamCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(roomService).createRankedRoom(eq(List.of(USER_A, USER_B)), eq(MODE), isNull(), teamCaptor.capture());
+        assertThat(teamCaptor.getValue())
+                .containsEntry(USER_A, 1)
+                .containsEntry(USER_B, 2);
+
+        verify(dsService).allocateServerForMatch("vn", null, 2, "match-1");
+        verify(connectionManager).sendToUser(eq(USER_A), eq("match_ready"), argThat(payload ->
+                payload instanceof Map<?, ?> map
+                        && "match-1".equals(map.get("matchId"))
+                        && "127.0.0.1".equals(map.get("dsIp"))
+                        && Integer.valueOf(7777).equals(map.get("dsPort"))
+                        && "session".equals(map.get("sessionToken"))));
+        verify(connectionManager).sendToUser(eq(USER_B), eq("match_ready"), anyMap());
+        verify(entryRepo).delete(entryA);
+        verify(entryRepo).delete(entryB);
+        verify(roomService).markRankedRoomInGame("match-1");
     }
 
     // ── Test 3: sweepStaleQueueEntries cancels entries > 15 minutes old ───────
