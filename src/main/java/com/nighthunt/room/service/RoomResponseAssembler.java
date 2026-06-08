@@ -43,10 +43,10 @@ public class RoomResponseAssembler {
                 .roomId(room.getId())
                 .roomCode(room.getRoomCode())
                 .mode(room.getMode())
-            .mapId(room.getMapId())
+                .mapId(room.getMapId())
                 .status(room.getStatus())
                 .isPublic(room.getIsPublic())
-                .isLocked(room.getIsLocked())
+                .isLocked(isPasswordProtected(room))
                 .ownerId(room.getOwnerId())
                 .matchId(room.getMatchId())
                 .joinToken(joinToken)
@@ -84,5 +84,11 @@ public class RoomResponseAssembler {
                 .slot(player.getSlot())
                 .isReady(player.getIsReady())
                 .build();
+    }
+
+    private boolean isPasswordProtected(Room room) {
+        return room != null
+                && (Boolean.TRUE.equals(room.getIsLocked())
+                || (room.getPassword() != null && !room.getPassword().isBlank()));
     }
 }

@@ -22,6 +22,6 @@ public class UpdateRoomSettingsRequest {
     private Boolean isLocked; // Optional: true/false
 
     @Size(max = 50, message = "Password must be less than 50 characters")
-    private String password; // Optional: new password (null to remove, empty to keep current)
+    private String password; // Optional: null keeps current password, empty unlocks, non-empty locks with new password
 }
 

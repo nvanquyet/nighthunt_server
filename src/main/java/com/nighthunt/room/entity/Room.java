@@ -41,7 +41,7 @@ public class Room {
     @Column(name = "is_locked", nullable = false)
     private Boolean isLocked;
 
-    @Column(name = "password", length = 50)
+    @Column(name = "password", length = 255)
     private String password; // Optional password for room
 
     @Column(name = "owner_id", nullable = false)

@@ -17,6 +17,9 @@ import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.party.entity.PartyMember;
 import com.nighthunt.party.repository.PartyMemberRepository;
 import com.nighthunt.party.repository.PartyRepository;
+import com.nighthunt.room.entity.Room;
+import com.nighthunt.room.entity.RoomPlayer;
+import com.nighthunt.room.repository.RoomPlayerRepository;
 import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.relay.service.RelaySessionManager;
@@ -58,6 +61,7 @@ public class MatchResultService {
     private final RelaySessionManager          relaySessionManager;
     private final ConnectionManager            connectionManager;
     private final RoomRepository               roomRepository;
+    private final RoomPlayerRepository         roomPlayerRepository;
     private final RoomResponseAssembler        roomResponseAssembler;
     private final RedisMatchPresenceCache      matchPresenceCache;
     private final PlayerStatusService          playerStatusService;
@@ -108,6 +112,8 @@ public class MatchResultService {
 
         List<MatchEndResponse.PlayerResultRow> resultRows = new ArrayList<>();
 
+        Long postMatchRoomId = isRanked ? null : match.getRoomId();
+
         // 3. For each player: persist result + update ELO/coins if ranked
         for (var entry : req.getPlayerResults()) {
             User user = userRepository.findById(entry.getUserId()).orElse(null);
@@ -153,7 +159,7 @@ public class MatchResultService {
             userRepository.save(user);
             try {
                 playerStatusService.setBackToOnline(entry.getUserId());
-                playerStatusService.updateCurrentRoom(entry.getUserId(), null);
+                playerStatusService.updateCurrentRoom(entry.getUserId(), postMatchRoomId);
             } catch (Exception e) {
                 log.warn("[MatchEnd] Failed to reset player status for user {}: {}",
                         entry.getUserId(), e.getMessage());
@@ -203,23 +209,24 @@ public class MatchResultService {
         match.setFinishedAt(LocalDateTime.now());
         matchRepository.save(match);
 
-        roomRepository.findById(match.getRoomId()).ifPresent(room -> {
-            room.setStatus(GameConstants.ROOM_STATUS_FINISHED);
-            roomRepository.save(room);
-            connectionManager.broadcastToRoom(room.getId(), "room_status_changed",
-                    java.util.Map.of(
-                            "newStatus", GameConstants.ROOM_STATUS_FINISHED,
-                            "room", roomResponseAssembler.toResponseById(room.getId())));
-        });
+        if (isRanked) {
+            finishRoom(match);
+        }
 
         // 5. Close relay session
         relaySessionManager.getByRoomId(match.getRoomId())
                 .ifPresent(s -> relaySessionManager.finishSession(s.getSessionToken()));
 
+        if (!isRanked) {
+            resetCustomRoomForNextLobby(match);
+        }
+
         clearPresenceCache(req.getMatchId(), req.getPlayerResults());
-        resetRankedPartyState(req.getPlayerResults().stream()
-                .map(MatchEndRequest.PlayerResultEntry::getUserId)
-                .toList());
+        if (isRanked) {
+            resetRankedPartyState(req.getPlayerResults().stream()
+                    .map(MatchEndRequest.PlayerResultEntry::getUserId)
+                    .toList());
+        }
 
         // 6. Broadcast match_ended WS event to all participants
         MatchEndResponse response = MatchEndResponse.builder()
@@ -238,6 +245,61 @@ public class MatchResultService {
                 req.getMatchId(), req.getWinnerTeamId(), req.getEndReason(), req.getPlayerResults().size());
 
         return response;
+    }
+
+    private void finishRoom(Match match) {
+        roomRepository.findById(match.getRoomId()).ifPresent(room -> {
+            room.setStatus(GameConstants.ROOM_STATUS_FINISHED);
+            roomRepository.save(room);
+            connectionManager.broadcastToRoom(room.getId(), "room_status_changed",
+                    java.util.Map.of(
+                            "newStatus", GameConstants.ROOM_STATUS_FINISHED,
+                            "room", roomResponseAssembler.toResponseById(room.getId())));
+        });
+    }
+
+    private void resetCustomRoomForNextLobby(Match finishedMatch) {
+        roomRepository.findById(finishedMatch.getRoomId()).ifPresent(room -> {
+            String nextMatchId = UUID.randomUUID().toString();
+            Match nextMatch = Match.builder()
+                    .matchId(nextMatchId)
+                    .roomId(room.getId())
+                    .status(GameConstants.MATCH_STATUS_LOBBY)
+                    .gameMode(room.getMode())
+                    .build();
+            matchRepository.save(nextMatch);
+
+            room.setMatchId(nextMatchId);
+            room.setStatus(GameConstants.ROOM_STATUS_WAITING);
+            roomRepository.save(room);
+
+            resetRoomPlayersForLobby(room);
+
+            var response = roomResponseAssembler.toResponseById(room.getId());
+            connectionManager.broadcastToRoom(room.getId(), "room_status_changed",
+                    java.util.Map.of(
+                            "newStatus", GameConstants.ROOM_STATUS_WAITING,
+                            "room", response));
+            connectionManager.broadcastToRoom(room.getId(), "room_updated", response);
+
+            log.info("[MatchEnd] Custom room {} reset to WAITING with next matchId={}",
+                    room.getId(), nextMatchId);
+        });
+    }
+
+    private void resetRoomPlayersForLobby(Room room) {
+        List<RoomPlayer> players = roomPlayerRepository.findByRoomId(room.getId());
+        for (RoomPlayer player : players) {
+            player.setIsReady(room.getOwnerId().equals(player.getUserId()));
+            roomPlayerRepository.save(player);
+            connectionManager.updateUserRoom(player.getUserId(), room.getId());
+            try {
+                playerStatusService.updateCurrentRoom(player.getUserId(), room.getId());
+            } catch (Exception e) {
+                log.warn("[MatchEnd] Failed to keep user {} in custom room {}: {}",
+                        player.getUserId(), room.getId(), e.getMessage());
+            }
+        }
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────

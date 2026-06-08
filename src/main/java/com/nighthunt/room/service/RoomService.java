@@ -96,17 +96,16 @@ public class RoomService {
         } while (roomRepository.findByRoomCode(roomCode).isPresent());
 
         // Create room — hash password before persisting (never store plain text)
-        String hashedPassword = null;
-        if (request.getPassword() != null && !request.getPassword().isBlank()) {
-            hashedPassword = bcrypt.encode(request.getPassword());
-        }
+        boolean locked = Boolean.TRUE.equals(request.getIsLocked())
+                || (request.getPassword() != null && !request.getPassword().isBlank());
+        String hashedPassword = resolveCreateRoomPassword(locked, request.getPassword());
         Room room = Room.builder()
                 .roomCode(roomCode)
                 .mode(request.getMode())
             .mapId(normalizeMapId(request.getMapId()))
                 .status(GameConstants.ROOM_STATUS_WAITING)
                 .isPublic(request.getIsPublic() != null ? request.getIsPublic() : true)
-                .isLocked(request.getIsLocked() != null ? request.getIsLocked() : false)
+                .isLocked(locked)
                 .password(hashedPassword)
                 .ownerId(userId)
                 .matchId(matchId)
@@ -159,13 +158,7 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(ErrorCodes.ROOM_NOT_FOUND,
                         "Room not found"));
 
-        // Verify password using BCrypt (passwords are stored hashed, never plain text)
-        if (room.getPassword() != null && !room.getPassword().isEmpty()) {
-            if (password == null || password.isEmpty() || !bcrypt.matches(password, room.getPassword())) {
-                throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
-                        "Room password is required or incorrect");
-            }
-        }
+        verifyRoomPassword(room, password);
 
         // Check room status
         if (!GameConstants.ROOM_STATUS_WAITING.equals(room.getStatus())) {
@@ -228,8 +221,8 @@ public class RoomService {
         }
         ensureUserNotInMatchmakingQueue(userId);
 
-        // Find available public rooms
-        List<Room> availableRooms = roomRepository.findAvailablePublicRooms(GameConstants.ROOM_STATUS_WAITING);
+        // Find available public rooms that are not locked and do not have a password.
+        List<Room> availableRooms = roomRepository.findQuickJoinRooms(GameConstants.ROOM_STATUS_WAITING);
         
         // Filter by mode and not full
         availableRooms = availableRooms.stream()
@@ -253,22 +246,7 @@ public class RoomService {
             return self.createRoom(userId, createRequest);
         }
 
-        // Random select (skip rooms with password for quick play)
-        List<Room> roomsWithoutPassword = availableRooms.stream()
-                .filter(room -> room.getPassword() == null || room.getPassword().isEmpty())
-                .collect(Collectors.toList());
-        
-        if (roomsWithoutPassword.isEmpty()) {
-            // Create new room if all available rooms have password
-            CreateRoomRequest createRequest = new CreateRoomRequest();
-            createRequest.setMode(request.getMode());
-            createRequest.setMapId(request.getMapId());
-            createRequest.setIsPublic(true);
-            createRequest.setIsLocked(false);
-            return self.createRoom(userId, createRequest);
-        }
-        
-        Room selectedRoom = roomsWithoutPassword.get(random.nextInt(roomsWithoutPassword.size()));
+        Room selectedRoom = availableRooms.get(random.nextInt(availableRooms.size()));
         try {
             return self.joinRoomByCode(userId, selectedRoom.getRoomCode(), null);
         } catch (DataIntegrityViolationException ex) {
@@ -281,6 +259,28 @@ public class RoomService {
             createRequest.setIsLocked(false);
             return self.createRoom(userId, createRequest);
         }
+    }
+
+    public RoomListResponse listPublicCustomRooms(String mode, String mapId, Integer requestedLimit) {
+        int limit = requestedLimit == null ? 20 : Math.max(1, Math.min(20, requestedLimit));
+        String modeFilter = normalizeOptionalFilter(mode);
+        String mapFilter = normalizeOptionalFilter(mapId);
+
+        List<RoomListItemResponse> rooms = roomRepository
+                .findPublicWaitingRooms(GameConstants.ROOM_STATUS_WAITING, modeFilter, mapFilter)
+                .stream()
+                .filter(room -> !isRoomFull(room))
+                .map(this::toRoomListItem)
+                .collect(Collectors.toList());
+
+        if (rooms.size() > limit) {
+            Collections.shuffle(rooms, random);
+            rooms = rooms.subList(0, limit);
+        }
+
+        return RoomListResponse.builder()
+                .rooms(rooms)
+                .build();
     }
 
     /**
@@ -1157,40 +1157,7 @@ public class RoomService {
             room.setIsPublic(request.getIsPublic());
         }
 
-        // Update lock status and password if provided
-        if (request.getIsLocked() != null) {
-            room.setIsLocked(request.getIsLocked());
-            
-            // Update password (always store hashed, never plain text)
-            if (request.getIsLocked()) {
-                // Lock room - set password if provided, otherwise keep current
-                if (request.getPassword() != null) {
-                    if (request.getPassword().isEmpty()) {
-                        // Empty string means remove password (unlock)
-                        room.setIsLocked(false);
-                        room.setPassword(null);
-                    } else {
-                        // Hash before storing
-                        room.setPassword(bcrypt.encode(request.getPassword()));
-                    }
-                }
-                // If password is null and isLocked is true, keep current hashed password
-            } else {
-                // Unlock room - remove password
-                room.setPassword(null);
-            }
-        } else if (request.getPassword() != null) {
-            // Password provided but isLocked not specified
-            if (request.getPassword().isEmpty()) {
-                // Remove password
-                room.setPassword(null);
-                room.setIsLocked(false);
-            } else {
-                // Hash before storing and lock
-                room.setPassword(bcrypt.encode(request.getPassword()));
-                room.setIsLocked(true);
-            }
-        }
+        applyRoomLockSettings(room, request);
 
         room = roomRepository.save(room);
         if (modeChanged) {
@@ -1203,6 +1170,118 @@ public class RoomService {
         connectionManager.broadcastToRoom(roomId, "room_updated", response);
         
         return response;
+    }
+
+    private String resolveCreateRoomPassword(boolean locked, String rawPassword) {
+        if (!locked) {
+            return null;
+        }
+
+        if (!hasText(rawPassword)) {
+            throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
+                    "Locked rooms require a password");
+        }
+
+        return bcrypt.encode(rawPassword.trim());
+    }
+
+    private void verifyRoomPassword(Room room, String rawPassword) {
+        if (!isRoomPasswordProtected(room)) {
+            return;
+        }
+
+        if (!hasPasswordHash(room)) {
+            throw new BusinessException(ErrorCodes.ROOM_LOCKED,
+                    "Room is locked but has no password configured");
+        }
+
+        if (!hasText(rawPassword) || !bcrypt.matches(rawPassword.trim(), room.getPassword())) {
+            throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
+                    "Room password is required or incorrect");
+        }
+    }
+
+    private void applyRoomLockSettings(Room room, UpdateRoomSettingsRequest request) {
+        if (room == null || request == null) {
+            return;
+        }
+
+        String rawPassword = request.getPassword();
+        boolean passwordProvided = rawPassword != null;
+
+        if (passwordProvided && rawPassword.trim().isEmpty()) {
+            room.setIsLocked(false);
+            room.setPassword(null);
+            return;
+        }
+
+        Boolean requestedLocked = request.getIsLocked();
+        if (passwordProvided) {
+            requestedLocked = true;
+        }
+
+        if (requestedLocked == null) {
+            if (hasPasswordHash(room)) {
+                room.setIsLocked(true);
+            }
+            return;
+        }
+
+        if (!requestedLocked) {
+            room.setIsLocked(false);
+            room.setPassword(null);
+            return;
+        }
+
+        room.setIsLocked(true);
+        if (passwordProvided) {
+            room.setPassword(bcrypt.encode(rawPassword.trim()));
+        } else if (!hasPasswordHash(room)) {
+            throw new BusinessException(ErrorCodes.ROOM_PASSWORD_INVALID,
+                    "Locked rooms require a password");
+        }
+    }
+
+    private boolean isRoomPasswordProtected(Room room) {
+        return room != null && (Boolean.TRUE.equals(room.getIsLocked()) || hasPasswordHash(room));
+    }
+
+    private boolean hasPasswordHash(Room room) {
+        return room != null && room.getPassword() != null && !room.getPassword().isBlank();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private boolean isRoomFull(Room room) {
+        int maxPlayers = gameModeService.getTotalPlayers(room.getMode());
+        int currentPlayers = roomPlayerRepository.countByRoomId(room.getId());
+        return currentPlayers >= maxPlayers;
+    }
+
+    private RoomListItemResponse toRoomListItem(Room room) {
+        int currentPlayers = roomPlayerRepository.countByRoomId(room.getId());
+        int maxPlayers = gameModeService.getTotalPlayers(room.getMode());
+        User owner = userRepository.findById(room.getOwnerId()).orElse(null);
+
+        return RoomListItemResponse.builder()
+                .roomId(room.getId())
+                .roomCode(room.getRoomCode())
+                .mode(room.getMode())
+                .mapId(room.getMapId())
+                .status(room.getStatus())
+                .isPublic(room.getIsPublic())
+                .isLocked(isRoomPasswordProtected(room))
+                .ownerId(room.getOwnerId())
+                .ownerUsername(owner != null ? owner.getUsername() : "Unknown")
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
+                .build();
+    }
+
+    private String normalizeOptionalFilter(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private void ensureUserNotInMatchmakingQueue(Long userId) {

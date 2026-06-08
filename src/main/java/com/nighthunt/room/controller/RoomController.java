@@ -49,6 +49,18 @@ public class RoomController {
         return ApiResponse.ok(response);
     }
 
+    @GetMapping("/custom/public")
+    public ApiResponse<RoomListResponse> listPublicCustomRooms(
+            @RequestParam(required = false) String mode,
+            @RequestParam(required = false) String mapId,
+            @RequestParam(required = false, defaultValue = "20") Integer limit) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        if (userId == null) {
+            return ApiResponse.error("User not authenticated", ErrorCodes.AUTH_REQUIRED);
+        }
+        return ApiResponse.ok(roomService.listPublicCustomRooms(mode, mapId, limit));
+    }
+
     @PostMapping("/{roomId}/ready")
     public ApiResponse<RoomResponse> setReady(@PathVariable Long roomId,
                                               @Valid @RequestBody ReadyRequest request) {

@@ -13,11 +13,31 @@ import java.util.Optional;
 
 @Repository
 public interface RoomRepository extends JpaRepository<Room, Long> {
-    Optional<Room> findByRoomCode(String roomCode);Optional<Room> findByMatchId(String matchId);    List<Room> findByStatusAndIsPublicAndIsLocked(String status, Boolean isPublic, Boolean isLocked);
+    Optional<Room> findByRoomCode(String roomCode);
+    Optional<Room> findByMatchId(String matchId);
+    List<Room> findByStatusAndIsPublicAndIsLocked(String status, Boolean isPublic, Boolean isLocked);
     List<Room> findByOwnerId(Long ownerId);
 
-    @Query("SELECT r FROM Room r WHERE r.status = :status AND r.isPublic = true AND r.isLocked = false")
-    List<Room> findAvailablePublicRooms(@Param("status") String status);
+    @Query("""
+        SELECT r FROM Room r
+        WHERE r.status = :status
+          AND r.isPublic = true
+          AND (:mode IS NULL OR r.mode = :mode)
+          AND (:mapId IS NULL OR r.mapId = :mapId)
+        """)
+    List<Room> findPublicWaitingRooms(
+            @Param("status") String status,
+            @Param("mode") String mode,
+            @Param("mapId") String mapId);
+
+    @Query("""
+        SELECT r FROM Room r
+        WHERE r.status = :status
+          AND r.isPublic = true
+          AND r.isLocked = false
+          AND (r.password IS NULL OR r.password = '')
+        """)
+    List<Room> findQuickJoinRooms(@Param("status") String status);
 
     List<Room> findByStatus(String status);
 
