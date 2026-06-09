@@ -181,7 +181,12 @@ public class MatchPresenceService {
         MatchPresenceState state = request.getState() != null ? request.getState() : MatchPresenceState.CONNECTED;
         String reason = normalizeReason(request.getReason());
 
-        MatchPresenceSnapshot snapshot = presenceCache.get(room.getMatchId(), userId)
+        Optional<MatchPresenceSnapshot> existingSnapshot = presenceCache.get(room.getMatchId(), userId);
+        MatchPresenceState previousState = existingSnapshot
+                .map(MatchPresenceSnapshot::getState)
+                .orElse(null);
+
+        MatchPresenceSnapshot snapshot = existingSnapshot
                 .orElseGet(() -> MatchPresenceSnapshot.builder()
                         .matchId(room.getMatchId())
                         .roomId(room.getId())
@@ -205,7 +210,12 @@ public class MatchPresenceService {
             player.setLastSeenAt(now);
             roomPlayerRepository.save(player);
             connectionManager.updateUserRoom(userId, room.getId());
-            broadcastPresence(room, snapshot, "Player reconnected to the match.");
+            if (shouldBroadcastConnectedPresence(reason, previousState)) {
+                broadcastPresence(room, snapshot, resolveConnectedPresenceMessage(reason, previousState));
+            } else {
+                log.debug("[MatchPresence] Initial connected presence saved without notice userId={} roomId={} matchId={} reason={}",
+                        userId, room.getId(), room.getMatchId(), reason);
+            }
             return;
         }
 
@@ -326,6 +336,24 @@ public class MatchPresenceService {
                 .room(roomResponse)
                 .build();
         connectionManager.broadcastToRoom(room.getId(), "match_presence_notice", notice);
+    }
+
+    private String resolveConnectedPresenceMessage(String reason, MatchPresenceState previousState) {
+        return isReconnectReason(reason, previousState)
+                ? "Player reconnected to the match."
+                : "Player connected to the match.";
+    }
+
+    private boolean shouldBroadcastConnectedPresence(String reason, MatchPresenceState previousState) {
+        return isReconnectReason(reason, previousState);
+    }
+
+    private boolean isReconnectReason(String reason, MatchPresenceState previousState) {
+        if (previousState == MatchPresenceState.DISCONNECTED)
+            return true;
+
+        return reason != null
+                && reason.toUpperCase(Locale.ROOT).contains("RECONNECTED");
     }
 
     private String resolveDisplayName(Long userId) {

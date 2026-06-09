@@ -5,6 +5,7 @@ import com.nighthunt.friend.service.PlayerStatusService;
 import com.nighthunt.game.websocket.dto.MatchPresenceNoticeDTO;
 import com.nighthunt.game.websocket.port.ConnectionManager;
 import com.nighthunt.match.adapter.RedisMatchPresenceCache;
+import com.nighthunt.match.dto.MatchPresenceRequest;
 import com.nighthunt.match.dto.MatchPresenceState;
 import com.nighthunt.match.model.MatchPresenceSnapshot;
 import com.nighthunt.match.service.AbandonPenaltyService;
@@ -34,6 +35,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class MatchPresenceServiceTest {
@@ -77,8 +79,8 @@ class MatchPresenceServiceTest {
                 .isReady(true)
                 .build();
 
-        when(roomPlayerRepository.findActiveRoomsByUserId(42L)).thenReturn(List.of(player));
-        when(roomRepository.findById(7L)).thenReturn(Optional.of(room));
+        lenient().when(roomPlayerRepository.findActiveRoomsByUserId(42L)).thenReturn(List.of(player));
+        lenient().when(roomRepository.findById(7L)).thenReturn(Optional.of(room));
         when(roomRepository.findByMatchId("match-1")).thenReturn(Optional.of(room));
         when(roomPlayerRepository.findByRoomIdAndUserId(7L, 42L)).thenReturn(Optional.of(player));
         when(userRepository.findById(42L)).thenReturn(Optional.of(User.builder()
@@ -87,11 +89,59 @@ class MatchPresenceServiceTest {
                 .email("alice@example.com")
                 .passwordHash("hash")
                 .build()));
-        when(roomResponseAssembler.toResponseById(7L)).thenReturn(RoomResponse.builder()
+        lenient().when(roomResponseAssembler.toResponseById(7L)).thenReturn(RoomResponse.builder()
                 .roomId(7L)
                 .matchId("match-1")
                 .status(GameConstants.ROOM_STATUS_IN_GAME)
                 .build());
+    }
+
+    @Test
+    @DisplayName("initial FishNet connected stores CONNECTED without broadcasting a reconnect notice")
+    void initialFishNetConnected_savesWithoutNotice() {
+        when(presenceCache.get("match-1", 42L)).thenReturn(Optional.empty());
+
+        service.recordServerPresence(MatchPresenceRequest.builder()
+                .matchId("match-1")
+                .userId(42L)
+                .state(MatchPresenceState.CONNECTED)
+                .reason("FISHNET_CONNECTED")
+                .build());
+
+        ArgumentCaptor<MatchPresenceSnapshot> captor = ArgumentCaptor.forClass(MatchPresenceSnapshot.class);
+        verify(presenceCache).save(captor.capture());
+        MatchPresenceSnapshot snapshot = captor.getValue();
+        assertThat(snapshot.getState()).isEqualTo(MatchPresenceState.CONNECTED);
+        assertThat(snapshot.getReason()).isEqualTo("FISHNET_CONNECTED");
+        assertThat(snapshot.getDisconnectedAt()).isNull();
+        assertThat(snapshot.isAbandoned()).isFalse();
+
+        verify(connectionManager, never()).broadcastToRoom(eq(7L), eq("match_presence_notice"), any(MatchPresenceNoticeDTO.class));
+    }
+
+    @Test
+    @DisplayName("connected after a disconnect broadcasts a reconnect notice")
+    void connectedAfterDisconnect_broadcastsReconnectNotice() {
+        MatchPresenceSnapshot previous = MatchPresenceSnapshot.builder()
+                .matchId("match-1")
+                .roomId(7L)
+                .userId(42L)
+                .displayName("Alice")
+                .state(MatchPresenceState.DISCONNECTED)
+                .abandoned(false)
+                .build();
+        when(presenceCache.get("match-1", 42L)).thenReturn(Optional.of(previous));
+
+        service.recordServerPresence(MatchPresenceRequest.builder()
+                .matchId("match-1")
+                .userId(42L)
+                .state(MatchPresenceState.CONNECTED)
+                .reason("FISHNET_CONNECTED")
+                .build());
+
+        ArgumentCaptor<MatchPresenceNoticeDTO> noticeCaptor = ArgumentCaptor.forClass(MatchPresenceNoticeDTO.class);
+        verify(connectionManager).broadcastToRoom(eq(7L), eq("match_presence_notice"), noticeCaptor.capture());
+        assertThat(noticeCaptor.getValue().getMessage()).isEqualTo("Player reconnected to the match.");
     }
 
     @Test
