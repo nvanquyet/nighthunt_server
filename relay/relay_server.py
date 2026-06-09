@@ -510,10 +510,20 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         # host AND we have not yet seen a real game packet on this upstream,
         # update host_addr to the new port and continue forwarding.
         if addr != host_addr:
+            identity = parse_relay_identity(data)
+            prop = litenet_packet_property(relay_payload(data, identity))
+            if self.has_established_game_exchange():
+                log.warning("[NH_RELAY][DROP] Dropping upstream packet from unexpected host endpoint: "
+                            "session=%s hostPort=%d addr=%s:%d expected=%s:%d established=True prop=%s",
+                            self.session.token[:8], self.host_port,
+                            addr[0], addr[1], host_addr[0], host_addr[1], prop)
+                return
             if addr[0] == host_addr[0]:
                 # Same IP, different port — update the upstream's host addr silently.
-                log.debug("[Relay] Host upstream port migrated (same IP): session=%s port=%d old=%s:%d new=%s:%d",
-                          self.session.token[:8], self.host_port, host_addr[0], host_addr[1], addr[0], addr[1])
+                log.info("[NH_RELAY][HOST_MIGRATE] Host upstream port migrated during handshake: "
+                         "session=%s hostPort=%d old=%s:%d new=%s:%d prop=%s",
+                         self.session.token[:8], self.host_port,
+                         host_addr[0], host_addr[1], addr[0], addr[1], prop)
                 self.host_addr = addr
                 self.session.all_known[addr] = time.time()
                 host_addr = addr

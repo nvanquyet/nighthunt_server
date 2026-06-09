@@ -295,6 +295,44 @@ class TestRelaySession:
         assert s.cooling_host_ports == {}
 
     @pytest.mark.asyncio
+    async def test_established_upstream_does_not_migrate_to_same_ip_port(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        stray_same_ip = ("203.0.113.10", 49000)
+        client = ("198.51.100.50", 51000)
+        peer_id = 42
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            client)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CHANNELED_PROPERTY]) + b"client-game"),
+            client)
+        upstream.datagram_received(
+            identity_packet(token, 7, 99, bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game"),
+            host)
+
+        assert upstream.has_established_game_exchange() is True
+        downstream.reset_mock()
+
+        upstream.datagram_received(
+            identity_packet(token, 7, 100, bytes([LITENET_CHANNELED_PROPERTY]) + b"stray"),
+            stray_same_ip)
+
+        downstream.sendto.assert_not_called()
+        assert upstream.host_addr == host
+        assert s.client_relays[client] is upstream
+
+    @pytest.mark.asyncio
     async def test_identity_rebound_suppresses_stale_established_host_disconnect(self):
         token = "tok12345678"
         s = RelaySession(token, 17777, host_ports=[17778])
