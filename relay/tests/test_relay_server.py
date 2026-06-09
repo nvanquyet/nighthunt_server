@@ -173,6 +173,8 @@ class TestRelaySession:
 
         assert s.host_addr == host
         assert upstream.host_addr == upstream_host
+        assert s.host_peer_id == 99
+        assert upstream.host_peer_id == 99
 
     @pytest.mark.asyncio
     async def test_client_packet_uses_upstream_specific_host_endpoint(self):
@@ -330,6 +332,55 @@ class TestRelaySession:
 
         downstream.sendto.assert_not_called()
         assert upstream.host_addr == host
+        assert s.client_relays[client] is upstream
+
+    @pytest.mark.asyncio
+    async def test_established_upstream_migrates_for_registered_host_identity(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        migrated_host = ("203.0.113.10", 49000)
+        client = ("198.51.100.50", 51000)
+        client_peer_id = 42
+        host_peer_id = 7
+        registration = identity_packet(
+            token,
+            peer_id=host_peer_id,
+            nonce=1,
+            payload=bytes([LITENET_UNCONNECTED_PROPERTY]) + HOST_REGISTRATION_MAGIC,
+        )
+        s.register_host(host, relay_server.parse_relay_identity(registration))
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(registration, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, client_peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            client)
+        await relay._forward_client_packet(
+            identity_packet(token, client_peer_id, 1, bytes([LITENET_CHANNELED_PROPERTY]) + b"client-game"),
+            client)
+        upstream.datagram_received(
+            identity_packet(token, host_peer_id, 99, bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game"),
+            host)
+
+        assert upstream.has_established_game_exchange() is True
+        downstream.reset_mock()
+
+        migrated_packet = identity_packet(
+            token,
+            host_peer_id,
+            100,
+            bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game-migrated",
+        )
+        upstream.datagram_received(migrated_packet, migrated_host)
+
+        downstream.sendto.assert_called_with(migrated_packet, client)
+        assert upstream.host_addr == migrated_host
         assert s.client_relays[client] is upstream
 
     @pytest.mark.asyncio

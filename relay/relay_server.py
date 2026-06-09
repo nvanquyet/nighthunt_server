@@ -65,6 +65,7 @@ log = logging.getLogger("relay")
 SESSION_IDLE_TTL  = 7200   # seconds — sessions idle this long auto-expire
 CLIENT_IDLE_SECS  = 60     # seconds — unresponsive endpoints are pruned
 HANDSHAKE_RELAY_GRACE_SECS = 12
+INITIAL_DISCONNECT_GRACE_SECS = 8.0
 REBOUND_DISCONNECT_GRACE_SECS = 8.0
 
 
@@ -136,6 +137,7 @@ class RelaySession:
         # port → released_at timestamp; ports here are cooling and not yet assignable
         self.cooling_host_ports: Dict[int, float] = {}
         self.host_addr:  Optional[Tuple[str, int]] = None
+        self.host_peer_id: Optional[int] = None
         # non-host endpoints: addr → last_seen timestamp
         self.clients:    Dict[Tuple[str, int], float] = {}
         # all known endpoints (host + clients) for fast lookup
@@ -165,11 +167,15 @@ class RelaySession:
     def registered_host_upstream_count(self) -> int:
         return sum(1 for relay in self.host_upstreams.values() if relay.host_addr is not None)
 
-    def register_host(self, addr: Tuple[str, int]):
+    def register_host(self, addr: Tuple[str, int], identity: Optional[Dict[str, int]] = None):
         self.all_known[addr] = time.time()
         if addr in self.clients:
             self.remove_client(addr)
         self.host_addr = addr
+        if identity is not None and identity.get("session_hash") == self.session_hash:
+            peer_id = identity.get("peer_id")
+            if peer_id:
+                self.host_peer_id = peer_id
         log.info("[Relay] Host registered: session=%s addr=%s:%d",
                  self.token[:8], addr[0], addr[1])
 
@@ -342,6 +348,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.session = session
         self.host_port = host_port
         self.host_addr: Optional[Tuple[str, int]] = None
+        self.host_peer_id: Optional[int] = None
         self.client_addr: Optional[Tuple[str, int]] = None
         self.client_peer_id: Optional[int] = None
         self.client_nonce: Optional[int] = None
@@ -354,6 +361,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_last_seen_at: Optional[float] = None
         self.host_last_seen_at: Optional[float] = None
         self.rebound_disconnect_grace_until = 0.0
+        self.disconnect_grace_reason = ""
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
 
@@ -373,7 +381,8 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_assigned_at = now
         self.client_last_seen_at = now
         self.host_last_seen_at = None
-        self.rebound_disconnect_grace_until = 0.0
+        self.rebound_disconnect_grace_until = now + INITIAL_DISCONNECT_GRACE_SECS
+        self.disconnect_grace_reason = "connect-grace"
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
         self._client_forward_logged = False
@@ -387,6 +396,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_last_seen_at = None
         self.host_last_seen_at = None
         self.rebound_disconnect_grace_until = 0.0
+        self.disconnect_grace_reason = ""
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
         self._client_forward_logged = False
@@ -411,6 +421,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             self.client_assigned_at = now
             self.host_last_seen_at = None
             self.rebound_disconnect_grace_until = now + REBOUND_DISCONNECT_GRACE_SECS
+            self.disconnect_grace_reason = "rebound-grace"
             self._client_saw_game_packet = False
             self._host_saw_game_packet = False
             self._client_forward_logged = False
@@ -435,7 +446,10 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         if suppress_handshake and not self.has_established_game_exchange():
             return True, "handshake"
         if self.rebound_disconnect_grace_until > now:
-            return True, "rebound-grace"
+            return True, self.disconnect_grace_reason or "disconnect-grace"
+        if self.rebound_disconnect_grace_until > 0.0:
+            self.rebound_disconnect_grace_until = 0.0
+            self.disconnect_grace_reason = ""
         return False, ""
 
     def mark_client_packet(self, prop: Optional[int]):
@@ -462,15 +476,33 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         if self.transport is not None:
             self.transport.close()
 
-    def register_host(self, addr: Tuple[str, int]):
+    def register_host(self, addr: Tuple[str, int], identity: Optional[Dict[str, int]] = None):
         self.session.all_known[addr] = time.time()
+        if identity is not None and identity.get("session_hash") == self.session.session_hash:
+            peer_id = identity.get("peer_id")
+            if peer_id:
+                self.host_peer_id = peer_id
+                if self.session.host_peer_id is None:
+                    self.session.host_peer_id = peer_id
+
         if self.host_addr != addr:
             self.host_addr = addr
             log.info("[Relay] Host upstream registered: session=%s port=%d addr=%s:%d",
                      self.session.token[:8], self.host_port, addr[0], addr[1])
 
         if self.session.host_addr is None:
-            self.session.register_host(addr)
+            self.session.register_host(addr, identity)
+
+    def is_registered_host_identity(self, identity: Optional[Dict[str, int]]) -> bool:
+        if identity is None or identity.get("session_hash") != self.session.session_hash:
+            return False
+
+        peer_id = identity.get("peer_id")
+        if not peer_id:
+            return False
+
+        registered_peer_id = self.host_peer_id or self.session.host_peer_id
+        return registered_peer_id is not None and peer_id == registered_peer_id
 
     def get_host_addr(self) -> Optional[Tuple[str, int]]:
         if self.host_addr is not None:
@@ -488,7 +520,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.session.touch()
 
         if is_host_registration_packet(data):
-            self.register_host(addr)
+            self.register_host(addr, parse_relay_identity(data))
             log.debug("[Relay] Host upstream punch: session=%s port=%d addr=%s:%d",
                       self.session.token[:8], self.host_port, addr[0], addr[1])
             return
@@ -497,7 +529,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             identity = parse_relay_identity(data)
             prop = litenet_packet_property(relay_payload(data, identity))
             if prop == LITENET_UNCONNECTED_PROPERTY:
-                self.register_host(addr)
+                self.register_host(addr, identity)
                 log.warning(
                     "[Relay] Host upstream registered by unconnected-packet fallback: "
                     "session=%s port=%d addr=%s:%d len=%d head=%s tail=%s",
@@ -528,12 +560,29 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             identity = parse_relay_identity(data)
             prop = litenet_packet_property(relay_payload(data, identity))
             if self.has_established_game_exchange():
-                log.warning("[NH_RELAY][DROP] Dropping upstream packet from unexpected host endpoint: "
-                            "session=%s hostPort=%d addr=%s:%d expected=%s:%d established=True prop=%s",
-                            self.session.token[:8], self.host_port,
-                            addr[0], addr[1], host_addr[0], host_addr[1], prop)
-                return
-            if addr[0] == host_addr[0]:
+                can_migrate = (
+                    addr[0] == host_addr[0]
+                    and self.is_registered_host_identity(identity)
+                )
+                if can_migrate:
+                    log.info("[NH_RELAY][HOST_MIGRATE] Host upstream endpoint migrated by identity: "
+                             "session=%s hostPort=%d old=%s:%d new=%s:%d peer=%s prop=%s established=True",
+                             self.session.token[:8], self.host_port,
+                             host_addr[0], host_addr[1], addr[0], addr[1],
+                             identity.get("peer_id"), prop)
+                    self.host_addr = addr
+                    self.session.all_known[addr] = time.time()
+                    host_addr = addr
+                else:
+                    log.warning("[NH_RELAY][DROP] Dropping upstream packet from unexpected host endpoint: "
+                                "session=%s hostPort=%d addr=%s:%d expected=%s:%d established=True prop=%s "
+                                "identityPeer=%s registeredHostPeer=%s",
+                                self.session.token[:8], self.host_port,
+                                addr[0], addr[1], host_addr[0], host_addr[1], prop,
+                                identity.get("peer_id") if identity else "none",
+                                self.host_peer_id or self.session.host_peer_id or "unset")
+                    return
+            elif addr[0] == host_addr[0]:
                 # Same IP, different port — update the upstream's host addr silently.
                 log.info("[NH_RELAY][HOST_MIGRATE] Host upstream port migrated during handshake: "
                          "session=%s hostPort=%d old=%s:%d new=%s:%d prop=%s",
@@ -635,14 +684,14 @@ class RelayProtocol(asyncio.DatagramProtocol):
         session.touch()
 
         if is_host_registration_packet(data):
-            session.register_host(addr)
+            session.register_host(addr, parse_relay_identity(data))
             return
 
         if session.host_addr is None:
             identity = parse_relay_identity(data)
             prop = litenet_packet_property(relay_payload(data, identity))
             if prop == LITENET_UNCONNECTED_PROPERTY:
-                session.register_host(addr)
+                session.register_host(addr, identity)
                 log.warning(
                     "[Relay] Host registered by unconnected-packet fallback: session=%s addr=%s:%d len=%d head=%s tail=%s",
                     session.token[:8],
@@ -956,6 +1005,7 @@ async def handle_list(request: web.Request) -> web.Response:
             "assigned_upstreams": len(s.client_relays),
             "identity_clients": len(s.client_peer_relays),
             "has_host": s.has_host(),
+            "host_peer_id": s.host_peer_id,
             "registered_host_upstreams": s.registered_host_upstream_count(),
             "host_upstream_ports": s.host_ports,
             "free_host_ports": s.free_host_ports,
