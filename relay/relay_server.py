@@ -65,6 +65,7 @@ log = logging.getLogger("relay")
 SESSION_IDLE_TTL  = 7200   # seconds — sessions idle this long auto-expire
 CLIENT_IDLE_SECS  = 60     # seconds — unresponsive endpoints are pruned
 HANDSHAKE_RELAY_GRACE_SECS = 12
+REBOUND_DISCONNECT_GRACE_SECS = 8.0
 
 
 def is_host_registration_packet(data: bytes) -> bool:
@@ -352,6 +353,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_assigned_at: Optional[float] = None
         self.client_last_seen_at: Optional[float] = None
         self.host_last_seen_at: Optional[float] = None
+        self.rebound_disconnect_grace_until = 0.0
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
 
@@ -371,6 +373,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_assigned_at = now
         self.client_last_seen_at = now
         self.host_last_seen_at = None
+        self.rebound_disconnect_grace_until = 0.0
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
         self._client_forward_logged = False
@@ -383,6 +386,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         self.client_assigned_at = None
         self.client_last_seen_at = None
         self.host_last_seen_at = None
+        self.rebound_disconnect_grace_until = 0.0
         self._client_saw_game_packet = False
         self._host_saw_game_packet = False
         self._client_forward_logged = False
@@ -406,6 +410,7 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
             # stale disconnect does not close the freshly connected client.
             self.client_assigned_at = now
             self.host_last_seen_at = None
+            self.rebound_disconnect_grace_until = now + REBOUND_DISCONNECT_GRACE_SECS
             self._client_saw_game_packet = False
             self._host_saw_game_packet = False
             self._client_forward_logged = False
@@ -422,6 +427,16 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
                 f"{self.client_nonce:016x}" if self.client_nonce is not None else "unset",
                 self.host_port,
             )
+
+    def should_suppress_disconnect(self, prop: Optional[int], now: float,
+                                   suppress_handshake: bool = True) -> Tuple[bool, str]:
+        if prop != LITENET_DISCONNECT_PROPERTY:
+            return False, ""
+        if suppress_handshake and not self.has_established_game_exchange():
+            return True, "handshake"
+        if self.rebound_disconnect_grace_until > now:
+            return True, "rebound-grace"
+        return False, ""
 
     def mark_client_packet(self, prop: Optional[int]):
         self.client_last_seen_at = time.time()
@@ -541,22 +556,27 @@ class HostUpstreamProtocol(asyncio.DatagramProtocol):
         prop = litenet_packet_property(relay_payload(data, identity))
         client_addr = self.client_addr
 
-        established = self.has_established_game_exchange()
-        if prop == LITENET_DISCONNECT_PROPERTY and not established:
+        now = time.time()
+        suppress_disconnect, suppress_reason = self.should_suppress_disconnect(prop, now)
+        if suppress_disconnect:
             log.info(
-                "[NH_RELAY][DROP] Suppressed handshake host disconnect: session=%s peer=%s client=%s:%d "
-                "hostPort=%d clientGame=%s hostGame=%s len=%d head=%s",
+                "[NH_RELAY][DROP] Suppressed host disconnect: session=%s peer=%s client=%s:%d "
+                "hostPort=%d reason=%s graceLeft=%.2fs clientGame=%s hostGame=%s len=%d head=%s",
                 self.session.token[:8],
                 self.client_peer_id if self.client_peer_id is not None else "legacy",
                 client_addr[0],
                 client_addr[1],
                 self.host_port,
+                suppress_reason,
+                max(0.0, self.rebound_disconnect_grace_until - now),
                 self._client_saw_game_packet,
                 self._host_saw_game_packet,
                 len(data),
                 relay_payload(data, identity)[:16].hex(),
             )
             return
+
+        established = self.has_established_game_exchange()
 
         self.mark_host_packet(prop)
         self.session.clients[client_addr] = time.time()
@@ -685,6 +705,26 @@ class RelayProtocol(asyncio.DatagramProtocol):
             log.warning("[NH_RELAY][DROP] Cannot forward client packet before host endpoint is known: "
                         "session=%s client=%s:%d hostPort=%d",
                         session.token[:8], client_addr[0], client_addr[1], relay.host_port)
+            return
+
+        now = time.time()
+        suppress_disconnect, suppress_reason = relay.should_suppress_disconnect(
+            prop, now, suppress_handshake=False)
+        if suppress_disconnect:
+            peer_id = relay.client_peer_id if relay.client_peer_id is not None else "legacy"
+            log.info(
+                "[NH_RELAY][DROP] Suppressed client disconnect: session=%s peer=%s client=%s:%d "
+                "hostPort=%d reason=%s graceLeft=%.2fs len=%d head=%s",
+                session.token[:8],
+                peer_id,
+                client_addr[0],
+                client_addr[1],
+                relay.host_port,
+                suppress_reason,
+                max(0.0, relay.rebound_disconnect_grace_until - now),
+                len(data),
+                relay_payload(data, identity)[:16].hex(),
+            )
             return
 
         try:

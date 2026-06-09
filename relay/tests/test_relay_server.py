@@ -379,6 +379,106 @@ class TestRelaySession:
         assert s.cooling_host_ports == {}
 
     @pytest.mark.asyncio
+    async def test_identity_rebound_suppresses_stale_host_disconnect_after_new_exchange(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        first_addr = ("198.51.100.50", 51000)
+        rebound_addr = ("198.51.100.50", 51001)
+        peer_id = 42
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            first_addr)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CHANNELED_PROPERTY]) + b"client-game"),
+            first_addr)
+        upstream.datagram_received(
+            identity_packet(token, 7, 99, bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game"),
+            host)
+
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 2, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"reconnect"),
+            rebound_addr)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 2, bytes([LITENET_CHANNELED_PROPERTY]) + b"new-client-game"),
+            rebound_addr)
+        upstream.datagram_received(
+            identity_packet(token, 7, 100, bytes([LITENET_CHANNELED_PROPERTY]) + b"new-host-game"),
+            host)
+
+        assert upstream.has_established_game_exchange() is True
+        downstream.reset_mock()
+
+        stale_disconnect = identity_packet(token, 7, 99, bytes([LITENET_DISCONNECT_PROPERTY]) + b"old-peer")
+        upstream.datagram_received(stale_disconnect, host)
+
+        downstream.sendto.assert_not_called()
+        assert s.client_relays[rebound_addr] is upstream
+        assert s.client_peer_relays[peer_id] is upstream
+        assert upstream.client_addr == rebound_addr
+        assert s.free_host_ports == []
+        assert s.cooling_host_ports == {}
+
+    @pytest.mark.asyncio
+    async def test_identity_rebound_suppresses_stale_client_disconnect_after_new_exchange(self):
+        token = "tok12345678"
+        s = RelaySession(token, 17777, host_ports=[17778])
+        host = ("203.0.113.10", 40000)
+        first_addr = ("198.51.100.50", 51000)
+        rebound_addr = ("198.51.100.50", 51001)
+        peer_id = 42
+        s.register_host(host)
+
+        downstream = MagicMock()
+        upstream_transport = MagicMock()
+        upstream = HostUpstreamProtocol(s, 17778, downstream)
+        upstream.connection_made(upstream_transport)
+        upstream.datagram_received(HOST_REGISTRATION_MAGIC, host)
+
+        relay = RelayProtocol(s)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"connect"),
+            first_addr)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 1, bytes([LITENET_CHANNELED_PROPERTY]) + b"client-game"),
+            first_addr)
+        upstream.datagram_received(
+            identity_packet(token, 7, 99, bytes([LITENET_CHANNELED_PROPERTY]) + b"host-game"),
+            host)
+
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 2, bytes([LITENET_CONNECT_REQUEST_PROPERTY]) + b"reconnect"),
+            rebound_addr)
+        await relay._forward_client_packet(
+            identity_packet(token, peer_id, 2, bytes([LITENET_CHANNELED_PROPERTY]) + b"new-client-game"),
+            rebound_addr)
+        upstream.datagram_received(
+            identity_packet(token, 7, 100, bytes([LITENET_CHANNELED_PROPERTY]) + b"new-host-game"),
+            host)
+
+        assert upstream.has_established_game_exchange() is True
+        upstream_transport.reset_mock()
+
+        stale_disconnect = identity_packet(token, peer_id, 2, bytes([LITENET_DISCONNECT_PROPERTY]) + b"old-client")
+        await relay._forward_client_packet(stale_disconnect, rebound_addr)
+
+        upstream_transport.sendto.assert_not_called()
+        assert s.client_relays[rebound_addr] is upstream
+        assert s.client_peer_relays[peer_id] is upstream
+        assert upstream.client_addr == rebound_addr
+        assert s.free_host_ports == []
+        assert s.cooling_host_ports == {}
+
+    @pytest.mark.asyncio
     async def test_recycles_oldest_client_when_upstreams_are_exhausted(self):
         s = RelaySession("tok12345678", 17777, host_ports=[17778])
         host = ("203.0.113.10", 40000)
