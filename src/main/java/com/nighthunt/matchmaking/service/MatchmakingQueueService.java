@@ -161,6 +161,8 @@ public class MatchmakingQueueService {
         if (!mode.isActive()
                 || !"AVAILABLE".equalsIgnoreCase(mode.getModeStatus())
                 || !mode.isMatchmakingEnabled()) {
+            log.warn("[MM][ENQUEUE_REJECTED] user={} mode={} active={} status={} matchmakingEnabled={} reason=mode_not_available",
+                    userId, gameMode, mode.isActive(), mode.getModeStatus(), mode.isMatchmakingEnabled());
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Game mode not available for matchmaking: " + gameMode);
         }

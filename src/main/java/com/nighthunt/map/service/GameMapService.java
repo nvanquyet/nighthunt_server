@@ -104,7 +104,11 @@ public class GameMapService {
                 describeZoneConfig(zoneConfigNode));
         log.info("[AdminConfig] setZoneConfig {} → {} bytes", mapId,
                 map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0);
-        return toDTO(mapRepository.save(map));
+        GameMap saved = mapRepository.save(map);
+        log.info("[AdminConfig][ZONE_CONFIG] persisted mapId={} bytes={} summary={}", mapId,
+                saved.getZoneConfigJson() != null ? saved.getZoneConfigJson().length() : 0,
+                describeZoneConfig(zoneConfigNode));
+        return toDTO(saved);
     }
 
     // ── Admin API ─────────────────────────────────────────────────────────────

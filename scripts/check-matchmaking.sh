@@ -22,7 +22,7 @@ section "Container state"
 
 section "Recent matchmaking and DS logs (${SINCE})"
 "${COMPOSE[@]}" logs --since "$SINCE" backend \
-    | grep -E '\[MM\]|\[DS-Alloc\]|\[DS-Svc\]|\[AdminConfig\]\[ZONE_CONFIG\]|match_ready|ds_ready' \
+    | grep -E '\[MM\]|\[DS-Alloc\]|\[DS-Svc\]|\[AdminConfig\]\[(GAME_MODE|ZONE_CONFIG)\]|match_ready|ds_ready' \
     || true
 
 section "Recent dedicated-server runtime logs (${SINCE})"
@@ -62,7 +62,7 @@ ORDER BY display_order, map_id;
 
 SELECT version, description, success, installed_on
 FROM flyway_schema_history
-WHERE version IN ("20", "26", "40")
+WHERE version IN ("20", "26", "40", "45")
 ORDER BY installed_rank;
 
 SELECT q.id, q.user_id, u.username, q.elo,
@@ -101,6 +101,7 @@ section "Interpretation"
 cat <<'EOF'
 - TICK_BLOCKED: Redis matcher lock is preventing matcher ticks.
 - ORPHAN_QUEUE: queued mode is not active/AVAILABLE/matchmaking-enabled.
+- ENQUEUE_REJECTED: backend read the mode as inactive/unavailable when the client tried to queue.
 - NO_MATCH_PAIRS: exact ELO/map/platform/group rejection reason.
 - MATCH_FORMED without MATCH_READY: room/DS allocation pipeline is blocked or failed.
 - MATCH_READY without client transition: inspect realtime gateway/WebSocket delivery.

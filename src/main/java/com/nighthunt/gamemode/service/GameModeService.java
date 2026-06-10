@@ -216,7 +216,16 @@ public class GameModeService {
         if (req.description      != null) gm.setDescription(req.description);
 
         log.info("[AdminConfig] patchMode {} → {}", modeKey, req);
-        return toGameModeDTO(gameModeRepository.save(gm));
+        GameMode saved = gameModeRepository.save(gm);
+        log.info("[AdminConfig][GAME_MODE] saved mode={} active={} status={} matchmakingEnabled={} allowFill={} elo=[{},{}]",
+                saved.getModeKey(),
+                saved.isActive(),
+                saved.getModeStatus(),
+                saved.isMatchmakingEnabled(),
+                saved.isAllowFill(),
+                saved.getMinElo(),
+                saved.getMaxElo());
+        return toGameModeDTO(saved);
     }
 
     /** Request DTO for patchMode — all fields optional (null = no change). */

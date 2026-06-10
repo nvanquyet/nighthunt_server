@@ -284,7 +284,7 @@ jobs:
             DB_NAME=$(grep ^MYSQL_DATABASE "$DEPLOY_DIR/.env.production" | cut -d= -f2- | tr -d '\r' || true)
             MYSQL_PWD="$DB_PASS" docker exec -e MYSQL_PWD="$DB_PASS" nighthunt-mysql \
               mysql -u"$DB_USER" "$DB_NAME" -e \
-              "UPDATE dedicated_server SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
+              "UPDATE dedicated_servers SET status='stopped', stopped_at=NOW() WHERE ip != '$VPS_IP' AND status IN ('ready','starting','in_game'); SELECT ROW_COUNT() AS stale_records_cleaned;" \
               2>/dev/null && echo "Stale DS records cleaned." || echo "WARN: DB cleanup failed (non-fatal)"
 
             dump_backend_diagnostics() {

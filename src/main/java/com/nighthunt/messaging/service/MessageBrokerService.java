@@ -249,13 +249,12 @@ public class MessageBrokerService implements MessagePublisher {
      * Publish party invitation received event
      */
     public void publishPartyInvitationReceived(Long partyId, Long inviteeUserId, Long inviterUserId, String inviterUsername, Long invitationId) {
-        Map<String, Object> payload = Map.of(
-                "partyId", partyId,
-                "inviteeUserId", inviteeUserId,
-                "inviterUserId", inviterUserId,
-                "inviterUsername", inviterUsername,
-                "invitationId", invitationId
-        );
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("partyId", partyId);
+        payload.put("inviteeUserId", inviteeUserId);
+        payload.put("inviterUserId", inviterUserId);
+        payload.put("inviterUsername", inviterUsername);
+        payload.put("invitationId", invitationId);
         publish(MessageTopics.PARTY_INVITATION_RECEIVED, "party.invitation.received", payload);
     }
     
@@ -341,12 +340,11 @@ public class MessageBrokerService implements MessagePublisher {
      * Publish party invitation declined event (invitee declined, notify inviter).
      */
     public void publishPartyInvitationDeclined(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
-        Map<String, Object> payload = Map.of(
-                "partyId", partyId,
-                "inviterUserId", inviterUserId,
-                "inviteeUserId", inviteeUserId,
-                "invitationId", invitationId
-        );
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("partyId", partyId);
+        payload.put("inviterUserId", inviterUserId);
+        payload.put("inviteeUserId", inviteeUserId);
+        payload.put("invitationId", invitationId);
         publish(MessageTopics.PARTY_INVITATION_DECLINED, "party.invitation.declined", payload);
     }
 
@@ -354,12 +352,11 @@ public class MessageBrokerService implements MessagePublisher {
      * Publish party invitation cancelled event (inviter withdrew it, notify invitee).
      */
     public void publishPartyInvitationCancelled(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
-        Map<String, Object> payload = Map.of(
-                "partyId", partyId,
-                "inviterUserId", inviterUserId,
-                "inviteeUserId", inviteeUserId,
-                "invitationId", invitationId
-        );
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("partyId", partyId);
+        payload.put("inviterUserId", inviterUserId);
+        payload.put("inviteeUserId", inviteeUserId);
+        payload.put("invitationId", invitationId);
         publish(MessageTopics.PARTY_INVITATION_CANCELLED, "party.invitation.cancelled", payload);
     }
 
@@ -367,12 +364,11 @@ public class MessageBrokerService implements MessagePublisher {
      * Publish party invitation expired event (invitee never responded — notify both sides).
      */
     public void publishPartyInvitationExpired(Long partyId, Long inviterUserId, Long inviteeUserId, Long invitationId) {
-        Map<String, Object> payload = Map.of(
-                "partyId", partyId,
-                "inviterUserId", inviterUserId,
-                "inviteeUserId", inviteeUserId,
-                "invitationId", invitationId
-        );
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("partyId", partyId);
+        payload.put("inviterUserId", inviterUserId);
+        payload.put("inviteeUserId", inviteeUserId);
+        payload.put("invitationId", invitationId);
         publish(MessageTopics.PARTY_INVITATION_EXPIRED, "party.invitation.expired", payload);
     }
     

@@ -484,6 +484,79 @@ public class PartyService {
     // INTERNAL HELPER METHODS
     // ──────────────────────────────────────────────────────────────────────────
 
+    private int resolveMaxPartyMembers() {
+        try {
+            return gameModeService.getAvailableGameModes().stream()
+                    .mapToInt(GameModeDTO::getPlayersPerTeam)
+                    .filter(playersPerTeam -> playersPerTeam > 0)
+                    .max()
+                    .orElse(FALLBACK_MAX_MEMBERS);
+        } catch (Exception ex) {
+            log.warn("[Party] Failed to resolve max party members from game modes; using fallback={}: {}",
+                    FALLBACK_MAX_MEMBERS, ex.getMessage());
+            return FALLBACK_MAX_MEMBERS;
+        }
+    }
+
+    private void ensureCurrentPartyCapacity(Party party) {
+        int configuredMaxMembers = resolveMaxPartyMembers();
+        if (party.getMaxMembers() == configuredMaxMembers) {
+            return;
+        }
+
+        log.info("[Party] Updating party capacity: party={} oldMax={} newMax={}",
+                party.getId(), party.getMaxMembers(), configuredMaxMembers);
+        party.setMaxMembers(configuredMaxMembers);
+        partyRepository.save(party);
+    }
+
+    private Party resolveInvitationParty(PartyInvitation invitation) {
+        if (invitation.getPartyId() != null) {
+            return findParty(invitation.getPartyId());
+        }
+
+        PartyMember inviterMember = partyMemberRepository.findByUserId(invitation.getInviterUserId()).orElse(null);
+        if (inviterMember == null) {
+            createParty(invitation.getInviterUserId());
+            inviterMember = partyMemberRepository.findByUserId(invitation.getInviterUserId())
+                    .orElseThrow(() -> new BusinessException(
+                            ErrorCodes.PARTY_NOT_FOUND,
+                            "Failed to create party for invitation"));
+        }
+
+        Party party = findParty(inviterMember.getPartyId());
+        invitation.setPartyId(party.getId());
+        partyInvitationRepository.save(invitation);
+        return party;
+    }
+
+    private boolean isExpired(PartyInvitation invitation) {
+        return invitation.getExpiresAt() == null
+                || !invitation.getExpiresAt().isAfter(LocalDateTime.now());
+    }
+
+    private void expireInvitation(PartyInvitation invitation) {
+        invitation.setInvitationStatus("EXPIRED");
+        partyInvitationRepository.save(invitation);
+        messageBrokerService.publishPartyInvitationExpired(
+                invitation.getPartyId(),
+                invitation.getInviterUserId(),
+                invitation.getInviteeUserId(),
+                invitation.getId());
+    }
+
+    private List<PartyInvitationDTO> getActiveInvitationDTOs(List<PartyInvitation> invitations) {
+        List<PartyInvitationDTO> activeInvitations = new ArrayList<>();
+        for (PartyInvitation invitation : invitations) {
+            if (isExpired(invitation)) {
+                expireInvitation(invitation);
+                continue;
+            }
+            activeInvitations.add(toPartyInvitationDTO(invitation));
+        }
+        return activeInvitations;
+    }
+
     private void removeMember(Party party, Long userId) {
         // Remove member
         partyMemberRepository.deleteByPartyIdAndUserId(party.getId(), userId);
