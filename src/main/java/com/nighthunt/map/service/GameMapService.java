@@ -99,6 +99,9 @@ public class GameMapService {
         } catch (Exception e) {
             throw new BusinessException(ErrorCodes.DS_BAD_REQUEST, "Invalid zone config JSON");
         }
+        log.info("[AdminConfig][ZONE_CONFIG] setZoneConfig mapId={} bytes={} summary={}", mapId,
+                map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0,
+                describeZoneConfig(zoneConfigNode));
         log.info("[AdminConfig] setZoneConfig {} → {} bytes", mapId,
                 map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0);
         return toDTO(mapRepository.save(map));
@@ -265,5 +268,27 @@ public class GameMapService {
             log.warn("[GameMapService] Failed to parse JSON node: {}", json);
             return null;
         }
+    }
+
+    private String describeZoneConfig(JsonNode zoneConfig) {
+        if (zoneConfig == null || zoneConfig.isNull()) return "null";
+
+        JsonNode phases = zoneConfig.path("phases");
+        int phaseCount = phases.isArray() ? phases.size() : 0;
+        String firstPhase = "firstPhase=none";
+        if (phaseCount > 0) {
+            JsonNode phase = phases.get(0);
+            firstPhase = "firstPhase=index:" + phase.path("zoneIndex").asText("?")
+                    + " radius:" + phase.path("startRadius").asText("?") + "->" + phase.path("endRadius").asText("?")
+                    + " wait:" + phase.path("waitBeforeShrink").asText("?") + "s"
+                    + " shrink:" + phase.path("shrinkDuration").asText("?") + "s"
+                    + " damage:" + phase.path("damagePerSecond").asText("?") + "/s";
+        }
+
+        return "initialRadius=" + zoneConfig.path("initialRadius").asText("?")
+                + " finalMin=" + zoneConfig.path("finalZoneMinRadius").asText("?")
+                + " centerMode=" + zoneConfig.path("centerMode").asText("?")
+                + " phases=" + phaseCount
+                + " " + firstPhase;
     }
 }

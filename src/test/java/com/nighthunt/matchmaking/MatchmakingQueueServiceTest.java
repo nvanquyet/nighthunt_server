@@ -122,6 +122,7 @@ class MatchmakingQueueServiceTest {
                 .matchmakingEnabled(true)
                 .allowFill(true)
                 .isDevMode(devMode)
+                .isActive(true)
                 .totalPlayers(2)
                 .playersPerTeam(1)
                 .platformFilter("ALL")
@@ -135,6 +136,7 @@ class MatchmakingQueueServiceTest {
                 .modeStatus("AVAILABLE")
                 .matchmakingEnabled(true)
                 .allowFill(true)
+                .isActive(true)
                 .totalPlayers(8)
                 .playersPerTeam(4)
                 .platformFilter("ALL")
@@ -210,6 +212,22 @@ class MatchmakingQueueServiceTest {
         verify(entryRepo).deleteByUserId(USER_A);
         // A new entry must be saved
         verify(entryRepo).save(argThat(e -> e.getStatus().equals("SEARCHING")));
+    }
+
+    @Test
+    @DisplayName("enqueue rejects inactive mode because scheduler will not process it")
+    void enqueue_rejectsInactiveMode() {
+        GameModeDTO inactiveMode = make1v1Mode(false);
+        inactiveMode.setActive(false);
+        when(gameModeService.getGameModeByKey(MODE)).thenReturn(inactiveMode);
+        when(partyMemberRepo.existsByUserId(USER_A)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.enqueue(USER_A, MODE, "map_01", "PC"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Game mode not available for matchmaking");
+
+        verify(entryRepo, never()).save(any());
+        verify(userRepo, never()).findById(anyLong());
     }
 
     @Test

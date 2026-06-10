@@ -21,6 +21,7 @@ public interface DedicatedServerRepository extends JpaRepository<DedicatedServer
         WHERE d.region = :region
           AND d.ip = :ip
           AND d.status = 'ready'
+          AND d.matchId IS NULL
           AND d.currentPlayers < d.maxPlayers
           AND (:mapId IS NULL OR d.mapId IS NULL OR d.mapId = :mapId)
         ORDER BY d.currentPlayers DESC

@@ -4,6 +4,8 @@ import com.nighthunt.common.exception.BusinessException;
 import com.nighthunt.common.exception.ErrorCodes;
 import com.nighthunt.friend.repository.BlockedUserRepository;
 import com.nighthunt.friend.service.PlayerStatusService;
+import com.nighthunt.gamemode.dto.GameModeDTO;
+import com.nighthunt.gamemode.service.GameModeService;
 import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.party.dto.*;
 import com.nighthunt.party.entity.Party;
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -47,10 +50,11 @@ public class PartyService {
     private final UserRepository userRepository;
     private final BlockedUserRepository blockedUserRepository;
     private final PlayerStatusService playerStatusService;
+    private final GameModeService gameModeService;
     private final MessageBrokerService messageBrokerService;
 
     private static final int INVITATION_TIMEOUT_SECONDS = 30;
-    private static final int DEFAULT_MAX_MEMBERS = 4;
+    private static final int FALLBACK_MAX_MEMBERS = 4;
 
     // ──────────────────────────────────────────────────────────────────────────
     // PARTY CREATION
@@ -73,7 +77,7 @@ public class PartyService {
         Party party = Party.builder()
                 .hostUserId(hostUserId)
                 .partyStatus("IDLE")
-                .maxMembers(DEFAULT_MAX_MEMBERS)
+                .maxMembers(resolveMaxPartyMembers())
                 .build();
         
         partyRepository.save(party);
@@ -107,30 +111,36 @@ public class PartyService {
      */
     @Transactional
     public PartyInvitationDTO inviteToParty(Long inviterUserId, Long inviteeUserId) {
-        User inviter = findUser(inviterUserId);
-        User invitee = findUser(inviteeUserId);
-        
-        // Validate: Inviter is in a party
-        PartyMember inviterMember = partyMemberRepository.findByUserId(inviterUserId)
-                .orElseThrow(() -> new BusinessException(ErrorCodes.PARTY_NOT_IN_PARTY, "You are not in a party"));
-        
-        Party party = findParty(inviterMember.getPartyId());
-        
-        // Validate: Party must be IDLE (not in queue or in room)
-        if (!"IDLE".equals(party.getPartyStatus())) {
-            throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE, 
-                    "Cannot invite while party is " + party.getPartyStatus());
+        if (inviterUserId.equals(inviteeUserId)) {
+            throw new BusinessException(ErrorCodes.PARTY_INVITATION_SELF, "You cannot invite yourself");
         }
 
-        // Validate: Party is not full
-        long memberCount = partyMemberRepository.countByPartyId(party.getId());
-        if (memberCount >= party.getMaxMembers()) {
-            throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
+        User inviter = findUser(inviterUserId);
+        findUser(inviteeUserId);
+
+        if (!"ONLINE".equals(playerStatusService.getOnlineStatus(inviteeUserId))) {
+            throw new BusinessException(ErrorCodes.PARTY_INVITEE_OFFLINE, "User must be online to receive a party invite");
+        }
+
+        Party party = null;
+        PartyMember inviterMember = partyMemberRepository.findByUserId(inviterUserId).orElse(null);
+        if (inviterMember != null) {
+            party = findParty(inviterMember.getPartyId());
+            if (!"IDLE".equals(party.getPartyStatus())) {
+                throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
+                        "Cannot invite while party is " + party.getPartyStatus());
+            }
+
+            ensureCurrentPartyCapacity(party);
+            long memberCount = partyMemberRepository.countByPartyId(party.getId());
+            if (memberCount >= party.getMaxMembers()) {
+                throw new BusinessException(ErrorCodes.PARTY_FULL, "Party is full");
+            }
         }
 
         PartyMember inviteeCurrentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
         if (inviteeCurrentMember != null) {
-            if (inviteeCurrentMember.getPartyId().equals(party.getId())) {
+            if (party != null && inviteeCurrentMember.getPartyId().equals(party.getId())) {
                 throw new BusinessException(ErrorCodes.PARTY_USER_ALREADY_IN_PARTY, "User is already in this party");
             }
 
@@ -138,8 +148,11 @@ public class PartyService {
                     "User must leave their current party before joining another one");
         }
 
-        // Validate: No pending invitation exists
-        if (partyInvitationRepository.hasPendingInvitation(party.getId(), inviteeUserId)) {
+        LocalDateTime now = LocalDateTime.now();
+        boolean duplicateExists = party != null
+                ? partyInvitationRepository.hasActivePendingInvitation(party.getId(), inviteeUserId, now)
+                : partyInvitationRepository.hasActivePendingInvitationFromInviter(inviterUserId, inviteeUserId, now);
+        if (duplicateExists) {
             throw new BusinessException(ErrorCodes.PARTY_INVITATION_EXISTS, "Invitation already sent to this user");
         }
 
@@ -150,20 +163,21 @@ public class PartyService {
 
         // Create invitation
         PartyInvitation invitation = PartyInvitation.builder()
-                .partyId(party.getId())
+                .partyId(party != null ? party.getId() : null)
                 .inviterUserId(inviterUserId)
                 .inviteeUserId(inviteeUserId)
                 .invitationStatus("PENDING")
-                .expiresAt(LocalDateTime.now().plusSeconds(INVITATION_TIMEOUT_SECONDS))
+                .expiresAt(now.plusSeconds(INVITATION_TIMEOUT_SECONDS))
                 .build();
         
         partyInvitationRepository.save(invitation);
         
-        log.info("Party invitation sent: party={}, inviter={}, invitee={}", party.getId(), inviterUserId, inviteeUserId);
+        log.info("Party invitation sent: party={}, inviter={}, invitee={}",
+                party != null ? party.getId() : null, inviterUserId, inviteeUserId);
         
         // Publish WebSocket event
         messageBrokerService.publishPartyInvitationReceived(
-            party.getId(), 
+            party != null ? party.getId() : null,
             inviteeUserId, 
             inviterUserId, 
             inviter.getUsername(), 
@@ -200,30 +214,24 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_INVITATION_EXPIRED, "Invitation has expired");
         }
 
-        Party party = findParty(invitation.getPartyId());
-        
-        // Validate: Party still exists and is not disbanded
+        PartyMember currentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
+        if (currentMember != null) {
+            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY,
+                    "User must leave their current party before accepting a new invite");
+        }
+
+        Party party = resolveInvitationParty(invitation);
+
         if ("DISBANDED".equals(party.getPartyStatus())) {
             throw new BusinessException(ErrorCodes.PARTY_DISBANDED, "Party has been disbanded");
         }
 
-        // Validate: Target party is idle.
         if (!"IDLE".equals(party.getPartyStatus())) {
             throw new BusinessException(ErrorCodes.PARTY_NOT_IDLE,
                     "Cannot join while party is " + party.getPartyStatus());
         }
 
-        PartyMember currentMember = partyMemberRepository.findByUserId(inviteeUserId).orElse(null);
-        if (currentMember != null && currentMember.getPartyId().equals(party.getId())) {
-            invitation.setInvitationStatus("ACCEPTED");
-            partyInvitationRepository.save(invitation);
-            return toPartyDTO(party);
-        }
-
-        if (currentMember != null) {
-            throw new BusinessException(ErrorCodes.PARTY_ALREADY_IN_PARTY,
-                    "User must leave their current party before accepting a new invite");
-        }
+        ensureCurrentPartyCapacity(party);
 
         // Validate: Party is not full
         long memberCount = partyMemberRepository.countByPartyId(party.getId());
@@ -279,6 +287,11 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_PENDING, "Invitation is not pending");
         }
 
+        if (isExpired(invitation)) {
+            expireInvitation(invitation);
+            return;
+        }
+
         invitation.setInvitationStatus("CANCELLED");
         partyInvitationRepository.save(invitation);
 
@@ -306,6 +319,11 @@ public class PartyService {
             throw new BusinessException(ErrorCodes.PARTY_INVITATION_NOT_PENDING, "Invitation is not pending");
         }
 
+        if (isExpired(invitation)) {
+            expireInvitation(invitation);
+            return;
+        }
+
         // Update invitation status
         invitation.setInvitationStatus("DECLINED");
         partyInvitationRepository.save(invitation);
@@ -320,16 +338,20 @@ public class PartyService {
     /**
      * Get all pending party invitations for a user.
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public List<PartyInvitationDTO> getPendingInvitations(Long userId) {
         List<PartyInvitation> invitations = partyInvitationRepository.findByInviteeUserIdAndInvitationStatus(userId, "PENDING");
-        
-        // Filter expired invitations
-        LocalDateTime now = LocalDateTime.now();
-        return invitations.stream()
-                .filter(inv -> inv.getExpiresAt().isAfter(now))
-                .map(this::toPartyInvitationDTO)
-                .collect(Collectors.toList());
+        return getActiveInvitationDTOs(invitations);
+    }
+
+    /**
+     * Get all active outgoing party invitations for a user.
+     */
+    @Transactional
+    public List<PartyInvitationDTO> getSentPendingInvitations(Long userId) {
+        List<PartyInvitation> invitations =
+                partyInvitationRepository.findByInviterUserIdAndInvitationStatus(userId, "PENDING");
+        return getActiveInvitationDTOs(invitations);
     }
 
     // ──────────────────────────────────────────────────────────────────────────

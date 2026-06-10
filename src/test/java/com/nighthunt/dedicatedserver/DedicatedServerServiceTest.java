@@ -1,6 +1,7 @@
 package com.nighthunt.dedicatedserver;
 
 import com.nighthunt.dedicatedserver.dto.ServerAllocateResponse;
+import com.nighthunt.dedicatedserver.dto.DsRegisterRequest;
 import com.nighthunt.dedicatedserver.entity.DedicatedServer;
 import com.nighthunt.dedicatedserver.repository.DedicatedServerRepository;
 import com.nighthunt.dedicatedserver.service.DedicatedServerService;
@@ -105,22 +106,56 @@ class DedicatedServerServiceTest {
         }
 
         @Test
-        @DisplayName("allocateServerForMatch stores matchId on idle server")
-        void allocateForMatch_setsMatchIdOnIdleServer() {
-            DedicatedServer idle = idleServer("srv-002", 7778);
-            when(dsRepo.findAvailable("vn", "20.2.235.140", null)).thenReturn(Optional.of(idle));
-            when(dsRepo.save(idle)).thenReturn(idle);
+        @DisplayName("allocateServerForMatch spawns a fresh server instead of reusing an already-ready server")
+        void allocateForMatch_spawnsFreshServer() throws Exception {
+            when(dsRepo.existsByPortAndStatusNot(anyInt(), eq("stopped"))).thenReturn(false);
+            when(dockerManager.getCurrentImageRef()).thenReturn("ghcr.io/nvanquyet/nighthunt-ds:latest");
+            when(dsRepo.save(any(DedicatedServer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+            when(dockerManager.startContainer(
+                    anyString(), eq(7777), anyString(), eq(16), eq("map_01"), eq(2), eq("match-uuid-42")))
+                    .thenReturn("container-42");
             when(redis.opsForValue()).thenReturn(valueOps);
             doNothing().when(valueOps).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 
-            service.allocateServerForMatch("vn", null, 2, "match-uuid-42");
+            ServerAllocateResponse resp = service.allocateServerForMatch("vn", "map_01", 2, "match-uuid-42");
 
-            assertThat(idle.getMatchId()).isEqualTo("match-uuid-42");
-            verify(dsRepo).save(idle);
+            assertThat(resp.getPort()).isEqualTo(7777);
+            assertThat(resp.getStatus()).isEqualTo("starting");
+            verify(dsRepo, never()).findAvailable(anyString(), anyString(), nullable(String.class));
+            verify(dockerManager).startContainer(
+                    anyString(), eq(7777), anyString(), eq(16), eq("map_01"), eq(2), eq("match-uuid-42"));
         }
     }
 
     // ── notifyGameReady ───────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("registerServer")
+    class RegisterServerTests {
+
+        @Test
+        @DisplayName("Keeps server non-ready until game-ready is received")
+        void register_validCredentials_doesNotMarkReady() {
+            String secret = "correct-secret";
+            DedicatedServer server = readyServer("srv-reg", bcrypt.encode(secret));
+            server.setStatus("starting");
+            when(dsRepo.findByServerId("srv-reg")).thenReturn(Optional.of(server));
+            when(dsRepo.save(any(DedicatedServer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+            DsRegisterRequest req = new DsRegisterRequest();
+            req.setServerId("srv-reg");
+            req.setServerSecret(secret);
+            req.setMaxPlayers(8);
+
+            boolean result = service.registerServer(req);
+
+            assertThat(result).isTrue();
+            assertThat(server.getStatus()).isEqualTo("starting");
+            assertThat(server.getMaxPlayers()).isEqualTo(8);
+            assertThat(server.getLastHeartbeatAt()).isNotNull();
+            verify(dsRepo).save(server);
+        }
+    }
 
     @Nested
     @DisplayName("notifyGameReady")

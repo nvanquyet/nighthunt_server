@@ -136,13 +136,13 @@ public class DedicatedServerService {
      */
     @Transactional
     public ServerAllocateResponse allocateServer(String region, String mapId, int expectedPlayers) {
-        return doAllocate(region, mapId, expectedPlayers, null);
+        return doAllocate(region, mapId, expectedPlayers, null, true);
     }
 
     /** Backward-compat overload for admin/manual allocation (uses defaultMaxPlayers as expected count). */
     @Transactional
     public ServerAllocateResponse allocateServer(String region, String mapId) {
-        return doAllocate(region, mapId, defaultMaxPlayers, null);
+        return doAllocate(region, mapId, defaultMaxPlayers, null, true);
     }
 
     /**
@@ -193,17 +193,25 @@ public class DedicatedServerService {
     @Transactional
     public ServerAllocateResponse allocateServerForMatch(String region, String mapId,
                                                          int expectedPlayers, String matchId) {
-        return doAllocate(region, mapId, expectedPlayers, matchId);
+        return doAllocate(region, mapId, expectedPlayers, matchId, false);
     }
 
     /**
      * Core allocation logic. Tìm server available hoặc spin up mới với matchId đúng từ đầu.
      */
     @Transactional
-    private ServerAllocateResponse doAllocate(String region, String mapId, int expectedPlayers, String matchId) {
-        DedicatedServer server = dsRepo.findAvailable(region, vpsPublicIp, mapId).orElse(null);
+    private ServerAllocateResponse doAllocate(String region, String mapId, int expectedPlayers, String matchId,
+                                              boolean allowReadyReuse) {
+        DedicatedServer server = allowReadyReuse
+                ? dsRepo.findAvailable(region, vpsPublicIp, mapId).orElse(null)
+                : null;
         String devSecret = null;
         boolean reusingReadyServer = false;
+
+        if (!allowReadyReuse) {
+            log.info("[DS-Alloc] Ranked allocation requires fresh DS; skipping READY reuse matchId={} mapId={} expectedPlayers={}",
+                    matchId, mapId, expectedPlayers);
+        }
 
         if (server == null) {
             // Hard cap: reject new DS if VPS is already at capacity
@@ -331,7 +339,6 @@ public class DedicatedServerService {
             return false;
         }
 
-        server.setStatus("ready");
         server.setMaxPlayers(req.getMaxPlayers() != null ? req.getMaxPlayers() : defaultMaxPlayers);
         server.setLastHeartbeatAt(LocalDateTime.now());
 
@@ -345,7 +352,8 @@ public class DedicatedServerService {
 
         dsRepo.save(server);
 
-        log.info("[DS-Svc] Server {} registered → READY on ip={}:{}", req.getServerId(), server.getIp(), server.getPort());
+        log.info("[DS-Svc] Server {} registered on ip={}:{} status={} (waiting for game-ready)",
+                req.getServerId(), server.getIp(), server.getPort(), server.getStatus());
         return true;
     }
 

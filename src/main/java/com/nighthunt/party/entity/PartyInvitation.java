@@ -29,9 +29,10 @@ public class PartyInvitation {
     private Long id;
 
     /**
-     * Party ID.
+     * Party ID. Null when a solo player sends an invitation; the party is
+     * created only after the invitee accepts.
      */
-    @Column(name = "party_id", nullable = false)
+    @Column(name = "party_id")
     private Long partyId;
 
     /**

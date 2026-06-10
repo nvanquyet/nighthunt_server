@@ -39,6 +39,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -61,6 +62,7 @@ public class MatchmakingQueueService {
 
     private static final String MATCHER_LOCK_KEY = "lock:matchmaking:tick";
     private static final Duration MATCHER_LOCK_TTL = Duration.ofMinutes(2);
+    private static final int MATCH_DIAGNOSTIC_CANDIDATE_LIMIT = 8;
     private static final RedisScript<Long> RENEW_MATCHER_LOCK_SCRIPT = RedisScript.of("""
             if redis.call('GET', KEYS[1]) == ARGV[1] then
               return redis.call('PEXPIRE', KEYS[1], ARGV[2])
@@ -156,7 +158,9 @@ public class MatchmakingQueueService {
     ) {
         // Validate mode against DB — rejects modes not in the DB or disabled
         GameModeDTO mode = gameModeService.getGameModeByKey(gameMode);
-        if (!"AVAILABLE".equalsIgnoreCase(mode.getModeStatus()) || !mode.isMatchmakingEnabled()) {
+        if (!mode.isActive()
+                || !"AVAILABLE".equalsIgnoreCase(mode.getModeStatus())
+                || !mode.isMatchmakingEnabled()) {
             throw new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
                     "Game mode not available for matchmaking: " + gameMode);
         }
@@ -326,6 +330,7 @@ public class MatchmakingQueueService {
     public void processTick() {
         String lockToken = acquireMatcherLock();
         if (lockToken == null) {
+            logBlockedMatcherTick();
             return;
         }
 
@@ -333,7 +338,9 @@ public class MatchmakingQueueService {
             expandWindows();
 
             // Process each DB-configured mode where matchmaking is enabled
-            for (GameModeDTO mode : gameModeService.getMatchmakingEnabledModes()) {
+            List<GameModeDTO> enabledModes = gameModeService.getMatchmakingEnabledModes();
+            logQueueCoverage(enabledModes);
+            for (GameModeDTO mode : enabledModes) {
                 if (!renewMatcherLock(lockToken)) {
                     log.warn("[MM] Matcher lock expired before mode={}; stopping tick", mode.getModeKey());
                     return;
@@ -458,8 +465,126 @@ public class MatchmakingQueueService {
         if (!candidates.isEmpty() && formedCount == 0) {
             log.info("[MM][Tick] mode={} no complete match yet candidates={} units={} teamSize={}",
                     mode.getModeKey(), candidates.size(), units.size(), mode.getPlayersPerTeam());
+            logNoMatchDiagnostics(candidates, units, mode);
         }
     }
+
+    private void logBlockedMatcherTick() {
+        try {
+            long searching = entryRepository.countSearching();
+            if (searching == 0) {
+                return;
+            }
+
+            Long lockTtlMs = redisTemplate.getExpire(MATCHER_LOCK_KEY, TimeUnit.MILLISECONDS);
+            log.warn("[MM][TICK_BLOCKED] searching={} lockKey={} lockTtlMs={} reason=matcher_lock_unavailable",
+                    searching, MATCHER_LOCK_KEY, lockTtlMs);
+        } catch (Exception ex) {
+            log.warn("[MM][TICK_BLOCKED] matcher lock unavailable and diagnostics failed: {}", ex.getMessage());
+        }
+    }
+
+    private void logQueueCoverage(List<GameModeDTO> enabledModes) {
+        List<Object[]> counts = entryRepository.countSearchingByMode();
+        if (counts.isEmpty()) {
+            return;
+        }
+
+        Set<String> enabledModeKeys = enabledModes.stream()
+                .map(GameModeDTO::getModeKey)
+                .filter(Objects::nonNull)
+                .map(key -> key.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, Long> searchingByMode = new LinkedHashMap<>();
+        for (Object[] row : counts) {
+            if (row == null || row.length < 2 || row[0] == null || !(row[1] instanceof Number number)) {
+                continue;
+            }
+            searchingByMode.put(String.valueOf(row[0]).toLowerCase(Locale.ROOT), number.longValue());
+        }
+
+        log.info("[MM][TICK_START] enabledModes={} searchingByMode={}", enabledModeKeys, searchingByMode);
+        searchingByMode.forEach((modeKey, count) -> {
+            if (!enabledModeKeys.contains(modeKey)) {
+                log.warn("[MM][ORPHAN_QUEUE] mode={} searching={} reason=mode_not_processed "
+                                + "check=is_active+mode_status+matchmaking_enabled",
+                        modeKey, count);
+            }
+        });
+    }
+
+    private void logNoMatchDiagnostics(
+            List<MatchmakingEntry> candidates,
+            List<MatchUnit> units,
+            GameModeDTO mode
+    ) {
+        List<MatchmakingEntry> sample = candidates.stream()
+                .limit(MATCH_DIAGNOSTIC_CANDIDATE_LIMIT)
+                .toList();
+
+        log.info("[MM][NO_MATCH] mode={} teamSize={} platformFilter={} sampled={}/{} candidates={} units={}",
+                mode.getModeKey(),
+                mode.getPlayersPerTeam(),
+                mode.getPlatformFilter(),
+                sample.size(),
+                candidates.size(),
+                sample.stream().map(this::describeCandidate).toList(),
+                units.stream()
+                        .limit(MATCH_DIAGNOSTIC_CANDIDATE_LIMIT)
+                        .map(unit -> unit.groupId() + ":size=" + unit.size() + ":locked=" + unit.lockedTeam())
+                        .toList());
+
+        List<String> pairResults = new ArrayList<>();
+        for (int leftIndex = 0; leftIndex < sample.size(); leftIndex++) {
+            for (int rightIndex = leftIndex + 1; rightIndex < sample.size(); rightIndex++) {
+                MatchmakingEntry left = sample.get(leftIndex);
+                MatchmakingEntry right = sample.get(rightIndex);
+                pairResults.add(left.getUserId() + "<->" + right.getUserId() + ":"
+                        + describeCompatibility(left, right, mode.getPlatformFilter()));
+            }
+        }
+
+        if (!pairResults.isEmpty()) {
+            log.info("[MM][NO_MATCH_PAIRS] mode={} results={}", mode.getModeKey(), pairResults);
+        }
+    }
+
+    private String describeCandidate(MatchmakingEntry entry) {
+        long waitSeconds = entry.getQueuedAt() == null
+                ? -1
+                : Math.max(0, Duration.between(entry.getQueuedAt(), LocalDateTime.now()).getSeconds());
+        return "user=" + entry.getUserId()
+                + ",elo=" + entry.getElo()
+                + ",range=[" + entry.getSearchMinElo() + "," + entry.getSearchMaxElo() + "]"
+                + ",map=" + Objects.toString(entry.getMapId(), "ANY")
+                + ",platform=" + Objects.toString(entry.getPlatform(), "UNKNOWN")
+                + ",group=" + Objects.toString(entry.getQueueGroupId(), "NONE")
+                + ",partySize=" + entry.getPartySize()
+                + ",allowFill=" + entry.isAllowFill()
+                + ",waitSec=" + waitSeconds;
+    }
+
+    private String describeCompatibility(MatchmakingEntry left, MatchmakingEntry right, String platformFilter) {
+        if (Objects.equals(left.getQueueGroupId(), right.getQueueGroupId())) {
+            return "SAME_QUEUE_GROUP";
+        }
+        if (left.getSearchMaxElo() < right.getSearchMinElo()
+                || right.getSearchMaxElo() < left.getSearchMinElo()) {
+            return "ELO_NO_OVERLAP";
+        }
+        if (left.getMapId() != null && right.getMapId() != null
+                && !left.getMapId().equals(right.getMapId())) {
+            return "MAP_MISMATCH(" + left.getMapId() + "/" + right.getMapId() + ")";
+        }
+        if (platformFilter != null && !"ALL".equalsIgnoreCase(platformFilter)
+                && left.getPlatform() != null && right.getPlatform() != null
+                && !left.getPlatform().equalsIgnoreCase(right.getPlatform())) {
+            return "PLATFORM_MISMATCH(" + left.getPlatform() + "/" + right.getPlatform() + ")";
+        }
+        return "COMPATIBLE";
+    }
+
     /**
      * Two entries are compatible if their ELO windows intersect AND they want the same map
      * (null mapId = any map, compatible with everyone).
@@ -525,9 +650,23 @@ public class MatchmakingQueueService {
             entryRepository.save(entry);
         }
 
-        log.info("[MM] {} match formed (auto-accept), lobbyToken={}, players={}",
-                mode.getModeKey(), lobbyToken,
-                group.stream().map(MatchmakingEntry::getUserId).toList());
+        long maxQueueWaitSec = group.stream()
+                .map(MatchmakingEntry::getQueuedAt)
+                .filter(Objects::nonNull)
+                .mapToLong(queuedAt -> Math.max(0, Duration.between(queuedAt, LocalDateTime.now()).getSeconds()))
+                .max()
+                .orElse(-1);
+        log.info("[MM][MATCH_FORMED] mode={} lobbyToken={} map={} players={} teams={} maxQueueWaitSec={}",
+                mode.getModeKey(),
+                lobbyToken,
+                resolvedMapId,
+                group.stream().map(MatchmakingEntry::getUserId).toList(),
+                group.stream().collect(Collectors.toMap(
+                        MatchmakingEntry::getUserId,
+                        MatchmakingEntry::getAssignedTeam,
+                        (left, right) -> left,
+                        LinkedHashMap::new)),
+                maxQueueWaitSec);
 
         createMatchedRoom(group);
     }
@@ -614,9 +753,19 @@ public class MatchmakingQueueService {
                         LinkedHashMap::new));
 
         RoomResponse room = null;
+        String stage = "room_create";
+        long pipelineStartedNanos = System.nanoTime();
         try {
+            log.info("[MM][MATCH_PIPELINE] stage={} mode={} map={} players={}",
+                    stage, modeKey, mapId, userIds);
             room = roomService.createRankedRoom(userIds, modeKey, mapId, teamByUserId);
+
+            stage = "ds_allocate";
+            log.info("[MM][MATCH_PIPELINE] stage={} matchId={} room={} elapsedMs={}",
+                    stage, room.getMatchId(), room.getRoomCode(), elapsedMs(pipelineStartedNanos));
             ServerAllocateResponse ds = dsService.allocateServerForMatch("vn", mapId, group.size(), room.getMatchId());
+            log.info("[MM][MATCH_PIPELINE] stage=ds_allocated matchId={} ds={}:{} status={} elapsedMs={}",
+                    room.getMatchId(), ds.getIp(), ds.getPort(), ds.getStatus(), elapsedMs(pipelineStartedNanos));
 
             Map<String, Object> payload = new HashMap<>();
             payload.put("lobbyToken",   lToken);
@@ -652,6 +801,7 @@ public class MatchmakingQueueService {
                 entryRepository.delete(e);
             }
 
+            stage = "match_ready_broadcast";
             for (Long uid : userIds) {
                 connectionManager.sendToUser(uid, "match_ready", payload);
                 try { playerStatusService.setInGame(uid); } catch (Exception ignored) {}
@@ -659,10 +809,12 @@ public class MatchmakingQueueService {
             roomService.markRankedRoomInGame(room.getMatchId());
             markRankedPartiesInGame(group);
 
-            log.info("[MM] Match ready: room={}, mode={}, ds={}:{}, players={}",
-                    room.getRoomCode(), modeKey, ds.getIp(), ds.getPort(), userIds);
+            log.info("[MM][MATCH_READY] room={} mode={} matchId={} ds={}:{} players={} elapsedMs={}",
+                    room.getRoomCode(), modeKey, room.getMatchId(), ds.getIp(), ds.getPort(),
+                    userIds, elapsedMs(pipelineStartedNanos));
         } catch (Exception ex) {
-            log.error("[MM] Failed to create matched room: {}", ex.getMessage(), ex);
+            log.error("[MM][MATCH_PIPELINE_FAILED] stage={} mode={} map={} players={} elapsedMs={} error={}",
+                    stage, modeKey, mapId, userIds, elapsedMs(pipelineStartedNanos), ex.getMessage(), ex);
             // Disband the room so players are not left stuck in an active room
             if (room != null) {
                 try {
@@ -680,6 +832,10 @@ public class MatchmakingQueueService {
                 } catch (Exception ignored) {}
             }
         }
+    }
+
+    private long elapsedMs(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }
 
     private List<MatchUnit> buildUnits(List<MatchmakingEntry> candidates) {

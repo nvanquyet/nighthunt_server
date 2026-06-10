@@ -19,6 +19,11 @@ public interface PartyInvitationRepository extends JpaRepository<PartyInvitation
     List<PartyInvitation> findByInviteeUserIdAndInvitationStatus(Long inviteeId, String status);
 
     /**
+     * Find all pending outgoing party invitations for a user.
+     */
+    List<PartyInvitation> findByInviterUserIdAndInvitationStatus(Long inviterId, String status);
+
+    /**
      * Find all pending invitations for a specific party.
      */
     List<PartyInvitation> findByPartyIdAndInvitationStatus(Long partyId, String status);
@@ -31,8 +36,20 @@ public interface PartyInvitationRepository extends JpaRepository<PartyInvitation
     /**
      * Check if user has pending invitation to a party.
      */
-    @Query("SELECT COUNT(pi) > 0 FROM PartyInvitation pi WHERE pi.partyId = :partyId AND pi.inviteeUserId = :inviteeId AND pi.invitationStatus = 'PENDING'")
-    boolean hasPendingInvitation(@Param("partyId") Long partyId, @Param("inviteeId") Long inviteeId);
+    @Query("SELECT COUNT(pi) > 0 FROM PartyInvitation pi WHERE pi.partyId = :partyId AND pi.inviteeUserId = :inviteeId AND pi.invitationStatus = 'PENDING' AND pi.expiresAt > :now")
+    boolean hasActivePendingInvitation(
+            @Param("partyId") Long partyId,
+            @Param("inviteeId") Long inviteeId,
+            @Param("now") LocalDateTime now);
+
+    /**
+     * Prevent duplicate solo/deferred invites from the same inviter.
+     */
+    @Query("SELECT COUNT(pi) > 0 FROM PartyInvitation pi WHERE pi.inviterUserId = :inviterId AND pi.inviteeUserId = :inviteeId AND pi.invitationStatus = 'PENDING' AND pi.expiresAt > :now")
+    boolean hasActivePendingInvitationFromInviter(
+            @Param("inviterId") Long inviterId,
+            @Param("inviteeId") Long inviteeId,
+            @Param("now") LocalDateTime now);
 
     /**
      * Count pending incoming invitations for a user.
