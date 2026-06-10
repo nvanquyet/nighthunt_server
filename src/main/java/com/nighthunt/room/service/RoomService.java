@@ -226,6 +226,10 @@ public class RoomService {
         
         // Filter by mode and not full
         availableRooms = availableRooms.stream()
+                // Defense in depth: never quick-join a locked/private room even if a stale
+                // repository implementation or inconsistent row returns it.
+                .filter(room -> Boolean.TRUE.equals(room.getIsPublic()))
+                .filter(room -> !isRoomPasswordProtected(room))
                 .filter(room -> room.getMode().equals(request.getMode()))
                 .filter(room -> request.getMapId() == null || request.getMapId().isBlank()
                         || request.getMapId().equals(room.getMapId()))
