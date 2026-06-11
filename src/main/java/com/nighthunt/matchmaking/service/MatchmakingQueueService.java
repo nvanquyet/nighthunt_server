@@ -594,10 +594,17 @@ public class MatchmakingQueueService {
     private boolean isCompatible(MatchmakingEntry a, MatchmakingEntry b, String platformFilter) {
         boolean eloOk = a.getSearchMaxElo() >= b.getSearchMinElo()
                 && b.getSearchMaxElo() >= a.getSearchMinElo();
-        if (!eloOk) return false;
+        if (!eloOk) {
+            log.info("[MM][isCompatible] ELO_MISMATCH: userA={} (elo={}, range=[{},{}]) userB={} (elo={}, range=[{},{}])",
+                    a.getUserId(), a.getElo(), a.getSearchMinElo(), a.getSearchMaxElo(),
+                    b.getUserId(), b.getElo(), b.getSearchMinElo(), b.getSearchMaxElo());
+            return false;
+        }
 
         // null map = wildcard; two non-null maps must match
         if (a.getMapId() != null && b.getMapId() != null && !a.getMapId().equals(b.getMapId())) {
+            log.info("[MM][isCompatible] MAP_MISMATCH: userA={} map={} userB={} map={}",
+                    a.getUserId(), a.getMapId(), b.getUserId(), b.getMapId());
             return false;
         }
 
@@ -605,10 +612,13 @@ public class MatchmakingQueueService {
         if (platformFilter != null && !"ALL".equalsIgnoreCase(platformFilter)) {
             if (a.getPlatform() != null && b.getPlatform() != null
                     && !a.getPlatform().equalsIgnoreCase(b.getPlatform())) {
+                log.info("[MM][isCompatible] PLATFORM_MISMATCH: platformFilter={} userA={} platform={} userB={} platform={}",
+                        platformFilter, a.getUserId(), a.getPlatform(), b.getUserId(), b.getPlatform());
                 return false;
             }
         }
 
+        log.info("[MM][isCompatible] COMPATIBLE: userA={} and userB={} are compatible", a.getUserId(), b.getUserId());
         return true;
     }
 
@@ -670,7 +680,29 @@ public class MatchmakingQueueService {
                         LinkedHashMap::new)),
                 maxQueueWaitSec);
 
+        broadcastMatchFound(group, mode, lobbyToken, resolvedMapId);
         createMatchedRoom(group);
+    }
+
+    private void broadcastMatchFound(
+            List<MatchmakingEntry> group,
+            GameModeDTO mode,
+            String lobbyToken,
+            String mapId
+    ) {
+        List<Long> userIds = group.stream().map(MatchmakingEntry::getUserId).toList();
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("lobbyToken", lobbyToken);
+        payload.put("gameMode", mode.getModeKey());
+        payload.put("mapId", mapId);
+        payload.put("playerIds", userIds);
+        payload.put("autoAccepted", true);
+
+        for (Long uid : userIds) {
+            connectionManager.sendToUser(uid, "match_found", payload);
+        }
+        log.info("[MM][MATCH_FOUND_SENT] mode={} lobbyToken={} map={} players={} reason=ds_allocation_starting",
+                mode.getModeKey(), lobbyToken, mapId, userIds);
     }
 
     // ── Accept / Decline ─────────────────────────────────────────────────────
@@ -684,8 +716,13 @@ public class MatchmakingQueueService {
     public void accept(Long userId, String lobbyToken) {
         MatchmakingEntry entry = entryRepository.findByUserId(userId)
                 .filter(e -> lobbyToken.equals(e.getLobbyToken()) && "MATCHED".equals(e.getStatus()))
-                .orElseThrow(() -> new BusinessException(ErrorCodes.MATCH_NOT_FOUND,
-                        "No pending match found for lobbyToken: " + lobbyToken));
+                .orElse(null);
+
+        if (entry == null) {
+            log.info("[MM] accept(): no pending entry for userId={} lobbyToken={} - treating as no-op; match may already be ready/cancelled",
+                    userId, lobbyToken);
+            return;
+        }
 
         // Guard: auto-accept flow already set all entries to ACCEPTED and called createMatchedRoom().
         // A second /accept call arriving late (e.g., manual API call or client retry) must be a no-op
@@ -826,13 +863,23 @@ public class MatchmakingQueueService {
                     log.warn("[MM] Failed to disband room {} after DS failure: {}", room.getRoomId(), disbandEx.getMessage());
                 }
             }
-            // Re-queue all players on failure
+            Map<String, Object> cancelPayload = new HashMap<>();
+            cancelPayload.put("lobbyToken", lToken);
+            cancelPayload.put("reason", "Could not start dedicated server. Please try again.");
+
+            // Do not silently re-queue after match_found. The client has already
+            // left searching UI and must receive a terminal failure for this attempt.
             for (MatchmakingEntry e : group) {
                 try {
-                    enqueueInternal(e.getUserId(), e.getGameMode(), e.getMapId(), e.getPlatform(),
-                            e.getPartyId(), e.getPartySize(), e.isAllowFill());
+                    e.setStatus("CANCELLED");
+                    e.setAcceptStatus("DECLINED");
+                    entryRepository.save(e);
+                    connectionManager.sendToUser(e.getUserId(), "match_cancelled", cancelPayload);
+                    playerStatusService.setBackToOnline(e.getUserId());
                 } catch (Exception ignored) {}
             }
+            log.warn("[MM][MATCH_CANCELLED] lobbyToken={} mode={} map={} players={} reason=ds_pipeline_failed",
+                    lToken, modeKey, mapId, userIds);
         }
     }
 

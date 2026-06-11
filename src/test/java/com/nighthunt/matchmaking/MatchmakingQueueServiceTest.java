@@ -331,7 +331,7 @@ class MatchmakingQueueServiceTest {
     // ── Test 2: processTick matches 2 SEARCHING entries ───────────────────────
 
     @Test
-    @DisplayName("processTick forms 1v1, allocates DS, and broadcasts match_ready")
+    @DisplayName("processTick forms 1v1, notifies match_found, allocates DS, and broadcasts match_ready")
     void processTick_formMatchWhen2PlayersQueued() {
         LocalDateTime queuedAt = LocalDateTime.now().minusSeconds(1);
         MatchmakingEntry entryA = makeEntry(USER_A, "SEARCHING", queuedAt);
@@ -364,6 +364,13 @@ class MatchmakingQueueServiceTest {
                 .containsEntry(USER_B, 2);
 
         verify(dsService).allocateServerForMatch("vn", null, 2, "match-1");
+        verify(connectionManager).sendToUser(eq(USER_A), eq("match_found"), argThat(payload ->
+                payload instanceof Map<?, ?> map
+                        && MODE.equals(map.get("gameMode"))
+                        && map.get("lobbyToken") instanceof String
+                        && map.get("playerIds") instanceof List<?> players
+                        && players.containsAll(List.of(USER_A, USER_B))));
+        verify(connectionManager).sendToUser(eq(USER_B), eq("match_found"), anyMap());
         verify(connectionManager).sendToUser(eq(USER_A), eq("match_ready"), argThat(payload ->
                 payload instanceof Map<?, ?> map
                         && "match-1".equals(map.get("matchId"))
@@ -374,6 +381,42 @@ class MatchmakingQueueServiceTest {
         verify(entryRepo).delete(entryA);
         verify(entryRepo).delete(entryB);
         verify(roomService).markRankedRoomInGame("match-1");
+    }
+
+    @Test
+    @DisplayName("processTick cancels matched players when DS allocation fails")
+    void processTick_cancelsMatchWhenDsAllocationFails() {
+        LocalDateTime queuedAt = LocalDateTime.now().minusSeconds(1);
+        MatchmakingEntry entryA = makeEntry(USER_A, "SEARCHING", queuedAt);
+        MatchmakingEntry entryB = makeEntry(USER_B, "SEARCHING", queuedAt.plusNanos(1));
+
+        when(entryRepo.findSearchingQueuedBefore(any())).thenReturn(List.of());
+        when(gameModeService.getMatchmakingEnabledModes()).thenReturn(List.of(make1v1Mode(false)));
+        when(entryRepo.findSearchingByMode(MODE)).thenReturn(List.of(entryA, entryB));
+        when(roomService.createRankedRoom(anyList(), eq(MODE), isNull(), anyMap()))
+                .thenReturn(RoomResponse.builder()
+                        .roomId(99L)
+                        .roomCode("ROOM01")
+                        .matchId("match-1")
+                        .players(List.of())
+                        .build());
+        when(dsService.allocateServerForMatch("vn", null, 2, "match-1"))
+                .thenThrow(new RuntimeException("docker failed"));
+
+        service.processTick();
+
+        verify(connectionManager).sendToUser(eq(USER_A), eq("match_found"), anyMap());
+        verify(connectionManager).sendToUser(eq(USER_B), eq("match_found"), anyMap());
+        verify(connectionManager).sendToUser(eq(USER_A), eq("match_cancelled"), argThat(payload ->
+                payload instanceof Map<?, ?> map
+                        && "Could not start dedicated server. Please try again.".equals(map.get("reason"))));
+        verify(connectionManager).sendToUser(eq(USER_B), eq("match_cancelled"), anyMap());
+        verify(connectionManager, never()).sendToUser(anyLong(), eq("match_ready"), anyMap());
+        verify(roomService).disbandRoom(99L, USER_A);
+        verify(entryRepo, never()).deleteByUserId(anyLong());
+        verify(roomService, never()).markRankedRoomInGame(anyString());
+        assertThat(entryA.getStatus()).isEqualTo("CANCELLED");
+        assertThat(entryB.getStatus()).isEqualTo("CANCELLED");
     }
 
     // ── Test 3: sweepStaleQueueEntries cancels entries > 15 minutes old ───────
