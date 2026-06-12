@@ -13,6 +13,7 @@ import com.nighthunt.match.entity.Match;
 import com.nighthunt.match.entity.MatchPlayerResult;
 import com.nighthunt.match.repository.MatchPlayerResultRepository;
 import com.nighthunt.match.repository.MatchRepository;
+import com.nighthunt.match.repository.UserAbandonRecordRepository;
 import com.nighthunt.messaging.service.MessageBrokerService;
 import com.nighthunt.party.entity.PartyMember;
 import com.nighthunt.party.repository.PartyMemberRepository;
@@ -69,6 +70,7 @@ public class MatchResultService {
     private final PartyMemberRepository        partyMemberRepository;
     private final PartyRepository              partyRepository;
     private final MessageBrokerService         messageBrokerService;
+    private final UserAbandonRecordRepository  abandonRecordRepository;
 
     // ── Coin rewards (configurable via application.properties) ────────────────
     @Value("${coins.reward.ranked.win:50}")    private long coinsRankedWin;
@@ -130,7 +132,13 @@ public class MatchResultService {
 
             int eloBefore = user.getElo();
             int eloChange = 0;
-            boolean abandoned = isAbandoned(req.getMatchId(), entry.getUserId());
+            // Check the DB record written by AbandonPenaltyService — more reliable than the
+            // Redis presence snapshot which may have already expired by the time match ends.
+            boolean abandonedAndPenalized = hasAbandonPenaltyRecord(req.getMatchId(), entry.getUserId());
+            // Also check the live Redis snapshot (covers the window between abandon and end-match
+            // where the DB record exists but match hasn't fully concluded yet).
+            boolean abandoned = abandonedAndPenalized
+                    || isAbandoned(req.getMatchId(), entry.getUserId());
 
             if (isRanked) {
                 // Determine opponent average ELO (for 2-team matches)
@@ -142,10 +150,25 @@ public class MatchResultService {
                 int delta = eloService.calculateDelta(eloBefore, opponentAvg, actualScore);
                 eloChange = eloService.applyDelta(user, delta, actualScore);
                 if (abandoned) {
-                    int afkAdjustedElo = Math.max(0, user.getElo() - afkEloPenalty);
-                    user.setElo(afkAdjustedElo);
-                    user.setTier(eloService.resolveTier(afkAdjustedElo));
-                    eloChange = afkAdjustedElo - eloBefore;
+                    if (abandonedAndPenalized) {
+                        // AbandonPenaltyService already deducted ELO mid-match.
+                        // Applying afkEloPenalty on top would double-penalize the player.
+                        // Revert the positive ELO gain from applyDelta (treat as a loss/zero),
+                        // but do NOT subtract afkEloPenalty again.
+                        user.setElo(Math.max(0, eloBefore));
+                        user.setTier(eloService.resolveTier(user.getElo()));
+                        eloChange = user.getElo() - eloBefore;
+                        log.info("[MatchEnd] Abandoned player {} already penalized by AbandonPenaltyService " +
+                                "(matchId={}) — skipping afkEloPenalty to avoid double-charge. " +
+                                "ELO reverted to pre-match value: {} → {}",
+                                entry.getUserId(), req.getMatchId(), eloBefore, user.getElo());
+                    } else {
+                        // Player abandoned but no prior penalty record — apply end-of-match penalty.
+                        int afkAdjustedElo = Math.max(0, user.getElo() - afkEloPenalty);
+                        user.setElo(afkAdjustedElo);
+                        user.setTier(eloService.resolveTier(afkAdjustedElo));
+                        eloChange = afkAdjustedElo - eloBefore;
+                    }
                 }
             }
 
@@ -303,6 +326,20 @@ public class MatchResultService {
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
+
+    /**
+     * Returns true if a {@link UserAbandonRecord} exists for this (matchId, userId) pair,
+     * meaning {@link AbandonPenaltyService} has already deducted ELO mid-match.
+     * Used to prevent double-penalizing at end-of-match.
+     */
+    private boolean hasAbandonPenaltyRecord(String matchId, Long userId) {
+        if (matchId == null || userId == null) {
+            return false;
+        }
+        return abandonRecordRepository.findByMatchId(matchId)
+                .stream()
+                .anyMatch(r -> r.getUserId().equals(userId));
+    }
 
     private boolean isAbandoned(String matchId, Long userId) {
         return matchPresenceCache.get(matchId, userId)
