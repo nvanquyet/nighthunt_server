@@ -94,21 +94,58 @@ public class GameMapService {
     public GameMapDTO setZoneConfig(String mapId, JsonNode zoneConfigNode) {
         GameMap map = mapRepository.findByMapId(mapId).orElseThrow(() ->
                 new BusinessException(ErrorCodes.ROOM_NOT_FOUND, "Map not found: " + mapId));
+
+        // Normalise centerMode to its integer ordinal BEFORE persisting. Unity's JsonUtility
+        // (used by the Dedicated Server in ServerBootstrap.FetchZoneConfig) only deserialises
+        // enums from integers — a string value like "PureRandom" makes the ENTIRE parse fail,
+        // so the DS silently falls back to the Standard() preset (120s/180s timers) and ignores
+        // the dashboard values. The dashboard sends centerMode as a string, so we convert here.
+        JsonNode normalised = normaliseZoneConfig(zoneConfigNode);
+
         try {
-            map.setZoneConfigJson(objectMapper.writeValueAsString(zoneConfigNode));
+            map.setZoneConfigJson(objectMapper.writeValueAsString(normalised));
         } catch (Exception e) {
             throw new BusinessException(ErrorCodes.DS_BAD_REQUEST, "Invalid zone config JSON");
         }
         log.info("[AdminConfig][ZONE_CONFIG] setZoneConfig mapId={} bytes={} summary={}", mapId,
                 map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0,
-                describeZoneConfig(zoneConfigNode));
+                describeZoneConfig(normalised));
         log.info("[AdminConfig] setZoneConfig {} → {} bytes", mapId,
                 map.getZoneConfigJson() != null ? map.getZoneConfigJson().length() : 0);
         GameMap saved = mapRepository.save(map);
         log.info("[AdminConfig][ZONE_CONFIG] persisted mapId={} bytes={} summary={}", mapId,
                 saved.getZoneConfigJson() != null ? saved.getZoneConfigJson().length() : 0,
-                describeZoneConfig(zoneConfigNode));
+                describeZoneConfig(normalised));
         return toDTO(saved);
+    }
+
+    /**
+     * Returns a copy of the zone-config node with centerMode coerced to an integer ordinal
+     * (PureRandom=0, CenterBiased=1, Fixed=2). Accepts either a string name or an already-int
+     * value. Other fields are left untouched. Required because Unity JsonUtility cannot parse
+     * a string enum value and fails the whole document if it sees one.
+     */
+    private JsonNode normaliseZoneConfig(JsonNode node) {
+        if (node == null || !node.isObject())
+            return node;
+
+        com.fasterxml.jackson.databind.node.ObjectNode obj = ((com.fasterxml.jackson.databind.node.ObjectNode) node).deepCopy();
+        JsonNode centerMode = obj.get("centerMode");
+        if (centerMode != null && centerMode.isTextual()) {
+            obj.put("centerMode", centerModeNameToOrdinal(centerMode.asText()));
+        }
+        return obj;
+    }
+
+    /** Maps a ZoneCenterMode enum name to the ordinal Unity JsonUtility expects. Defaults to 0 (PureRandom). */
+    private int centerModeNameToOrdinal(String name) {
+        if (name == null) return 0;
+        switch (name.trim()) {
+            case "CenterBiased": return 1;
+            case "Fixed":        return 2;
+            case "PureRandom":
+            default:             return 0;
+        }
     }
 
     // ── Admin API ─────────────────────────────────────────────────────────────
