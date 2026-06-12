@@ -166,13 +166,26 @@ public class DockerManagerService {
             String output = new String(process.getInputStream().readAllBytes()).trim();
             int exitCode  = process.waitFor();
 
-            if (exitCode != 0) {
-                log.error("[DockerManager] docker run failed (exit {}):\n{}", exitCode, output);
-                throw new RuntimeException("docker run failed: " + output);
+            // Find a line that is exactly 64 hex characters (container ID)
+            String fullContainerId = null;
+            for (String line : output.split("\n")) {
+                String trimmedLine = line.trim();
+                if (trimmedLine.matches("^[0-9a-fA-F]{64}$")) {
+                    fullContainerId = trimmedLine;
+                    break;
+                }
             }
 
-            // Output là container ID (short hash)
-            String containerId = output.length() > 12 ? output.substring(0, 12) : output;
+            if (exitCode != 0 && fullContainerId == null) {
+                log.error("[DockerManager] docker run failed (exit {}):\n{}", exitCode, output);
+                throw new RuntimeException("docker run failed: " + output);
+            } else if (exitCode != 0) {
+                log.warn("[DockerManager] docker run returned exit code {} but successfully started container: {}", exitCode, fullContainerId);
+            }
+
+            // Dùng fullContainerId nếu tìm thấy, ngược lại fallback dùng output
+            String targetId = fullContainerId != null ? fullContainerId : output;
+            String containerId = targetId.length() > 12 ? targetId.substring(0, 12) : targetId;
             log.info("[DockerManager] Container started: {}", containerId);
             return containerId;
 
