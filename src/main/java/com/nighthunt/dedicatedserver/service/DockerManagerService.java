@@ -267,9 +267,12 @@ public class DockerManagerService {
         Set<Integer> occupied = new HashSet<>();
         if (!dockerEnabled) return occupied;
         try {
+            // Use --filter status=running so only live containers are checked for port bindings.
+            // Stopped containers don't hold ports but DO hold container names (see cleanupOrphanedContainers).
             ProcessBuilder pb = new ProcessBuilder(
                 "docker", "ps",
                 "--filter", "name=nighthunt-ds-",
+                "--filter", "status=running",
                 "--format", "{{.Ports}}"
             );
             pb.redirectErrorStream(true);
@@ -317,11 +320,15 @@ public class DockerManagerService {
         if (!dockerEnabled) return 0;
         int removed = 0;
         try {
-            // List all running nighthunt-ds-* containers: columns = ID,Names
+            // Use `docker ps -a` (not just running) to also catch STOPPED containers.
+            // Stopped containers don't hold ports but DO hold their --name, blocking
+            // new `docker run --name nighthunt-ds-XXXXXXXX` with "Conflict" error.
+            // This was the actual root cause: previous crashed DS left a stopped container
+            // with the same name prefix, causing every subsequent allocation to fail.
             ProcessBuilder pb = new ProcessBuilder(
-                "docker", "ps",
+                "docker", "ps", "-a",
                 "--filter", "name=nighthunt-ds-",
-                "--format", "{{.ID}}\t{{.Names}}"
+                "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}"
             );
             pb.redirectErrorStream(true);
             Process process = pb.start();
@@ -343,15 +350,16 @@ public class DockerManagerService {
                 if (parts.length < 1) continue;
                 String shortId = parts[0].trim();
                 String name    = parts.length > 1 ? parts[1].trim() : shortId;
+                String status  = parts.length > 2 ? parts[2].trim() : "unknown";
                 if (knownShort.contains(shortId)) {
-                    log.debug("[DockerManager] orphan-check: container {} ({}) is known — skipping", shortId, name);
+                    log.debug("[DockerManager] orphan-check: container {} ({}) status={} is known — skipping", shortId, name, status);
                     continue;
                 }
-                log.warn("[DockerManager] Orphaned DS container detected — force-removing: {} ({})", shortId, name);
+                log.warn("[DockerManager] Orphaned DS container detected — force-removing: {} ({}) status={}", shortId, name, status);
                 try {
                     runDockerCommand("docker", "rm", "-f", shortId);
                     removed++;
-                    log.warn("[DockerManager] Orphaned container removed: {} ({})", shortId, name);
+                    log.warn("[DockerManager] Orphaned container removed: {} ({}) status={}", shortId, name, status);
                 } catch (Exception rmEx) {
                     log.error("[DockerManager] Failed to remove orphaned container {}: {}", shortId, rmEx.getMessage());
                 }
