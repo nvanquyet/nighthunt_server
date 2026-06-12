@@ -516,10 +516,29 @@ public class DedicatedServerService {
     }
 
     private int findAvailablePort() {
+        // Snapshot of ports actually bound in Docker daemon right now.
+        // This catches zombie/orphaned containers that still hold a host port
+        // even though they have no corresponding DB record (e.g. containers
+        // that exited but were not removed, or containers started outside this
+        // service). The DB-only check missed these cases and caused port conflicts.
+        java.util.Set<Integer> dockerOccupied = dockerManager.getOccupiedPorts();
+        if (!dockerOccupied.isEmpty()) {
+            log.info("[DS-Alloc] findAvailablePort: Docker-occupied ports (live host bindings): {}", dockerOccupied);
+        }
+
         for (int port = portStart; port <= portEnd; port++) {
-            if (!dsRepo.existsByPortAndStatusNot(port, "stopped")) {
-                return port;
+            // DB check: skip ports claimed by a non-stopped DS record
+            if (dsRepo.existsByPortAndStatusNot(port, "stopped")) {
+                log.debug("[DS-Alloc] Port {} in use per DB â€” skipping", port);
+                continue;
             }
+            // Host check: skip ports still bound by a live Docker container
+            if (dockerOccupied.contains(port)) {
+                log.warn("[DS-Alloc] Port {} free in DB but OCCUPIED by Docker daemon â€” skipping (zombie container?)", port);
+                continue;
+            }
+            log.debug("[DS-Alloc] Port {} is available (DB clean + Docker clean)", port);
+            return port;
         }
         throw new RuntimeException("No available ports in range " + portStart + "-" + portEnd);
     }
@@ -814,6 +833,38 @@ public class DedicatedServerService {
             server.setStatus("stopped");
             server.setStoppedAt(LocalDateTime.now());
             dsRepo.save(server);
+        }
+    }
+
+    /**
+     * M?i 5 phút: phát hi?n và xoá các Docker container nighthunt-ds-* dang ch?y
+     * nhung không có DB record tuong ?ng ("zombie containers").
+     *
+     * Nguyên nhân ph? bi?n:
+     *   • Docker --rm không ho?t d?ng khi container b? SIGKILL
+     *   • Backend crash sau khi start container nhung tru?c khi luu DB
+     *   • Container du?c start th? công ngoài service
+     *
+     * Zombie containers chi?m host port (e.g. 7777) d?n d?n "port already allocated"
+     * khi backend c? t?o container m?i ? DS allocation th?t b?i.
+     */
+    @Scheduled(fixedDelay = 300_000)
+    public void cleanupOrphanedContainers() {
+        // Collect container IDs for all non-stopped DS records (they are legitimate)
+        List<String> knownContainerIds = dsRepo.findAll().stream()
+                .filter(s -> !"stopped".equals(s.getStatus()))
+                .map(DedicatedServer::getDockerContainerId)
+                .filter(id -> id != null && !id.isBlank()
+                        && !"local-dev-no-container".equals(id)
+                        && !"test-no-container".equals(id))
+                .toList();
+
+        log.debug("[DS-Orphan] Running orphan cleanup; known active containers: {}", knownContainerIds);
+        int removed = dockerManager.cleanupOrphanedContainers(knownContainerIds);
+        if (removed > 0) {
+            log.warn("[DS-Orphan] Removed {} orphaned DS container(s) that had no DB record", removed);
+        } else {
+            log.debug("[DS-Orphan] No orphaned containers found");
         }
     }
 }

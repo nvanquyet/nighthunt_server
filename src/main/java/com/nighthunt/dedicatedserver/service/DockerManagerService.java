@@ -6,7 +6,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Quản lý Docker containers cho Dedicated Server.
@@ -253,6 +255,113 @@ public class DockerManagerService {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns the set of host ports currently bound by any running nighthunt-ds-* container.
+     *
+     * Uses {@code docker ps --filter name=nighthunt-ds- --format "{{.Ports}}"} and parses
+     * entries like {@code 0.0.0.0:7777->7777/udp} to extract the host port number.
+     * Falls back to an empty set on any error so callers degrade gracefully.
+     */
+    public Set<Integer> getOccupiedPorts() {
+        Set<Integer> occupied = new HashSet<>();
+        if (!dockerEnabled) return occupied;
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                "docker", "ps",
+                "--filter", "name=nighthunt-ds-",
+                "--format", "{{.Ports}}"
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            String output = new String(process.getInputStream().readAllBytes()).trim();
+            process.waitFor();
+
+            if (!output.isBlank()) {
+                for (String line : output.split("\n")) {
+                    // Each line may contain multiple port mappings separated by commas,
+                    // e.g. "0.0.0.0:7777->7777/udp, 0.0.0.0:7778->7778/udp"
+                    for (String mapping : line.split(",")) {
+                        mapping = mapping.trim();
+                        // Format: 0.0.0.0:7777->7777/udp  OR  :::7777->7777/udp
+                        int colonIdx = mapping.lastIndexOf(':');
+                        int arrowIdx = mapping.indexOf("->");
+                        if (colonIdx >= 0 && arrowIdx > colonIdx) {
+                            String portStr = mapping.substring(colonIdx + 1, arrowIdx);
+                            try {
+                                occupied.add(Integer.parseInt(portStr.trim()));
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                }
+            }
+            log.debug("[DockerManager] getOccupiedPorts → {}", occupied);
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[DockerManager] getOccupiedPorts failed: {}", e.getMessage());
+        }
+        return occupied;
+    }
+
+    /**
+     * Force-removes any running {@code nighthunt-ds-*} container whose full container ID
+     * is NOT present in {@code knownContainerIds}.
+     *
+     * Called by the scheduled cleanup task in {@link DedicatedServerService} to eliminate
+     * zombie containers that hold ports but have no corresponding DB record.
+     *
+     * @param knownContainerIds short (12-char) or long container IDs that are still valid
+     * @return number of containers forcibly removed
+     */
+    public int cleanupOrphanedContainers(List<String> knownContainerIds) {
+        if (!dockerEnabled) return 0;
+        int removed = 0;
+        try {
+            // List all running nighthunt-ds-* containers: columns = ID,Names
+            ProcessBuilder pb = new ProcessBuilder(
+                "docker", "ps",
+                "--filter", "name=nighthunt-ds-",
+                "--format", "{{.ID}}\t{{.Names}}"
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            String output = new String(process.getInputStream().readAllBytes()).trim();
+            process.waitFor();
+
+            if (output.isBlank()) return 0;
+
+            // Normalise known IDs to short form (first 12 chars)
+            Set<String> knownShort = new HashSet<>();
+            for (String id : knownContainerIds) {
+                if (id != null && !id.isBlank()) {
+                    knownShort.add(id.length() > 12 ? id.substring(0, 12) : id);
+                }
+            }
+
+            for (String line : output.split("\n")) {
+                String[] parts = line.trim().split("\t");
+                if (parts.length < 1) continue;
+                String shortId = parts[0].trim();
+                String name    = parts.length > 1 ? parts[1].trim() : shortId;
+                if (knownShort.contains(shortId)) {
+                    log.debug("[DockerManager] orphan-check: container {} ({}) is known — skipping", shortId, name);
+                    continue;
+                }
+                log.warn("[DockerManager] Orphaned DS container detected — force-removing: {} ({})", shortId, name);
+                try {
+                    runDockerCommand("docker", "rm", "-f", shortId);
+                    removed++;
+                    log.warn("[DockerManager] Orphaned container removed: {} ({})", shortId, name);
+                } catch (Exception rmEx) {
+                    log.error("[DockerManager] Failed to remove orphaned container {}: {}", shortId, rmEx.getMessage());
+                }
+            }
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[DockerManager] cleanupOrphanedContainers failed: {}", e.getMessage());
+        }
+        return removed;
+    }
 
     private void runDockerCommand(String... cmd) {
         runDockerCommand(false, cmd);
