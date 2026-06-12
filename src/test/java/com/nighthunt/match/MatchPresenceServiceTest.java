@@ -18,6 +18,7 @@ import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
+import com.nighthunt.relay.service.RelaySessionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,7 @@ class MatchPresenceServiceTest {
     @Mock private RedisMatchPresenceCache presenceCache;
     @Mock private PlayerStatusService playerStatusService;
     @Mock private AbandonPenaltyService abandonPenaltyService;  // wired after P2 changes
+    @Mock private RelaySessionManager relaySessionManager;
 
     private MatchPresenceService service;
     private Room room;
@@ -62,7 +64,8 @@ class MatchPresenceServiceTest {
                 roomResponseAssembler,
                 presenceCache,
                 playerStatusService,
-                abandonPenaltyService);
+                abandonPenaltyService,
+                relaySessionManager);
 
 
         room = Room.builder()
