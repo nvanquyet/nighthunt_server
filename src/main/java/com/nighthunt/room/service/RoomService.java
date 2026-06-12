@@ -481,6 +481,10 @@ public class RoomService {
             connectionManager.updateUserRoom(userId, null);
             updateCurrentRoomStatus(userId, null);
             log.info("[Room] User {} left IN_GAME room {} — abandonment recorded, room row removed", userId, roomId);
+            if (room.getOwnerId().equals(userId)) {
+                log.info("[Room] Owner left IN_GAME room {} — disbanding room", roomId);
+                disbandRoom(roomId, userId);
+            }
             return;
         }
 

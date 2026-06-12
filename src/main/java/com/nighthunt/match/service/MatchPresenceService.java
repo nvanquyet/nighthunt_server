@@ -18,6 +18,7 @@ import com.nighthunt.room.repository.RoomRepository;
 import com.nighthunt.room.service.RoomResponseAssembler;
 import com.nighthunt.user.entity.User;
 import com.nighthunt.user.repository.UserRepository;
+import com.nighthunt.relay.service.RelaySessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -47,6 +48,7 @@ public class MatchPresenceService {
     private final RedisMatchPresenceCache presenceCache;
     private final PlayerStatusService playerStatusService;
     private final AbandonPenaltyService abandonPenaltyService;
+    private final RelaySessionManager relaySessionManager;
 
     @Transactional
     public void recordUserPresence(Long actorUserId, MatchPresenceRequest request) {
@@ -312,7 +314,30 @@ public class MatchPresenceService {
         dsPayload.put("reason",      reason);
         connectionManager.broadcastToRoom(room.getId(), "player_abandoned", dsPayload);
 
-        if (roomPlayerRepository.countByRoomId(room.getId()) == 0) {
+        if (player.getUserId().equals(room.getOwnerId())) {
+            log.info("[MatchPresence] Room owner {} abandoned match {} (roomId={}) — disbanding room",
+                    player.getUserId(), room.getMatchId(), room.getId());
+
+            relaySessionManager.getByRoomId(room.getId()).ifPresent(session -> {
+                relaySessionManager.finishSession(session.getSessionToken());
+            });
+
+            room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
+            roomRepository.save(room);
+            connectionManager.broadcastToRoom(room.getId(), "room_disbanded",
+                    java.util.Map.of("roomId", room.getId(), "reason", "host_disconnected"));
+
+            List<RoomPlayer> remainingPlayers = roomPlayerRepository.findByRoomId(room.getId());
+            for (RoomPlayer rp : remainingPlayers) {
+                connectionManager.updateUserRoom(rp.getUserId(), null);
+                try {
+                    playerStatusService.updateCurrentRoom(rp.getUserId(), null);
+                } catch (Exception e) {
+                    log.warn("[MatchPresence] Failed to clear status for user {}: {}", rp.getUserId(), e.getMessage());
+                }
+            }
+            roomPlayerRepository.deleteByRoomId(room.getId());
+        } else if (roomPlayerRepository.countByRoomId(room.getId()) == 0) {
             room.setStatus(GameConstants.ROOM_STATUS_CLOSED);
             roomRepository.save(room);
             connectionManager.broadcastToRoom(room.getId(), "room_disbanded",
